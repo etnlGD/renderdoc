@@ -28,6 +28,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Drawing;
 using System.IO;
 using System.Threading;
 using System.Windows.Forms;
@@ -69,6 +70,27 @@ namespace renderdocui.Code
             return w;
         }
 
+        static public DockPanelSkin MakeHighContrastDockPanelSkin()
+        {
+            DockPanelSkin ret = new DockPanelSkin();
+
+            ret.DockPaneStripSkin.ToolWindowGradient.ActiveCaptionGradient.StartColor = SystemColors.ActiveCaption;
+            ret.DockPaneStripSkin.ToolWindowGradient.ActiveCaptionGradient.EndColor = SystemColors.ActiveCaption;
+            ret.DockPaneStripSkin.ToolWindowGradient.ActiveCaptionGradient.TextColor = SystemColors.ActiveCaptionText;
+
+            ret.DockPaneStripSkin.ToolWindowGradient.InactiveCaptionGradient.StartColor = SystemColors.InactiveCaption;
+            ret.DockPaneStripSkin.ToolWindowGradient.InactiveCaptionGradient.EndColor = SystemColors.InactiveCaption;
+            ret.DockPaneStripSkin.ToolWindowGradient.InactiveCaptionGradient.TextColor = SystemColors.InactiveCaptionText;
+
+            ret.DockPaneStripSkin.ToolWindowGradient.ActiveTabGradient = ret.DockPaneStripSkin.ToolWindowGradient.ActiveCaptionGradient;
+            ret.DockPaneStripSkin.ToolWindowGradient.InactiveTabGradient = ret.DockPaneStripSkin.ToolWindowGradient.InactiveCaptionGradient;
+
+            ret.DockPaneStripSkin.DocumentGradient.ActiveTabGradient = ret.DockPaneStripSkin.ToolWindowGradient.ActiveCaptionGradient;
+            ret.DockPaneStripSkin.DocumentGradient.InactiveTabGradient = ret.DockPaneStripSkin.ToolWindowGradient.InactiveCaptionGradient;
+
+            return ret;
+        }
+
         public static T Clamp<T>(this T val, T min, T max) where T : IComparable<T>
         {
             if (val.CompareTo(min) < 0) return min;
@@ -88,6 +110,50 @@ namespace renderdocui.Code
         public static uint AlignUp(this uint x, uint a)
         {
             return (x + (a - 1)) & (~(a - 1));
+        }
+
+        public static float GetLuminance(this System.Drawing.Color c)
+        {
+            return (float)(0.2126 * Math.Pow(c.R * 255.0, 2.2) + 0.7152 * Math.Pow(c.G * 255.0, 2.2) + 0.0722 * Math.Pow(c.B * 255.0, 2.2));
+        }
+
+        public static int CharCount(string s, char c)
+        {
+            int ret = 0;
+
+            int offs = s.IndexOf(c);
+
+            while (offs >= 0)
+            {
+                ret++;
+                offs = s.IndexOf(c, offs + 1);
+            }
+
+            return ret;
+        }
+
+        public static bool IsAlpha(this char c)
+        {
+            return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+        }
+
+        public static string SafeGetFileName(string filename)
+        {
+            try
+            {
+                return System.IO.Path.GetFileName(filename);
+            }
+            catch (ArgumentException)
+            {
+                // invalid path or similar, just try to go from last \ or / onwards
+
+                string ret = filename;
+                int idx = ret.LastIndexOfAny(new char[] { '/', '\\' });
+                if (idx > 0)
+                    ret = ret.Substring(idx + 1);
+
+                return ret;
+            }
         }
 
         public static bool IsElevated
@@ -252,7 +318,19 @@ namespace renderdocui.Code
 
             foreach (var n in names)
             {
-                if(String.Compare(Path.GetFullPath(n), myJSON, StringComparison.CurrentCultureIgnoreCase) == 0)
+                string fullpath;
+
+                try
+                {
+                    fullpath = Path.GetFullPath(n);
+                }
+                catch (Exception)
+                {
+                    // invalid path or similar
+                    fullpath = "";
+                }
+
+                if(String.Compare(fullpath, myJSON, StringComparison.CurrentCultureIgnoreCase) == 0)
                 {
                     thisRegistered = true;
                 }

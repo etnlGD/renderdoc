@@ -257,11 +257,11 @@
     <ClInclude Include="core\socket_helpers.h" />
     <ClInclude Include="data\embedded_files.h" />
     <ClInclude Include="data\glsl\debuguniforms.h" />
-    <ClInclude Include="data\glsl\texsample.h" />
+    <ClInclude Include="data\glsl\gl_texsample.h" />
+    <ClInclude Include="data\glsl\vk_texsample.h" />
+    <ClInclude Include="data\glsl_shaders.h" />
     <ClInclude Include="data\hlsl\debugcbuffers.h" />
     <ClInclude Include="data\resource.h" />
-    <ClInclude Include="data\spv\debuguniforms.h" />
-    <ClInclude Include="data\spv\texsample.h" />
     <ClInclude Include="data\version.h" />
     <ClInclude Include="hooks\hooks.h" />
     <ClInclude Include="maths\camera.h" />
@@ -270,8 +270,13 @@
     <ClInclude Include="maths\matrix.h" />
     <ClInclude Include="maths\quat.h" />
     <ClInclude Include="maths\vec.h" />
-    <ClInclude Include="os\linux\linux_specific.h" />
     <ClInclude Include="os\os_specific.h" />
+    <ClInclude Include="os\posix\posix_hook.h">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClInclude>
+    <ClInclude Include="os\posix\posix_specific.h">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClInclude>
     <ClInclude Include="os\win32\win32_hook.h" />
     <ClInclude Include="os\win32\win32_specific.h" />
     <ClInclude Include="replay\replay_driver.h" />
@@ -290,35 +295,69 @@
     <ClCompile Include="common\dds_readwrite.cpp" />
     <ClCompile Include="core\core.cpp" />
     <ClCompile Include="core\image_viewer.cpp" />
-    <ClCompile Include="core\remote_access.cpp" />
-    <ClCompile Include="core\remote_replay.cpp" />
+    <ClCompile Include="core\target_control.cpp" />
+    <ClCompile Include="core\remote_server.cpp" />
     <ClCompile Include="core\replay_proxy.cpp" />
     <ClCompile Include="core\resource_manager.cpp" />
+    <ClCompile Include="data\glsl_shaders.cpp" />
     <ClCompile Include="hooks\hooks.cpp" />
     <ClCompile Include="maths\camera.cpp" />
     <ClCompile Include="maths\matrix.cpp" />
-    <ClCompile Include="os\linux\linux_callstack.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="os\linux\linux_hook.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="os\linux\linux_libentry.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="os\linux\linux_network.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="os\linux\linux_process.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="os\linux\linux_stringio.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
-    <ClCompile Include="os\linux\linux_threading.cpp">
-      <ExcludedFromBuild>true</ExcludedFromBuild>
-    </ClCompile>
     <ClCompile Include="os\os_specific.cpp" />
+    <ClCompile Include="os\posix\android\android_callstack.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="os\posix\android\android_process.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="os\posix\android\android_stringio.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="os\posix\android\android_threading.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="os\posix\apple\apple_callstack.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="os\posix\apple\apple_process.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="os\posix\apple\apple_stringio.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="os\posix\apple\apple_threading.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="os\posix\linux\linux_callstack.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="os\posix\linux\linux_process.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="os\posix\linux\linux_stringio.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="os\posix\linux\linux_threading.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="os\posix\posix_hook.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="os\posix\posix_libentry.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="os\posix\posix_network.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="os\posix\posix_process.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="os\posix\posix_stringio.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="os\posix\posix_threading.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="os\win32\sys_win32_hooks.cpp" />
     <ClCompile Include="os\win32\win32_callstack.cpp" />
     <ClCompile Include="os\win32\win32_hook.cpp" />
@@ -343,19 +382,21 @@
     <ResourceCompile Include="data\renderdoc.rc" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="data\glsl\arraymscopy.comp" />
-    <None Include="data\glsl\blit.frag" />
+    <None Include="data\glsl\array2ms.comp" />
     <None Include="data\glsl\blit.vert" />
     <None Include="data\glsl\checkerboard.frag" />
-    <None Include="data\glsl\generic.frag" />
-    <None Include="data\glsl\generic.vert" />
+    <None Include="data\glsl\fixedcol.frag" />
     <None Include="data\glsl\histogram.comp" />
     <None Include="data\glsl\mesh.comp" />
     <None Include="data\glsl\mesh.frag" />
     <None Include="data\glsl\mesh.geom" />
     <None Include="data\glsl\mesh.vert" />
+    <None Include="data\glsl\minmaxresult.comp" />
+    <None Include="data\glsl\minmaxtile.comp" />
+    <None Include="data\glsl\ms2array.comp" />
     <None Include="data\glsl\outline.frag" />
-    <None Include="data\glsl\quadoverdraw.frag" />
+    <None Include="data\glsl\quadresolve.frag" />
+    <None Include="data\glsl\quadwrite.frag" />
     <None Include="data\glsl\texdisplay.frag" />
     <None Include="data\glsl\text.frag" />
     <None Include="data\glsl\text.vert" />
@@ -365,26 +406,19 @@
     <None Include="data\hlsl\histogram.hlsl" />
     <None Include="data\hlsl\mesh.hlsl" />
     <None Include="data\hlsl\multisample.hlsl" />
-    <None Include="data\spv\blit.vert" />
-    <None Include="data\spv\checkerboard.frag" />
-    <None Include="data\spv\fixedcol.frag" />
-    <None Include="data\spv\histogram.comp" />
-    <None Include="data\spv\mesh.frag" />
-    <None Include="data\spv\mesh.geom" />
-    <None Include="data\spv\mesh.vert" />
-    <None Include="data\spv\minmaxresult.comp" />
-    <None Include="data\spv\minmaxtile.comp" />
-    <None Include="data\spv\outline.frag" />
-    <None Include="data\spv\quadresolve.frag" />
-    <None Include="data\spv\quadwrite.frag" />
-    <None Include="data\spv\texdisplay.frag" />
-    <None Include="data\spv\text.frag" />
-    <None Include="data\spv\text.vert" />
     <None Include="os\win32\comexport.def" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="driver\d3d11\renderdoc_d3d11.vcxproj">
       <Project>{f1e59a05-60d4-4927-9e57-dd191eae90ef}</Project>
+      <Private>false</Private>
+      <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
+      <CopyLocalSatelliteAssemblies>false</CopyLocalSatelliteAssemblies>
+      <LinkLibraryDependencies>true</LinkLibraryDependencies>
+      <UseLibraryDependencyInputs>true</UseLibraryDependencyInputs>
+    </ProjectReference>
+    <ProjectReference Include="driver\d3d12\renderdoc_d3d12.vcxproj">
+      <Project>{9e6b10a2-84b4-434d-abdb-43be4ea650f4}</Project>
       <Private>false</Private>
       <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
       <CopyLocalSatelliteAssemblies>false</CopyLocalSatelliteAssemblies>

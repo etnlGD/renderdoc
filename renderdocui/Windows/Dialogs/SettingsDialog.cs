@@ -58,11 +58,16 @@ namespace renderdocui.Windows.Dialogs
             pagesTree.EndUpdate();
             pagesTree.FocusedNode = pagesTree.Nodes[0];
 
+            saveDirectory.Text = m_Core.Config.DefaultCaptureSaveDirectory;
+            tempDirectory.Text = m_Core.Config.TemporaryCaptureDirectory;
+
             TextureViewer_ResetRange.Checked = m_Core.Config.TextureViewer_ResetRange;
             TextureViewer_PerTexSettings.Checked = m_Core.Config.TextureViewer_PerTexSettings;
             ShaderViewer_FriendlyNaming.Checked = m_Core.Config.ShaderViewer_FriendlyNaming;
             CheckUpdate_AllowChecks.Checked = m_Core.Config.CheckUpdate_AllowChecks;
             Font_PreferMonospaced.Checked = m_Core.Config.Font_PreferMonospaced;
+
+            AlwaysReplayLocally.Checked = m_Core.Config.AlwaysReplayLocally;
 
             AllowGlobalHook.Checked = m_Core.Config.AllowGlobalHook;
             
@@ -79,6 +84,11 @@ namespace renderdocui.Windows.Dialogs
 
             EventBrowser_TimeUnit.SelectedIndex = (int)m_Core.Config.EventBrowser_TimeUnit;
             EventBrowser_HideEmpty.Checked = m_Core.Config.EventBrowser_HideEmpty;
+            EventBrowser_ApplyColours.Checked = m_Core.Config.EventBrowser_ApplyColours;
+            EventBrowser_ColourEventRow.Checked = m_Core.Config.EventBrowser_ColourEventRow;
+
+            // disable sub-checkbox
+            EventBrowser_ColourEventRow.Enabled = EventBrowser_ApplyColours.Checked;
 
             initialising = true;
 
@@ -173,6 +183,13 @@ namespace renderdocui.Windows.Dialogs
                 m_Core.CaptureDialog.UpdateGlobalHook();
         }
 
+        private void AlwaysReplayLocally_CheckedChanged(object sender, EventArgs e)
+        {
+            m_Core.Config.AlwaysReplayLocally = AlwaysReplayLocally.Checked;
+
+            m_Core.Config.Serialize(Core.ConfigFilename);
+        }
+
         private void EventBrowser_TimeUnit_SelectionChangeCommitted(object sender, EventArgs e)
         {
             m_Core.Config.EventBrowser_TimeUnit = (PersistantConfig.TimeUnit)EventBrowser_TimeUnit.SelectedIndex;
@@ -187,14 +204,53 @@ namespace renderdocui.Windows.Dialogs
             m_Core.Config.Serialize(Core.ConfigFilename);
         }
 
-        private void browseCaptureDirectory_Click(object sender, EventArgs e)
+        private void EventBrowser_ApplyColours_CheckedChanged(object sender, EventArgs e)
+        {
+            m_Core.Config.EventBrowser_ApplyColours = EventBrowser_ApplyColours.Checked;
+
+            // disable sub-checkbox
+            EventBrowser_ColourEventRow.Enabled = EventBrowser_ApplyColours.Checked;
+
+            m_Core.Config.Serialize(Core.ConfigFilename);
+        }
+
+        private void EventBrowser_ColourEventRow_CheckedChanged(object sender, EventArgs e)
+        {
+            m_Core.Config.EventBrowser_ColourEventRow = EventBrowser_ColourEventRow.Checked;
+
+            m_Core.Config.Serialize(Core.ConfigFilename);
+        }
+
+        private void tempDirectory_TextChanged(object sender, EventArgs e)
         {
             try
             {
-                if (Directory.Exists(m_Core.Config.CaptureSavePath))
-                    browserCaptureDialog.SelectedPath = m_Core.Config.CaptureSavePath;
+                if (Directory.Exists(tempDirectory.Text))
+                    m_Core.Config.TemporaryCaptureDirectory = tempDirectory.Text;
                 else
-                    browserCaptureDialog.SelectedPath = Path.GetTempPath();
+                    m_Core.Config.TemporaryCaptureDirectory = "";
+
+                m_Core.Config.Serialize(Core.ConfigFilename);
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        private void browseTempCaptureDirectory_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                try
+                {
+                    if (Directory.Exists(m_Core.Config.TemporaryCaptureDirectory))
+                        browserCaptureDialog.SelectedPath = m_Core.Config.TemporaryCaptureDirectory;
+                    else
+                        browserCaptureDialog.SelectedPath = Path.GetTempPath();
+                }
+                catch (Exception)
+                {
+                }
             }
             catch (ArgumentException)
             {
@@ -205,8 +261,81 @@ namespace renderdocui.Windows.Dialogs
 
             if (res == DialogResult.Yes || res == DialogResult.OK)
             {
-                m_Core.Config.CaptureSavePath = browserCaptureDialog.SelectedPath;
+                try
+                {
+                    m_Core.Config.TemporaryCaptureDirectory = browserCaptureDialog.SelectedPath;
+
+                    m_Core.Config.Serialize(Core.ConfigFilename);
+                }
+                catch (Exception)
+                {
+                }
             }
+        }
+
+        private void saveDirectory_TextChanged(object sender, EventArgs e)
+        {
+            try
+            {
+                if (Directory.Exists(saveDirectory.Text))
+                    m_Core.Config.DefaultCaptureSaveDirectory = saveDirectory.Text;
+
+                m_Core.Config.Serialize(Core.ConfigFilename);
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        private void browseSaveCaptureDirectory_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                try
+                {
+                    if (Directory.Exists(m_Core.Config.DefaultCaptureSaveDirectory))
+                        browserCaptureDialog.SelectedPath = m_Core.Config.DefaultCaptureSaveDirectory;
+                    else
+                        browserCaptureDialog.SelectedPath = "";
+                }
+                catch (Exception)
+                {
+                }
+            }
+            catch (ArgumentException)
+            {
+                // invalid path or similar
+            }
+
+            var res = browserCaptureDialog.ShowDialog();
+
+            if (res == DialogResult.Yes || res == DialogResult.OK)
+            {
+                try
+                {
+                    m_Core.Config.DefaultCaptureSaveDirectory = browserCaptureDialog.SelectedPath;
+                    saveDirectory.Text = browserCaptureDialog.SelectedPath;
+
+                    m_Core.Config.Serialize(Core.ConfigFilename);
+                }
+                catch (Exception)
+                {
+                }
+            }
+        }
+
+        private void chooseSearchPaths_Click(object sender, EventArgs e)
+        {
+            var editor = new OrderedListEditor(m_Core, "Shader debug info search paths", "Search Path", OrderedListEditor.Browsing.Folder);
+
+            foreach (string path in m_Core.Config.GetConfigSetting("shader.debug.searchPaths").Split(';'))
+                if(path.Trim() != "")
+                    editor.AddItem(path);
+
+            DialogResult res = editor.ShowDialog();
+
+            if (res == DialogResult.OK)
+                m_Core.Config.SetConfigSetting("shader.debug.searchPaths", String.Join(";", editor.GetItems()));
         }
     }
 }

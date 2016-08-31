@@ -253,6 +253,17 @@ namespace TreelistView
 			m_hScrollPanel.Controls.Add(m_hScroll);
 			m_hScrollPanel.Controls.Add(m_hScrollFiller);
 			Controls.Add(m_hScrollPanel);
+
+			// try and force handle creation here, as it can fail randomly
+			// at runtime with weird side-effects (See github #202).
+			bool handlesCreated = false;
+			handlesCreated |= m_hScroll.Handle.ToInt64() > 0;
+			handlesCreated |= m_vScroll.Handle.ToInt64() > 0;
+			handlesCreated |= m_hScrollFiller.Handle.ToInt64() > 0;
+			handlesCreated |= m_hScrollPanel.Handle.ToInt64() > 0;
+
+			if (!handlesCreated)
+				renderdoc.StaticExports.LogText("Couldn't create any handles!");
 		}
 		
 		VScrollBar	m_vScroll;
@@ -996,8 +1007,10 @@ namespace TreelistView
 					int indentSize = GetIndentSize(node) + 5;
 					cellRect.X += indentSize;
 					cellRect.Width -= indentSize;
-					if (ViewOptions.ShowLine)
-						PaintLines(dc, cellRect, node);
+
+                    // save rectangle for line drawing below
+                    Rectangle lineCellRect = cellRect;
+
 					cellRect.X += lineindet;
 					cellRect.Width -= lineindet;
 
@@ -1015,7 +1028,10 @@ namespace TreelistView
 
 					Image icon = hoverNode != null && hoverNode == node ? GetHoverNodeBitmap(node) : GetNodeBitmap(node);
 
-					PaintCellBackground(dc, cellRect, node, col);
+                    PaintCellBackground(dc, cellRect, node, col);
+
+                    if (ViewOptions.ShowLine)
+                        PaintLines(dc, lineCellRect, node);
 
                     if (SelectedImage != null && (NodesSelection.Contains(node) || FocusedNode == node))
                     {
@@ -1079,9 +1095,16 @@ namespace TreelistView
 			Node parent = node.Parent;
 			while (parent != null)
 			{
+                Pen linePen = null;
+                if (parent.TreeLineColor != Color.Transparent || parent.TreeLineWidth > 0.0f)
+                    linePen = new Pen(parent.TreeLineColor, parent.TreeLineWidth);
+
 				cellRect.X -= ViewOptions.Indent;
-                dc.DrawLine(pen, cellRect.X, cellRect.Top, cellRect.X, cellRect.Bottom);
+                dc.DrawLine(linePen != null ? linePen : pen, cellRect.X, cellRect.Top, cellRect.X, cellRect.Bottom);
 				parent = parent.Parent;
+
+                if (linePen != null)
+                    linePen.Dispose();
 			}
 
 			pen.Dispose();

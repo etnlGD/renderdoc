@@ -57,6 +57,7 @@ namespace renderdocui.Code
 
         private PersistantConfig m_Config = null;
 
+        private bool m_LogLocal = false;
         private bool m_LogLoaded = false;
 
         private FileSystemWatcher m_LogWatcher = null;
@@ -87,6 +88,7 @@ namespace renderdocui.Code
         private DebugMessages m_DebugMessages = null;
         private TimelineBar m_TimelineBar = null;
         private TextureViewer m_TextureViewer = null;
+        private BufferViewer m_MeshViewer = null;
         private PipelineStateViewer m_PipelineStateViewer = null;
         private StatisticsViewer m_StatisticsViewer = null;
 
@@ -115,6 +117,7 @@ namespace renderdocui.Code
         public bool LogLoaded { get { return m_LogLoaded; } }
         public bool LogLoading { get { return m_LogLoadingInProgress; } }
         public string LogFileName { get { return m_LogFile; } set { if (LogLoaded) m_LogFile = value; } }
+        public bool IsLogLocal { get { return m_LogLocal; } set { m_LogLocal = value; } }
 
         public FetchFrameInfo FrameInfo { get { return m_FrameInfo; } }
 
@@ -360,8 +363,9 @@ namespace renderdocui.Code
 
                 FetchDrawcall mark = new FetchDrawcall();
                 
-                mark.eventID = draws[end].eventID;
-                mark.drawcallID = draws[end].drawcallID;
+                mark.eventID = draws[start].eventID;
+                mark.drawcallID = draws[start].drawcallID;
+                mark.markerColour = new float[] { 0.0f, 0.0f, 0.0f, 0.0f };
 
                 mark.context = draws[end].context;
                 mark.flags = DrawcallFlags.PushMarker;
@@ -404,17 +408,58 @@ namespace renderdocui.Code
             return ret.ToArray();
         }
 
-        // loading a local log, no remote replay
-        public void LoadLogfile(string logFile, bool temporary)
+        // because some engines (*cough*unreal*cough*) provide a valid marker colour of
+        // opaque black for every marker, instead of transparent black (i.e. just 0) we
+        // want to check for that case and remove the colors, instead of displaying all
+        // the markers as black which is not what's intended.
+        //
+        // Valid marker colors = has at least one color somewhere that isn't (0.0, 0.0, 0.0, 1.0)
+        //                       or (0.0, 0.0, 0.0, 0.0)
+        //
+        // This will fail if no marker colors are set anyway, but then removing them is
+        // harmless.
+        private bool HasValidMarkerColors(FetchDrawcall[] draws)
         {
-            LoadLogfile(-1, "", logFile, temporary);
+            if (draws.Length == 0)
+                return false;
+
+            foreach (var d in draws)
+            {
+                if (d.markerColour[0] != 0.0f ||
+                     d.markerColour[1] != 0.0f ||
+                     d.markerColour[2] != 0.0f ||
+                     (d.markerColour[3] != 1.0f && d.markerColour[3] != 0.0f))
+                {
+                    return true;
+                }
+
+                if (HasValidMarkerColors(d.children))
+                    return true;
+            }
+
+            return false;
         }
 
-        // when loading a log while replaying remotely, provide the proxy renderer that will be used
-        // as well as the hostname to replay on.
-        public void LoadLogfile(int proxyRenderer, string replayHost, string logFile, bool temporary)
+        private void RemoveMarkerColors(FetchDrawcall[] draws)
         {
-            m_LogFile = logFile;
+            for (int i = 0; i < draws.Length; i++)
+            {
+                draws[i].markerColour[0] = 0.0f;
+                draws[i].markerColour[1] = 0.0f;
+                draws[i].markerColour[2] = 0.0f;
+                draws[i].markerColour[3] = 0.0f;
+
+                RemoveMarkerColors(draws[i].children);
+            }
+        }
+
+        // generally logFile == origFilename, but if the log was transferred remotely then origFilename
+        // is the log locally before being copied we can present to the user in dialogs, etc.
+        public void LoadLogfile(string logFile, string origFilename, bool temporary, bool local)
+        {
+            m_LogFile = origFilename;
+
+            m_LogLocal = local;
 
             m_LogLoadingInProgress = true;
 
@@ -427,11 +472,11 @@ namespace renderdocui.Code
 
             // start a modal dialog to prevent the user interacting with the form while the log is loading.
             // We'll close it down when log loading finishes (whether it succeeds or fails)
-            ModalPopup modal = new ModalPopup(LogLoadCallback, true);
+            ProgressPopup modal = new ProgressPopup(LogLoadCallback, true);
 
             Thread modalThread = Helpers.NewThread(new ThreadStart(() =>
             {
-                modal.SetModalText(string.Format("Loading Log {0}.", m_LogFile));
+                modal.SetModalText(string.Format("Loading Log: {0}", origFilename));
 
                 AppWindow.BeginInvoke(new Action(() =>
                 {
@@ -464,22 +509,15 @@ namespace renderdocui.Code
             thread.Start();
 
             // this function call will block until the log is either loaded, or there's some failure
-            m_Renderer.Init(proxyRenderer, replayHost, logFile);
+            m_Renderer.OpenCapture(logFile);
 
             // if the renderer isn't running, we hit a failure case so display an error message
             if (!m_Renderer.Running)
             {
-                string errmsg = "Unknown error message";
-                if (m_Renderer.InitException.Data.Contains("status"))
-                    errmsg = ((ReplayCreateStatus)m_Renderer.InitException.Data["status"]).Str();
+                string errmsg = m_Renderer.InitException.Status.Str();
 
-                if(proxyRenderer >= 0)
-                    MessageBox.Show(String.Format("{0}\nFailed to transfer and replay on remote host {1}: {2}.\n\n" +
-                                                    "Check diagnostic log in Help menu for more details.", logFile, replayHost, errmsg),
-                                    "Error opening log", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                else
-                    MessageBox.Show(String.Format("{0}\nFailed to open logfile for replay: {1}.\n\n" +
-                                                    "Check diagnostic log in Help menu for more details.", logFile, errmsg),
+                MessageBox.Show(String.Format("{0}\nFailed to open file for replay: {1}.\n\n" +
+                                              "Check diagnostic log in Help menu for more details.", origFilename, errmsg),
                                     "Error opening log", MessageBoxButtons.OK, MessageBoxIcon.Error);
 
                 progressThread = false;
@@ -497,7 +535,7 @@ namespace renderdocui.Code
 
             if (!temporary)
             {
-                m_Config.AddRecentFile(m_Config.RecentLogFiles, logFile, 10);
+                m_Config.AddRecentFile(m_Config.RecentLogFiles, origFilename, 10);
 
                 if (File.Exists(Core.ConfigFilename))
                     m_Config.Serialize(Core.ConfigFilename);
@@ -518,6 +556,11 @@ namespace renderdocui.Code
                 postloadProgress = 0.2f;
 
                 m_DrawCalls = FakeProfileMarkers(r.GetDrawcalls());
+
+                bool valid = HasValidMarkerColors(m_DrawCalls);
+
+                if (!valid)
+                    RemoveMarkerColors(m_DrawCalls);
 
                 postloadProgress = 0.4f;
 
@@ -552,19 +595,22 @@ namespace renderdocui.Code
                 MessageBox.Show(String.Format("{0}\nThis log opened with degraded support - " +
                                                 "this could mean missing hardware support caused a fallback to software rendering.\n\n" +
                                                 "This warning will not appear every time this happens, " +
-                                                "check debug errors/warnings window for more details.", logFile),
+                                                "check debug errors/warnings window for more details.", origFilename),
                                 "Degraded support of log", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
             }
 
             m_LogLoaded = true;
             progressThread = false;
 
-            m_LogWatcher = new FileSystemWatcher(Path.GetDirectoryName(m_LogFile), Path.GetFileName(m_LogFile));
-            m_LogWatcher.EnableRaisingEvents = true;
-            m_LogWatcher.NotifyFilter = NotifyFilters.Size | NotifyFilters.FileName | NotifyFilters.LastAccess | NotifyFilters.LastWrite;
-            m_LogWatcher.Created += new FileSystemEventHandler(OnLogfileChanged);
-            m_LogWatcher.Changed += new FileSystemEventHandler(OnLogfileChanged);
-            m_LogWatcher.SynchronizingObject = m_MainWindow; // callbacks on UI thread please
+            if (local)
+            {
+                m_LogWatcher = new FileSystemWatcher(Path.GetDirectoryName(m_LogFile), Path.GetFileName(m_LogFile));
+                m_LogWatcher.EnableRaisingEvents = true;
+                m_LogWatcher.NotifyFilter = NotifyFilters.Size | NotifyFilters.FileName | NotifyFilters.LastAccess | NotifyFilters.LastWrite;
+                m_LogWatcher.Created += new FileSystemEventHandler(OnLogfileChanged);
+                m_LogWatcher.Changed += new FileSystemEventHandler(OnLogfileChanged);
+                m_LogWatcher.SynchronizingObject = m_MainWindow; // callbacks on UI thread please
+            }
 
             List<ILogViewerForm> logviewers = new List<ILogViewerForm>();
             logviewers.AddRange(m_LogViewers);
@@ -621,7 +667,6 @@ namespace renderdocui.Code
             m_LogFile = "";
 
             m_Renderer.CloseThreadSync();
-            m_Renderer = new RenderManager();
 
             m_APIProperties = null;
             m_FrameInfo = null;
@@ -655,7 +700,7 @@ namespace renderdocui.Code
 
         public String TempLogFilename(String appname)
         {
-            string folder = Config.CaptureSavePath;
+            string folder = Config.TemporaryCaptureDirectory;
             try
             {
                 if (folder.Length == 0 || !Directory.Exists(folder))
@@ -729,6 +774,17 @@ namespace renderdocui.Code
             }
 
             return m_TextureViewer;
+        }
+
+        public BufferViewer GetMeshViewer()
+        {
+            if (m_MeshViewer == null || m_MeshViewer.IsDisposed)
+            {
+                m_MeshViewer = new BufferViewer(this, true);
+                AddLogViewer(m_MeshViewer);
+            }
+
+            return m_MeshViewer;
         }
 
         public PipelineStateViewer GetPipelineStateViewer()

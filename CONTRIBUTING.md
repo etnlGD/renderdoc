@@ -1,5 +1,28 @@
-Contributing & Development
+Commit Messages
+---------------
+
+Ensure commit messages have a single title followed by a body as necessary:
+
+```
+Short summary text, maximum of 72 characters. That's out to here ---->X
+
+Longer paragraph that details the change and any logic behind needing
+to make the change, other impacts, future work etc. Keeping the title
+to 72 characters means it will display fully in git log and github logs.
+```
+
+Code formatting
+---------------
+
+To make things easier for everyone, I've adopted clang-format for keeping code consistently formatted. Ensure that your commits are clean against [clang-format-3.8](http://llvm.org/releases/3.8.0/tools/clang/docs/ClangFormatStyleOptions.html). Please avoid making commits which don't follow conventions, and then having a single 'reformatting' commit at the end - this makes history and blames harder to read.
+
+Copyright / Contributor License Agreement
 --------------
+
+Any code you submit will become part of the repository and be distributed under the [RenderDoc license](LICENSE.md). By submitting code to the project you agree that the code is your own work and that you have the ability to give it to the project. You also agree by submitting your code that you grant all transferrable rights to the code to the project maintainer, including for example re-licensing the code, modifying the code, distributing in source or binary forms.
+
+Contributing & Development
+--------------------------
 
 There are always plenty of things to do, if you'd like to chip in! Check out the [Roadmap](https://github.com/baldurk/renderdoc/wiki/Roadmap) page in the wiki for future tasks to tackle, or have a look at the [issues](https://github.com/baldurk/renderdoc/issues) for outstanding bugs. I'll try and tag things that seem like small changes that would be a good way for someone to get started with.
 
@@ -11,24 +34,10 @@ If you're tackling anything large then please contact me and post an issue so th
 
 To get started compiling there are instructions in [COMPILE.md](COMPILE.md)
 
-Commit Messages
+Code of Conduct
 --------------
 
-Ideally keep your commit messages to the form:
-
-```
-Short summary text, maximum 72 characters
-
-Longer paragraph that details the change and any logic behind needing
-to make the change, other impacts, future work etc.
-```
-
-I like to make the second paragraph bulletted with *s as you can probably see if you look over the commit history, but this is just personal preference and you can format it any way you like. It's important to keep the first line under 72 characters as this way it will display fully in git log output and in all of github's log previews.
-
-Copyright / Contributor License Agreement
---------------
-
-Any code you submit will become part of the repository and be distributed under the [RenderDoc license](LICENSE.md). By submitting code to the project you agree that the code is your own work and that you have the ability to give it to the project. You also agree by submitting your code that you grant all transferrable rights to the code to the project maintainer, including for example re-licensing the code, modifying the code, distributing in source or binary forms.
+I want to ensure that anyone can contribute to RenderDoc with only the next bug to worry about. For that reason the project has adopted the [contributor covenent](CODE_OF_CONDUCT.md) as a code of conduct to be enforced for anyone taking part in RenderDoc development. If you have any queries in this regard you can get in touch with me [directly over email](mailto:baldurk@baldurk.org).
 
 Code Explanation
 --------------

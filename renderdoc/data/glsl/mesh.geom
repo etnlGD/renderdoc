@@ -21,44 +21,39 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  * THE SOFTWARE.
  ******************************************************************************/
- 
-#version 420 core
 
 layout(triangles, invocations = 1) in;
 layout(triangle_strip, max_vertices = 3) out;
 
-in v2f
-{
-	vec4 secondary;
-	vec4 norm;
-} IN[];
+layout (location = 0) in vec4 IN_secondary[3];
+layout (location = 1) in vec4 IN_norm[3];
 
-out v2f
-{
-	vec4 secondary;
-	vec4 norm;
-} OUT;
+layout (location = 0) out vec4 OUT_secondary;
+layout (location = 1) out vec4 OUT_norm;
 
-uniform mat4 InvProj;
+in gl_PerVertex
+{
+  vec4 gl_Position;
+  float gl_PointSize;
+} gl_in[];
 
 out gl_PerVertex
 {
 	vec4 gl_Position;
 	float gl_PointSize;
-	float gl_ClipDistance[];
 };
 
 void main()
 {
-    vec4 faceEdgeA = (InvProj * gl_in[1].gl_Position) - (InvProj * gl_in[0].gl_Position);
-    vec4 faceEdgeB = (InvProj * gl_in[2].gl_Position) - (InvProj * gl_in[0].gl_Position);
+    vec4 faceEdgeA = (Mesh.invProj * gl_in[1].gl_Position) - (Mesh.invProj * gl_in[0].gl_Position);
+    vec4 faceEdgeB = (Mesh.invProj * gl_in[2].gl_Position) - (Mesh.invProj * gl_in[0].gl_Position);
     vec3 faceNormal = normalize( cross(faceEdgeA.xyz, faceEdgeB.xyz) );
 
     for(int i=0; i < 3; i++)
     {
 		gl_Position = gl_in[i].gl_Position;
-		OUT.secondary = IN[i].secondary;
-		OUT.norm = vec4(faceNormal.xyz, 1);
+		OUT_secondary = IN_secondary[i];
+		OUT_norm = vec4(faceNormal.xyz, 1);
         EmitVertex();
     }
     EndPrimitive();

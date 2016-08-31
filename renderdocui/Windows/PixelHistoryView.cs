@@ -233,6 +233,8 @@ namespace renderdocui.Windows
         {
             string s = "";
 
+            if (mod.sampleMasked)
+                s += "\nMasked by SampleMask";
             if (mod.backfaceCulled)
                 s += "\nBackface culled";
             if (mod.depthClipped)
@@ -292,8 +294,13 @@ namespace renderdocui.Windows
 
                 ResourceFormat fmt = new ResourceFormat(floatTex ? FormatComponentType.Float : texture.format.compType, 4, 4);
 
-                string shadOutVal = "Shader Out\n\n" + ModificationValueString(mod.shaderOut, fmt, depth);
+                string shadOutVal;
                 string postModVal = "Tex After\n\n" + ModificationValueString(mod.postMod, texture.format, depth);
+
+                if (mod.unboundPS)
+                    shadOutVal = "No Pixel\nShader\nBound";
+                else
+                    shadOutVal = "Shader Out\n\n" + ModificationValueString(mod.shaderOut, fmt, depth);
 
                 if (!mod.EventPassed() && hideFailedEventsToolStripMenuItem.Checked)
                     return null;
@@ -473,22 +480,52 @@ namespace renderdocui.Windows
             if (e.Button == MouseButtons.Right)
             {
                 debugToolStripMenuItem.Enabled = false;
-
                 debugToolStripMenuItem.Text = "Debug Pixel";
+
+                jumpToPrimitiveMenuItem.Visible = false;
 
                 if (events.SelectedNode != null && events.SelectedNode.Tag != null && events.SelectedNode.Tag is EventTag)
                 {
                     EventTag tag = (EventTag)events.SelectedNode.Tag;
                     debugToolStripMenuItem.Enabled = true;
                     if (tag.Primitive == uint.MaxValue)
+                    {
                         debugToolStripMenuItem.Text = String.Format("Debug Pixel ({0}, {1}) at Event {3}",
                                                                         pixel.X, pixel.Y, tag.Primitive, tag.EID);
+                    }
                     else
+                    {
                         debugToolStripMenuItem.Text = String.Format("Debug Pixel ({0}, {1}) primitive {2} at Event {3}",
                                                                         pixel.X, pixel.Y, tag.Primitive, tag.EID);
+
+                        jumpToPrimitiveMenuItem.Text = String.Format("Show primitive {0} at Event {1}", tag.Primitive, tag.EID);
+                        jumpToPrimitiveMenuItem.Visible = true;
+                    }
                 }
 
                 rightclickMenu.Show(events.PointToScreen(e.Location));
+            }
+        }
+
+        private void jumpToPrimitiveMenuItem_Click(object sender, EventArgs e)
+        {
+            if (events.SelectedNode == null) return;
+
+            var node = events.SelectedNode;
+
+            if (node.Tag is EventTag)
+            {
+                EventTag tag = (EventTag)node.Tag;
+
+                m_Core.SetEventID(this, tag.EID);
+
+                UInt32 vertIdx = m_Core.CurDrawcall.topology.GetVertexOffset(tag.Primitive);
+
+                var viewer = m_Core.GetMeshViewer();
+                viewer.Show(DockPanel);
+
+                if (!viewer.IsDisposed && vertIdx != ~0U)
+                    viewer.RowOffset = (int)vertIdx;
             }
         }
 

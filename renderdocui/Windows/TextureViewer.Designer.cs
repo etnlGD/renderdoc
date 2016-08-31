@@ -55,6 +55,8 @@
             this.showEmpty = new System.Windows.Forms.ToolStripMenuItem();
             this.usedSep = new System.Windows.Forms.ToolStripSeparator();
             this.openNewTab = new System.Windows.Forms.ToolStripMenuItem();
+            this.toolStripSeparator1 = new System.Windows.Forms.ToolStripSeparator();
+            this.imageInLayoutMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.usedStartLabel = new System.Windows.Forms.ToolStripMenuItem();
             this.colorDialog = new System.Windows.Forms.ColorDialog();
             this.toolstripMenu = new System.Windows.Forms.ContextMenuStrip(this.components);
@@ -76,6 +78,7 @@
             this.stencilDisplay = new System.Windows.Forms.RadioButton();
             this.zoomStrip = new System.Windows.Forms.ToolStrip();
             this.toolStripLabel4 = new System.Windows.Forms.ToolStripLabel();
+            this.zoomExactSize = new System.Windows.Forms.ToolStripButton();
             this.fitToWindow = new System.Windows.Forms.ToolStripButton();
             this.zoomOption = new System.Windows.Forms.ToolStripComboBox();
             this.flip_y = new System.Windows.Forms.ToolStripButton();
@@ -121,6 +124,7 @@
             this.actionsStrip = new System.Windows.Forms.ToolStrip();
             this.saveTex = new System.Windows.Forms.ToolStripButton();
             this.texListShow = new System.Windows.Forms.ToolStripButton();
+            this.viewTexBuffer = new System.Windows.Forms.ToolStripButton();
             this.texlistContainer = new System.Windows.Forms.TableLayoutPanel();
             this.textureList = new renderdocui.Controls.TextureListBox();
             this.texturefilter = new System.Windows.Forms.ComboBox();
@@ -147,7 +151,7 @@
             this.pixelContextMenu = new System.Windows.Forms.ContextMenuStrip(this.components);
             this.highlightedPixelHistoryToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.highlightedPixelDebugToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
-            this.viewTexBuffer = new System.Windows.Forms.ToolStripButton();
+            this.gotoLocationButton = new System.Windows.Forms.ToolStripButton();
             subSep = new System.Windows.Forms.ToolStripSeparator();
             toolStripLabel2 = new System.Windows.Forms.ToolStripLabel();
             toolStripLabel3 = new System.Windows.Forms.ToolStripLabel();
@@ -212,10 +216,12 @@
             this.showEmpty,
             this.usedSep,
             this.openNewTab,
+            this.toolStripSeparator1,
+            this.imageInLayoutMenuItem,
             this.usedStartLabel});
             this.rightclickMenu.MaximumSize = new System.Drawing.Size(0, 480);
             this.rightclickMenu.Name = "rightclickMenu";
-            this.rightclickMenu.Size = new System.Drawing.Size(181, 98);
+            this.rightclickMenu.Size = new System.Drawing.Size(181, 126);
             // 
             // showDisabled
             // 
@@ -243,6 +249,17 @@
             this.openNewTab.Size = new System.Drawing.Size(180, 22);
             this.openNewTab.Text = "Open new Locked Tab";
             this.openNewTab.Click += new System.EventHandler(this.resourceContextItem_Click);
+            // 
+            // toolStripSeparator1
+            // 
+            this.toolStripSeparator1.Name = "toolStripSeparator1";
+            this.toolStripSeparator1.Size = new System.Drawing.Size(177, 6);
+            // 
+            // imageInLayoutMenuItem
+            // 
+            this.imageInLayoutMenuItem.Name = "imageInLayoutMenuItem";
+            this.imageInLayoutMenuItem.Size = new System.Drawing.Size(180, 22);
+            this.imageInLayoutMenuItem.Text = "Image in layout <X>";
             // 
             // usedStartLabel
             // 
@@ -473,13 +490,14 @@
             this.zoomStrip.GripStyle = System.Windows.Forms.ToolStripGripStyle.Hidden;
             this.zoomStrip.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
             this.toolStripLabel4,
+            this.zoomExactSize,
             this.fitToWindow,
             this.zoomOption,
             this.flip_y});
             this.zoomStrip.Location = new System.Drawing.Point(0, 50);
             this.zoomStrip.Margin = new System.Windows.Forms.Padding(0, 0, 12, 0);
             this.zoomStrip.Name = "zoomStrip";
-            this.zoomStrip.Size = new System.Drawing.Size(227, 25);
+            this.zoomStrip.Size = new System.Drawing.Size(254, 25);
             this.zoomStrip.TabIndex = 2;
             // 
             // toolStripLabel4
@@ -487,6 +505,16 @@
             this.toolStripLabel4.Name = "toolStripLabel4";
             this.toolStripLabel4.Size = new System.Drawing.Size(33, 22);
             this.toolStripLabel4.Text = "Zoom";
+            // 
+            // zoomExactSize
+            // 
+            this.zoomExactSize.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Text;
+            this.zoomExactSize.Image = ((System.Drawing.Image)(resources.GetObject("zoomExactSize.Image")));
+            this.zoomExactSize.ImageTransparentColor = System.Drawing.Color.Magenta;
+            this.zoomExactSize.Name = "zoomExactSize";
+            this.zoomExactSize.Size = new System.Drawing.Size(27, 22);
+            this.zoomExactSize.Text = "1:1";
+            this.zoomExactSize.Click += new System.EventHandler(this.zoomExactSize_Click);
             // 
             // fitToWindow
             // 
@@ -536,7 +564,7 @@
             this.overlayStrip.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
             this.toolStripLabel5,
             this.overlay});
-            this.overlayStrip.Location = new System.Drawing.Point(239, 50);
+            this.overlayStrip.Location = new System.Drawing.Point(266, 50);
             this.overlayStrip.Margin = new System.Windows.Forms.Padding(0, 0, 12, 0);
             this.overlayStrip.Name = "overlayStrip";
             this.overlayStrip.Size = new System.Drawing.Size(171, 25);
@@ -631,7 +659,7 @@
             this.autoFit,
             this.reset01,
             this.visualiseRange});
-            this.rangeStrip.Location = new System.Drawing.Point(422, 50);
+            this.rangeStrip.Location = new System.Drawing.Point(449, 50);
             this.rangeStrip.Margin = new System.Windows.Forms.Padding(0, 0, 12, 0);
             this.rangeStrip.Name = "rangeStrip";
             this.rangeStrip.Size = new System.Drawing.Size(337, 25);
@@ -640,7 +668,7 @@
             // rangeBlack
             // 
             this.rangeBlack.Name = "rangeBlack";
-            this.rangeBlack.Size = new System.Drawing.Size(50, 25);
+            this.rangeBlack.Size = new System.Drawing.Size(100, 25);
             this.rangeBlack.Text = "0.0";
             this.rangeBlack.Leave += new System.EventHandler(this.rangePoint_Leave);
             this.rangeBlack.KeyPress += new System.Windows.Forms.KeyPressEventHandler(this.rangePoint_KeyPress);
@@ -649,7 +677,7 @@
             // rangeWhite
             // 
             this.rangeWhite.Name = "rangeWhite";
-            this.rangeWhite.Size = new System.Drawing.Size(50, 25);
+            this.rangeWhite.Size = new System.Drawing.Size(100, 25);
             this.rangeWhite.Text = "1.0";
             this.rangeWhite.Leave += new System.EventHandler(this.rangePoint_Leave);
             this.rangeWhite.KeyPress += new System.Windows.Forms.KeyPressEventHandler(this.rangePoint_KeyPress);
@@ -978,11 +1006,12 @@
             toolStripLabel1,
             this.saveTex,
             this.texListShow,
-            this.viewTexBuffer});
+            this.viewTexBuffer,
+            this.gotoLocationButton});
             this.actionsStrip.Location = new System.Drawing.Point(0, 25);
             this.actionsStrip.Margin = new System.Windows.Forms.Padding(0, 0, 12, 0);
             this.actionsStrip.Name = "actionsStrip";
-            this.actionsStrip.Size = new System.Drawing.Size(122, 25);
+            this.actionsStrip.Size = new System.Drawing.Size(168, 25);
             this.actionsStrip.TabIndex = 8;
             this.actionsStrip.Text = "toolStrip1";
             // 
@@ -1005,6 +1034,16 @@
             this.texListShow.Size = new System.Drawing.Size(23, 22);
             this.texListShow.Text = "Open Texture List";
             this.texListShow.Click += new System.EventHandler(this.texListShow_Click);
+            // 
+            // viewTexBuffer
+            // 
+            this.viewTexBuffer.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Image;
+            this.viewTexBuffer.Image = global::renderdocui.Properties.Resources.page_white_code;
+            this.viewTexBuffer.ImageTransparentColor = System.Drawing.Color.Magenta;
+            this.viewTexBuffer.Name = "viewTexBuffer";
+            this.viewTexBuffer.Size = new System.Drawing.Size(23, 22);
+            this.viewTexBuffer.Text = "Open Texture as Buffer";
+            this.viewTexBuffer.Click += new System.EventHandler(this.viewTexBuffer_Click);
             // 
             // texlistContainer
             // 
@@ -1117,7 +1156,7 @@
             // 
             // renderContainer
             // 
-            this.renderContainer.BackColor = System.Drawing.Color.Maroon;
+            this.renderContainer.BackColor = System.Drawing.Color.Transparent;
             this.renderContainer.Controls.Add(this.render);
             this.renderContainer.Dock = System.Windows.Forms.DockStyle.Fill;
             this.renderContainer.Location = new System.Drawing.Point(0, 0);
@@ -1128,19 +1167,7 @@
             // 
             // render
             // 
-            this.render.BackColor = System.Drawing.Color.Black;
-            this.render.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.render.Location = new System.Drawing.Point(0, 0);
-            this.render.Name = "render";
-            this.render.Size = new System.Drawing.Size(404, 230);
-            this.render.TabIndex = 0;
-            this.render.Paint += new System.Windows.Forms.PaintEventHandler(this.render_Paint);
-            this.render.Layout += new System.Windows.Forms.LayoutEventHandler(this.render_Layout);
-            this.render.MouseClick += new System.Windows.Forms.MouseEventHandler(this.render_MouseClick);
-            this.render.MouseDown += new System.Windows.Forms.MouseEventHandler(this.render_MouseClick);
-            this.render.MouseLeave += new System.EventHandler(this.render_MouseLeave);
-            this.render.MouseMove += new System.Windows.Forms.MouseEventHandler(this.render_MouseMove);
-            this.render.MouseUp += new System.Windows.Forms.MouseEventHandler(this.render_MouseUp);
+            this.render.Name = "render_SETUP_AT_RUNTIME_SEE_CODE";
             // 
             // renderVScroll
             // 
@@ -1180,15 +1207,7 @@
             // 
             // pixelContext
             // 
-            this.pixelContext.BackColor = System.Drawing.Color.Transparent;
-            this.pixelContextPanel.SetColumnSpan(this.pixelContext, 2);
-            this.pixelContext.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.pixelContext.Location = new System.Drawing.Point(3, 3);
-            this.pixelContext.Name = "pixelContext";
-            this.pixelContext.Size = new System.Drawing.Size(209, 121);
-            this.pixelContext.TabIndex = 6;
-            this.pixelContext.Paint += new System.Windows.Forms.PaintEventHandler(this.pixelContext_Paint);
-            this.pixelContext.MouseClick += new System.Windows.Forms.MouseEventHandler(this.pixelContext_MouseClick);
+            this.pixelContext.Name = "pixelContext_SETUP_AT_RUNTIME_SEE_CODE";
             // 
             // debugPixelContext
             // 
@@ -1246,27 +1265,27 @@
             this.closeTabsToRight.Text = "Close tabs to right";
             this.closeTabsToRight.Click += new System.EventHandler(this.closeTabsToRight_Click);
             // 
-            // texPanel
+            // roPanel
             // 
             this.roPanel.AutoScroll = true;
             this.roPanel.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
             this.roPanel.Location = new System.Drawing.Point(461, 373);
             this.roPanel.Margin = new System.Windows.Forms.Padding(0);
             this.roPanel.MinimumSize = new System.Drawing.Size(2, 60);
-            this.roPanel.Name = "texPanel";
+            this.roPanel.Name = "roPanel";
             this.roPanel.Padding = new System.Windows.Forms.Padding(3);
             this.roPanel.Size = new System.Drawing.Size(200, 60);
             this.roPanel.TabIndex = 3;
             this.roPanel.MouseClick += new System.Windows.Forms.MouseEventHandler(this.thumbsLayout_MouseClick);
             // 
-            // rtPanel
+            // rwPanel
             // 
             this.rwPanel.AutoScroll = true;
             this.rwPanel.BorderStyle = System.Windows.Forms.BorderStyle.FixedSingle;
             this.rwPanel.Location = new System.Drawing.Point(242, 373);
             this.rwPanel.Margin = new System.Windows.Forms.Padding(0);
             this.rwPanel.MinimumSize = new System.Drawing.Size(2, 60);
-            this.rwPanel.Name = "rtPanel";
+            this.rwPanel.Name = "rwPanel";
             this.rwPanel.Size = new System.Drawing.Size(200, 60);
             this.rwPanel.TabIndex = 2;
             this.rwPanel.MouseClick += new System.Windows.Forms.MouseEventHandler(this.thumbsLayout_MouseClick);
@@ -1306,15 +1325,15 @@
             this.highlightedPixelDebugToolStripMenuItem.Text = "Highlighted Pixel &Debug";
             this.highlightedPixelDebugToolStripMenuItem.Click += new System.EventHandler(this.debugPixel_Click);
             // 
-            // viewTexBuffer
+            // gotoLocationButton
             // 
-            this.viewTexBuffer.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Image;
-            this.viewTexBuffer.Image = global::renderdocui.Properties.Resources.page_white_code;
-            this.viewTexBuffer.ImageTransparentColor = System.Drawing.Color.Magenta;
-            this.viewTexBuffer.Name = "viewTexBuffer";
-            this.viewTexBuffer.Size = new System.Drawing.Size(23, 22);
-            this.viewTexBuffer.Text = "Open Texture as Buffer";
-            this.viewTexBuffer.Click += new System.EventHandler(this.viewTexBuffer_Click);
+            this.gotoLocationButton.DisplayStyle = System.Windows.Forms.ToolStripItemDisplayStyle.Image;
+            this.gotoLocationButton.Image = global::renderdocui.Properties.Resources.find;
+            this.gotoLocationButton.ImageTransparentColor = System.Drawing.Color.Magenta;
+            this.gotoLocationButton.Name = "gotoLocationButton";
+            this.gotoLocationButton.Size = new System.Drawing.Size(23, 22);
+            this.gotoLocationButton.Text = "Goto";
+            this.gotoLocationButton.Click += new System.EventHandler(this.gotoLocationButton_Click);
             // 
             // TextureViewer
             // 
@@ -1477,6 +1496,10 @@
         private System.Windows.Forms.ToolStripMenuItem highlightedPixelHistoryToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem highlightedPixelDebugToolStripMenuItem;
         private System.Windows.Forms.ToolStripButton viewTexBuffer;
+        private System.Windows.Forms.ToolStripButton zoomExactSize;
+        private System.Windows.Forms.ToolStripSeparator toolStripSeparator1;
+        private System.Windows.Forms.ToolStripMenuItem imageInLayoutMenuItem;
+        private System.Windows.Forms.ToolStripButton gotoLocationButton;
 
     }
 }

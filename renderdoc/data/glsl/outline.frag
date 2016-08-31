@@ -2,7 +2,6 @@
  * The MIT License (MIT)
  * 
  * Copyright (c) 2015-2016 Baldur Karlsson
- * Copyright (c) 2014 Crytek
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,21 +22,14 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
-#version 420 core
-
 layout (location = 0) out vec4 color_out;
-
-uniform vec4 RENDERDOC_Inner_Color;
-uniform vec4 RENDERDOC_Border_Color;
-uniform vec4 RENDERDOC_ViewRect;
-uniform uint RENDERDOC_Scissor;
 
 void main(void)
 {
-	vec4 ret = RENDERDOC_Inner_Color;
+	vec4 ret = outline.Inner_Color;
 
-	vec2 rectPos = gl_FragCoord.xy - RENDERDOC_ViewRect.xy;
-	vec2 rectSize = RENDERDOC_ViewRect.zw;
+	vec2 rectPos = gl_FragCoord.xy - outline.ViewRect.xy;
+	vec2 rectSize = outline.ViewRect.zw;
  
 	vec2 ab = mod(rectPos.xy, 32.0f.xx);
 
@@ -46,12 +38,12 @@ void main(void)
 			(ab.x > 16 && ab.y > 16)
 		);
 
-	if(RENDERDOC_Scissor == 0)
+	if(outline.Scissor == 0)
 	{
 		if(rectPos.x < 3.0f || rectPos.x > rectSize.x - 3.0f ||
 		   rectPos.y < 3.0f || rectPos.y > rectSize.y - 3.0f)
 		{
-			ret = RENDERDOC_Border_Color;
+			ret = outline.Border_Color;
 		}
 	}
 	else

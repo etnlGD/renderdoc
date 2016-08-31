@@ -53,7 +53,10 @@ namespace renderdocui.Windows.Dialogs
             public string Executable = "";
             public string WorkingDir = "";
             public string CmdLine = "";
+            public EnvironmentModification[] Environment = new EnvironmentModification[0];
         }
+
+        private EnvironmentModification[] m_EnvModifications = new EnvironmentModification[0];
 
         private bool workDirHint = true;
 
@@ -69,6 +72,8 @@ namespace renderdocui.Windows.Dialogs
             workDirPath.Text = settings.WorkingDir;
             cmdline.Text = settings.CmdLine;
 
+            SetEnvironmentModifications(settings.Environment);
+
             workDirPath_Leave(null, null);
 
             AllowFullscreen.Checked = settings.Options.AllowFullscreen;
@@ -76,7 +81,7 @@ namespace renderdocui.Windows.Dialogs
             HookIntoChildren.Checked = settings.Options.HookIntoChildren;
             CaptureCallstacks.Checked = settings.Options.CaptureCallstacks;
             CaptureCallstacksOnlyDraws.Checked = settings.Options.CaptureCallstacksOnlyDraws;
-            DebugDeviceMode.Checked = settings.Options.DebugDeviceMode;
+            APIValidation.Checked = settings.Options.APIValidation;
             RefAllResources.Checked = settings.Options.RefAllResources;
             SaveAllInitials.Checked = settings.Options.SaveAllInitials;
             DelayForDebugger.Value = settings.Options.DelayForDebugger;
@@ -109,12 +114,14 @@ namespace renderdocui.Windows.Dialogs
             ret.WorkingDir = RealWorkDir;
             ret.CmdLine = cmdline.Text;
 
+            ret.Environment = m_EnvModifications;
+
             ret.Options.AllowFullscreen = AllowFullscreen.Checked;
             ret.Options.AllowVSync = AllowVSync.Checked;
             ret.Options.HookIntoChildren = HookIntoChildren.Checked;
             ret.Options.CaptureCallstacks = CaptureCallstacks.Checked;
             ret.Options.CaptureCallstacksOnlyDraws = CaptureCallstacksOnlyDraws.Checked;
-            ret.Options.DebugDeviceMode = DebugDeviceMode.Checked;
+            ret.Options.APIValidation = APIValidation.Checked;
             ret.Options.RefAllResources = RefAllResources.Checked;
             ret.Options.SaveAllInitials = SaveAllInitials.Checked;
             ret.Options.CaptureAllCmdLists = CaptureAllCmdLists.Checked;
@@ -195,7 +202,7 @@ namespace renderdocui.Windows.Dialogs
 
         #region Callbacks
 
-        public delegate LiveCapture OnCaptureMethod(string exe, string workingDir, string cmdLine, CaptureOptions opts);
+        public delegate LiveCapture OnCaptureMethod(string exe, string workingDir, string cmdLine, EnvironmentModification[] env, CaptureOptions opts);
         public delegate LiveCapture OnInjectMethod(UInt32 PID, string name, CaptureOptions opts);
 
         private OnCaptureMethod m_CaptureCallback = null;
@@ -268,19 +275,33 @@ namespace renderdocui.Windows.Dialogs
         private void OnCapture()
         {
             string exe = exePath.Text;
-            if (!File.Exists(exe))
+
+            // for non-remote captures, check the executable locally
+            if (m_Core.Renderer.Remote == null)
             {
-                MessageBox.Show("Invalid application executable: " + exe, "Invalid executable", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
+                if (!File.Exists(exe))
+                {
+                    MessageBox.Show("Invalid application executable: " + exe, "Invalid executable", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
             }
 
             string workingDir = "";
-            if (Directory.Exists(RealWorkDir))
+
+            // for non-remote captures, check the directory locally
+            if (m_Core.Renderer.Remote == null)
+            {
+                if (Directory.Exists(RealWorkDir))
+                    workingDir = RealWorkDir;
+            }
+            else
+            {
                 workingDir = RealWorkDir;
+            }
 
             string cmdLine = cmdline.Text;
 
-            var live = m_CaptureCallback(exe, workingDir, cmdLine, GetSettings().Options);
+            var live = m_CaptureCallback(exe, workingDir, cmdLine, GetSettings().Environment, GetSettings().Options);
 
             if (queueFrameCap.Checked && live != null)
                 live.QueueCapture((int)queuedCapFrame.Value);
@@ -304,9 +325,6 @@ namespace renderdocui.Windows.Dialogs
 
         private void TriggerCapture()
         {
-            //(new LiveCapture()).Show(DockPanel);
-            //return;
-
             if(InjectMode && m_InjectCallback != null)
                 OnInject();
 
@@ -363,17 +381,29 @@ namespace renderdocui.Windows.Dialogs
                 // invalid path or similar
             }
 
-            exeBrowser.ShowDialog();
+            if (m_Core.Renderer.Remote == null)
+            {
+                exeBrowser.ShowDialog();
+            }
+            else
+            {
+                VirtualOpenFileDialog remoteBrowser = new VirtualOpenFileDialog(m_Core.Renderer);
+                remoteBrowser.Opened += new EventHandler<FileOpenedEventArgs>(this.virtualExeBrowser_Opened);
+
+                remoteBrowser.ShowDialog(this);
+            }
         }
 
         private void exeBrowser_FileOk(object sender, CancelEventArgs e)
         {
-            exePath.Text = exeBrowser.FileName;
+            SetExecutableFilename(exeBrowser.FileName);
+        }
+
+        private void virtualExeBrowser_Opened(object sender, FileOpenedEventArgs e)
+        {
+            exePath.Text = e.FileName;
 
             UpdateWorkDirHint();
-
-            m_Core.Config.LastCapturePath = Path.GetDirectoryName(exeBrowser.FileName);
-            m_Core.Config.LastCaptureExe = Path.GetFileName(exeBrowser.FileName);
         }
 
         private void exePath_DragEnter(object sender, DragEventArgs e)
@@ -389,12 +419,7 @@ namespace renderdocui.Windows.Dialogs
             string fn = ValidData(e.Data);
             if (fn.Length > 0)
             {
-                exePath.Text = fn;
-
-                UpdateWorkDirHint();
-
-                m_Core.Config.LastCapturePath = Path.GetDirectoryName(exeBrowser.FileName);
-                m_Core.Config.LastCaptureExe = Path.GetFileName(exeBrowser.FileName);
+                SetExecutableFilename(fn);
             }
         }
 
@@ -414,14 +439,63 @@ namespace renderdocui.Windows.Dialogs
                 // invalid path or similar
             }
 
-            var res = workDirBrowser.ShowDialog();
-
-            if (res == DialogResult.Yes || res == DialogResult.OK)
+            if (m_Core.Renderer.Remote == null)
             {
-                workDirPath.Text = workDirBrowser.SelectedPath;
-                workDirHint = false;
-                workDirPath.ForeColor = SystemColors.WindowText;
+                var res = workDirBrowser.ShowDialog();
+
+                if (res == DialogResult.Yes || res == DialogResult.OK)
+                {
+                    workDirPath.Text = workDirBrowser.SelectedPath;
+                    workDirHint = false;
+                    workDirPath.ForeColor = SystemColors.WindowText;
+                }
             }
+            else
+            {
+                VirtualOpenFileDialog remoteBrowser = new VirtualOpenFileDialog(m_Core.Renderer);
+                remoteBrowser.Opened += new EventHandler<FileOpenedEventArgs>(this.virtualWorkDirBrowser_Opened);
+
+                remoteBrowser.DirectoryBrowse = true;
+
+                remoteBrowser.ShowDialog(this);
+            }
+        }
+
+        private void virtualWorkDirBrowser_Opened(object sender, FileOpenedEventArgs e)
+        {
+            workDirPath.Text = e.FileName;
+            workDirHint = false;
+            workDirPath.ForeColor = SystemColors.WindowText;
+        }
+
+        private void setEnv_Click(object sender, EventArgs e)
+        {
+            EnvironmentEditor envEditor = new EnvironmentEditor();
+
+            foreach (var mod in m_EnvModifications)
+                envEditor.AddModification(mod, true);
+
+            DialogResult res = envEditor.ShowDialog(this);
+
+            if (res == DialogResult.OK)
+                SetEnvironmentModifications(envEditor.Modifications);
+        }
+
+        private void SetEnvironmentModifications(EnvironmentModification[] modifications)
+        {
+            m_EnvModifications = modifications;
+
+            string envModText = "";
+
+            foreach (var mod in modifications)
+            {
+                if (envModText != "")
+                    envModText += ", ";
+
+                envModText += mod.GetDescription();
+            }
+
+            environmentDisplay.Text = envModText;
         }
 
         private void workDirPath_TextChanged(object sender, EventArgs e)
@@ -548,6 +622,12 @@ namespace renderdocui.Windows.Dialogs
             {
                 // invalid path or similar
             }
+
+            // if it's a unix style path, maintain the slash type
+            if (Helpers.CharCount(exePath.Text, '/') > Helpers.CharCount(exePath.Text, '\\'))
+            {
+                workDirPath.Text = workDirPath.Text.Replace('\\', '/');
+            }
         }
 
         public void UpdateGlobalHook()
@@ -568,6 +648,18 @@ namespace renderdocui.Windows.Dialogs
                 toggleGlobalHook.Enabled = false;
                 globalLabel.Text = "Global hooking requires an executable path, or filename";
             }
+        }
+
+        public void SetExecutableFilename(string filename)
+        {
+            filename = Path.GetFullPath(filename);
+
+            exePath.Text = filename;
+
+            UpdateWorkDirHint();
+
+            m_Core.Config.LastCapturePath = Path.GetDirectoryName(filename);
+            m_Core.Config.LastCaptureExe = Path.GetFileName(filename);
         }
 
         private string prevAppInit = "";

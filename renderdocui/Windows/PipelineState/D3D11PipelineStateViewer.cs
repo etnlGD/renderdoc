@@ -48,6 +48,11 @@ namespace renderdocui.Windows.PipelineState
         // keep track of the VB nodes (we want to be able to highlight them easily on hover)
         private List<TreelistView.Node> m_VBNodes = new List<TreelistView.Node>();
 
+        // keep track of resource nodes that need view details
+        private List<TreelistView.Node> m_ViewDetailNodes = new List<TreelistView.Node>();
+
+        TreelistView.Node m_CurViewDetailNode = null;
+
         private struct IABufferTag
         {
             public IABufferTag(ResourceId i, ulong offs)
@@ -60,9 +65,36 @@ namespace renderdocui.Windows.PipelineState
             public ulong offset;
         };
 
+        private class ViewTexTag
+        {
+            public ViewTexTag(D3D11PipelineState.ShaderStage.ResourceView v, FetchTexture t)
+            {
+                view = v;
+                tex = t;
+            }
+
+            public D3D11PipelineState.ShaderStage.ResourceView view;
+            public FetchTexture tex;
+        };
+
+        private class ViewBufTag
+        {
+            public ViewBufTag(D3D11PipelineState.ShaderStage.ResourceView v, FetchBuffer b)
+            {
+                view = v;
+                buf = b;
+            }
+
+            public D3D11PipelineState.ShaderStage.ResourceView view;
+            public FetchBuffer buf;
+        };
+
         public D3D11PipelineStateViewer(Core core, DockContent c)
         {
             InitializeComponent();
+
+            if (SystemInformation.HighContrast)
+                toolStrip1.Renderer = new ToolStripSystemRenderer();
 
             m_DockContent = c;
 
@@ -135,6 +167,9 @@ namespace renderdocui.Windows.PipelineState
 
         public void OnLogfileClosed()
         {
+            HideViewDetailsTooltip();
+            m_ViewDetailNodes.Clear();
+
             inputLayouts.Nodes.Clear();
             iabuffers.Nodes.Clear();
             topology.Text = "";
@@ -203,12 +238,48 @@ namespace renderdocui.Windows.PipelineState
 
         private void EmptyRow(TreelistView.Node node)
         {
-            node.BackColor = Color.Firebrick;
+            node.BackColor = Color.FromArgb(255, 70, 70);
+            node.ForeColor = Color.Black;
         }
 
         private void InactiveRow(TreelistView.Node node)
         {
             node.Italic = true;
+        }
+
+        private void ViewDetailsRow(TreelistView.Node node)
+        {
+            node.BackColor = Color.Aquamarine;
+            node.ForeColor = Color.Black;
+            m_ViewDetailNodes.Add(node);
+        }
+
+        private bool HasImportantViewParams(D3D11PipelineState.ShaderStage.ResourceView view, FetchTexture tex)
+        {
+            // we don't count 'upgrade typeless to typed' as important, we just display the typed format
+            // in the row since there's no real hidden important information there. The formats can't be
+            // different for any other reason (if the SRV format differs from the texture format, the
+            // texture must have been typeless.
+            if (view.HighestMip > 0 || view.FirstArraySlice > 0 ||
+                (view.NumMipLevels < tex.mips && tex.mips > 1) ||
+                (view.ArraySize < tex.arraysize && tex.arraysize > 1))
+                return true;
+
+            // in the case of the swapchain case, types can be different and it won't have shown
+            // up as taking the view's format because the swapchain already has one. Make sure to mark it
+            // as important
+            if (view.Format.compType != FormatComponentType.None && view.Format != tex.format)
+                return true;
+
+            return false;
+        }
+
+        private bool HasImportantViewParams(D3D11PipelineState.ShaderStage.ResourceView view, FetchBuffer buf)
+        {
+            if (view.FirstElement > 0 || view.NumElements*view.ElementSize < buf.length)
+                return true;
+
+            return false;
         }
 
         private void ClearShaderState(Label shader, TreelistView.TreeListView resources, TreelistView.TreeListView samplers,
@@ -285,12 +356,14 @@ namespace renderdocui.Windows.PipelineState
                         if (shaderInput != null && shaderInput.name.Length > 0)
                             slotname += ": " + shaderInput.name;
 
-                        UInt32 w = 1, h = 1, d = 1;
+                        UInt64 w = 1;
+                        UInt32 h = 1, d = 1;
                         UInt32 a = 1;
                         string format = "Unknown";
                         string name = "Shader Resource " + r.Resource.ToString();
                         string typename = "Unknown";
                         object tag = null;
+                        bool viewDetails = false;
 
                         if (!filledSlot)
                         {
@@ -313,7 +386,22 @@ namespace renderdocui.Windows.PipelineState
                                 name = texs[t].name;
                                 typename = texs[t].resType.Str();
 
-                                tag = texs[t];
+                                if (texs[t].resType == ShaderResourceType.Texture2DMS ||
+                                    texs[t].resType == ShaderResourceType.Texture2DMSArray)
+                                {
+                                    typename += String.Format(" {0}x", texs[t].msSamp);
+                                }
+
+                                // if it's a typeless format, show the format of the view
+                                if (texs[t].format != r.Format)
+                                {
+                                    format = "Viewed as " + r.Format.ToString();
+                                }
+
+                                tag = new ViewTexTag(r, texs[t]);
+
+                                if (HasImportantViewParams(r, texs[t]))
+                                    viewDetails = true;
                             }
                         }
 
@@ -330,9 +418,20 @@ namespace renderdocui.Windows.PipelineState
                                 name = bufs[t].name;
                                 typename = "Buffer";
 
-                                // for structured buffers, display how many 'elements' there are in the buffer
-                                if (bufs[t].structureSize > 0)
-                                    typename = "StructuredBuffer[" + (bufs[t].length / bufs[t].structureSize) + "]";
+                                if (r.Flags.HasFlag(D3D11BufferViewFlags.Raw))
+                                {
+                                    typename = "ByteAddressBuffer";
+                                }
+                                else if (r.ElementSize > 0)
+                                {
+                                    // for structured buffers, display how many 'elements' there are in the buffer
+                                    typename = "StructuredBuffer[" + (bufs[t].length / r.ElementSize) + "]";
+                                }
+
+                                if (r.Flags.HasFlag(D3D11BufferViewFlags.Append) || r.Flags.HasFlag(D3D11BufferViewFlags.Counter))
+                                {
+                                    typename += " (Count: " + r.BufferStructCount + ")";
+                                }
 
                                 // get the buffer type, whether it's just a basic type or a complex struct
                                 if (shaderInput != null && !shaderInput.IsTexture)
@@ -350,7 +449,10 @@ namespace renderdocui.Windows.PipelineState
                                     }
                                 }
 
-                                tag = bufs[t];
+                                tag = new ViewBufTag(r, bufs[t]);
+
+                                if (HasImportantViewParams(r, bufs[t]))
+                                    viewDetails = true;
                             }
                         }
 
@@ -365,6 +467,9 @@ namespace renderdocui.Windows.PipelineState
 
                         if (!usedSlot)
                             InactiveRow(node);
+
+                        if (viewDetails)
+                            ViewDetailsRow(node);
                     }
                     i++;
                 }
@@ -408,6 +513,9 @@ namespace renderdocui.Windows.PipelineState
 
                         if (shaderInput != null && shaderInput.name.Length > 0)
                             slotname += ": " + shaderInput.name;
+
+                        if (s.customSamplerName)
+                            slotname += "(" + s.SamplerName + ")";
 
                         string borderColor = s.BorderColor[0].ToString() + ", " +
                                                 s.BorderColor[1].ToString() + ", " +
@@ -495,8 +603,9 @@ namespace renderdocui.Windows.PipelineState
                         )
                     {
                         string name = "Constant Buffer " + b.Buffer.ToString();
-                        UInt32 length = 1;
+                        UInt64 length = 1;
                         int numvars = shaderCBuf != null ? shaderCBuf.variables.Length : 0;
+                        UInt32 byteSize = shaderCBuf != null ? shaderCBuf.byteSize : 0;
 
                         if (!filledSlot)
                         {
@@ -518,7 +627,15 @@ namespace renderdocui.Windows.PipelineState
                         if (shaderCBuf != null && shaderCBuf.name.Length > 0)
                             slotname += ": " + shaderCBuf.name;
 
-                        string sizestr = String.Format("{0} Variables, {1} bytes", numvars, length);
+                        string sizestr;
+                        if (byteSize == length)
+                            sizestr = String.Format("{0} Variables, {1} bytes", numvars, length);
+                        else
+                            sizestr = String.Format("{0} Variables, {1} bytes needed, {2} provided", numvars, byteSize, length);
+
+                        if (length < byteSize)
+                            filledSlot = false;
+
                         string vecrange = String.Format("{0} - {1}", b.VecOffset, b.VecOffset + b.VecCount);
 
                         var node = cbuffers.Nodes.Add(new object[] { slotname, name, vecrange, sizestr });
@@ -611,6 +728,9 @@ namespace renderdocui.Windows.PipelineState
             FetchBuffer[] bufs = m_Core.CurBuffers;
             D3D11PipelineState state = m_Core.CurD3D11PipelineState;
             FetchDrawcall draw = m_Core.CurDrawcall;
+
+            HideViewDetailsTooltip();
+            m_ViewDetailNodes.Clear();
 
             var tick = global::renderdocui.Properties.Resources.tick;
             var cross = global::renderdocui.Properties.Resources.cross;
@@ -819,7 +939,7 @@ namespace renderdocui.Windows.PipelineState
                 {
                     string ptr = "Buffer " + state.m_IA.ibuffer.Buffer.ToString();
                     string name = ptr;
-                    UInt32 length = 1;
+                    UInt64 length = 1;
 
                     if (!ibufferUsed)
                     {
@@ -839,7 +959,7 @@ namespace renderdocui.Windows.PipelineState
 
                     node.Image = global::renderdocui.Properties.Resources.action;
                     node.HoverImage = global::renderdocui.Properties.Resources.action_hover;
-                    node.Tag = new IABufferTag(state.m_IA.ibuffer.Buffer, draw.indexOffset);
+                    node.Tag = new IABufferTag(state.m_IA.ibuffer.Buffer, draw != null ? draw.indexOffset : 0);
 
                     if (!ibufferUsed)
                         InactiveRow(node);
@@ -856,7 +976,7 @@ namespace renderdocui.Windows.PipelineState
 
                     node.Image = global::renderdocui.Properties.Resources.action;
                     node.HoverImage = global::renderdocui.Properties.Resources.action_hover;
-                    node.Tag = new IABufferTag(state.m_IA.ibuffer.Buffer, draw.indexOffset);
+                    node.Tag = new IABufferTag(state.m_IA.ibuffer.Buffer, draw != null ? draw.indexOffset : 0);
 
                     EmptyRow(node);
 
@@ -882,7 +1002,7 @@ namespace renderdocui.Windows.PipelineState
                         )
                     {
                         string name = "Buffer " + v.Buffer.ToString();
-                        UInt32 length = 1;
+                        UInt64 length = 1;
 
                         for (int t = 0; t < bufs.Length; t++)
                         {
@@ -964,12 +1084,14 @@ namespace renderdocui.Windows.PipelineState
                         if (shaderInput != null && shaderInput.name.Length > 0)
                             slotname += ": " + shaderInput.name;
 
-                        UInt32 w = 1, h = 1, d = 1;
+                        UInt64 w = 1;
+                        UInt32 h = 1, d = 1;
                         UInt32 a = 1;
                         string format = "Unknown";
                         string name = "UAV " + r.Resource.ToString();
                         string typename = "Unknown";
                         object tag = null;
+                        bool viewDetails = false;
 
                         if (!filledSlot)
                         {
@@ -991,7 +1113,22 @@ namespace renderdocui.Windows.PipelineState
                                 name = texs[t].name;
                                 typename = texs[t].resType.Str();
 
-                                tag = texs[t];
+                                if (texs[t].resType == ShaderResourceType.Texture2DMS ||
+                                    texs[t].resType == ShaderResourceType.Texture2DMSArray)
+                                {
+                                    typename += String.Format(" {0}x", texs[t].msSamp);
+                                }
+
+                                // if it's a typeless format, show the format of the view
+                                if (texs[t].format != r.Format)
+                                {
+                                    format = "Viewed as " + r.Format.ToString();
+                                }
+
+                                if (HasImportantViewParams(r, texs[t]))
+                                    viewDetails = true;
+
+                                tag = new ViewTexTag(r, texs[t]);
                             }
                         }
 
@@ -1007,10 +1144,17 @@ namespace renderdocui.Windows.PipelineState
                                 name = bufs[t].name;
                                 typename = "Buffer";
 
-                                if (bufs[t].structureSize > 0)
-                                    typename = "StructuredBuffer[" + (bufs[t].length / bufs[t].structureSize) + "]";
+                                if (r.Flags.HasFlag(D3D11BufferViewFlags.Raw))
+                                {
+                                    typename = "RWByteAddressBuffer";
+                                }
+                                else if (r.ElementSize > 0)
+                                {
+                                    // for structured buffers, display how many 'elements' there are in the buffer
+                                    typename = "RWStructuredBuffer[" + (bufs[t].length / r.ElementSize) + "]";
+                                }
 
-                                if (r.Structured)
+                                if (r.Flags.HasFlag(D3D11BufferViewFlags.Append) || r.Flags.HasFlag(D3D11BufferViewFlags.Counter))
                                 {
                                     typename += " (Count: " + r.BufferStructCount + ")";
                                 }
@@ -1030,7 +1174,10 @@ namespace renderdocui.Windows.PipelineState
                                     }
                                 }
 
-                                tag = bufs[t];
+                                if (HasImportantViewParams(r, bufs[t]))
+                                    viewDetails = true;
+
+                                tag = new ViewBufTag(r, bufs[t]);
                             }
                         }
 
@@ -1046,6 +1193,9 @@ namespace renderdocui.Windows.PipelineState
 
                         if (!usedSlot)
                             InactiveRow(node);
+
+                        if (viewDetails)
+                            ViewDetailsRow(node);
                     }
 
                     i++;
@@ -1076,7 +1226,7 @@ namespace renderdocui.Windows.PipelineState
                         )
                     {
                         string name = "Buffer " + s.Buffer.ToString();
-                        uint length = 0;
+                        UInt64 length = 0;
 
                         if (!filledSlot)
                         {
@@ -1189,6 +1339,7 @@ namespace renderdocui.Windows.PipelineState
             depthBiasClamp.Text = Formatter.Format(state.m_RS.m_State.DepthBiasClamp);
             slopeScaledBias.Text = Formatter.Format(state.m_RS.m_State.SlopeScaledDepthBias);
             forcedSampleCount.Text = state.m_RS.m_State.ForcedSampleCount.ToString();
+            conservativeRaster.Image = state.m_RS.m_State.ConservativeRasterization ? tick : cross;
 
             ////////////////////////////////////////////////
             // Output Merger
@@ -1214,6 +1365,7 @@ namespace renderdocui.Windows.PipelineState
                         string name = "Texture " + p.ToString();
                         string typename = "Unknown";
                         object tag = null;
+                        bool viewDetails = false;
 
                         if (p.Resource == ResourceId.Null)
                         {
@@ -1235,7 +1387,22 @@ namespace renderdocui.Windows.PipelineState
                                 name = texs[t].name;
                                 typename = texs[t].resType.Str();
 
-                                tag = texs[t];
+                                if (texs[t].resType == ShaderResourceType.Texture2DMS ||
+                                    texs[t].resType == ShaderResourceType.Texture2DMSArray)
+                                {
+                                    typename += String.Format(" {0}x", texs[t].msSamp);
+                                }
+
+                                // if it's a typeless format, show the format of the view
+                                if (texs[t].format != p.Format)
+                                {
+                                    format = "Viewed as " + p.Format.ToString();
+                                }
+
+                                if (HasImportantViewParams(p, texs[t]))
+                                    viewDetails = true;
+
+                                tag = new ViewTexTag(p, texs[t]);
                             }
                         }
 
@@ -1252,6 +1419,9 @@ namespace renderdocui.Windows.PipelineState
                         else
                         {
                             targets[i] = true;
+
+                            if (viewDetails)
+                                ViewDetailsRow(node);
                         }
                     }
 
@@ -1288,12 +1458,14 @@ namespace renderdocui.Windows.PipelineState
                         (showDisabled.Checked && !usedSlot && filledSlot) // it's bound, but not referenced, and we have "show disabled"
                         )
                     {
-                        UInt32 w = 1, h = 1, d = 1;
+                        UInt64 w = 1;
+                        UInt32 h = 1, d = 1;
                         UInt32 a = 1;
                         string format = "Unknown";
                         string name = "UAV " + r.Resource.ToString();
                         string typename = "Unknown";
                         object tag = null;
+                        bool viewDetails = false;
 
                         if (!filledSlot)
                         {
@@ -1315,7 +1487,22 @@ namespace renderdocui.Windows.PipelineState
                                 name = texs[t].name;
                                 typename = texs[t].resType.Str();
 
-                                tag = texs[t];
+                                if (texs[t].resType == ShaderResourceType.Texture2DMS ||
+                                    texs[t].resType == ShaderResourceType.Texture2DMSArray)
+                                {
+                                    typename += String.Format(" {0}x", texs[t].msSamp);
+                                }
+
+                                // if it's a typeless format, show the format of the view
+                                if (texs[t].format != r.Format)
+                                {
+                                    format = "Viewed as " + r.Format.ToString();
+                                }
+
+                                if (HasImportantViewParams(r, texs[t]))
+                                    viewDetails = true;
+
+                                tag = new ViewTexTag(r, texs[t]);
                             }
                         }
 
@@ -1331,10 +1518,17 @@ namespace renderdocui.Windows.PipelineState
                                 name = bufs[t].name;
                                 typename = "Buffer";
 
-                                if (bufs[t].structureSize > 0)
-                                    typename = "StructuredBuffer[" + (bufs[t].length / bufs[t].structureSize) + "]";
+                                if (r.Flags.HasFlag(D3D11BufferViewFlags.Raw))
+                                {
+                                    typename = "RWByteAddressBuffer";
+                                }
+                                else if (r.ElementSize > 0)
+                                {
+                                    // for structured buffers, display how many 'elements' there are in the buffer
+                                    typename = "RWStructuredBuffer[" + (bufs[t].length / r.ElementSize) + "]";
+                                }
 
-                                if (r.Structured)
+                                if (r.Flags.HasFlag(D3D11BufferViewFlags.Append) || r.Flags.HasFlag(D3D11BufferViewFlags.Counter))
                                 {
                                     typename += " (Count: " + r.BufferStructCount + ")";
                                 }
@@ -1354,7 +1548,10 @@ namespace renderdocui.Windows.PipelineState
                                     }
                                 }
 
-                                tag = bufs[t];
+                                if (HasImportantViewParams(r, bufs[t]))
+                                    viewDetails = true;
+
+                                tag = new ViewBufTag(r, bufs[t]);
                             }
                         }
 
@@ -1366,6 +1563,9 @@ namespace renderdocui.Windows.PipelineState
 
                         if (r.Resource == ResourceId.Null)
                             EmptyRow(node);
+
+                        if (viewDetails)
+                            ViewDetailsRow(node);
                     }
 
                     i++;
@@ -1380,6 +1580,7 @@ namespace renderdocui.Windows.PipelineState
                 string name = "Depth Target " + state.m_OM.DepthTarget.Resource.ToString();
                 string typename = "Unknown";
                 object tag = null;
+                bool viewDetails = false;
 
                 if (state.m_OM.DepthTarget.Resource == ResourceId.Null)
                 {
@@ -1401,7 +1602,22 @@ namespace renderdocui.Windows.PipelineState
                         name = texs[t].name;
                         typename = texs[t].resType.Str();
 
-                        tag = texs[t];
+                        if (texs[t].resType == ShaderResourceType.Texture2DMS ||
+                            texs[t].resType == ShaderResourceType.Texture2DMSArray)
+                        {
+                            typename += String.Format(" {0}x", texs[t].msSamp);
+                        }
+
+                        // if it's a typeless format, show the format of the view
+                        if (texs[t].format != state.m_OM.DepthTarget.Format)
+                        {
+                            format = "Viewed as " + state.m_OM.DepthTarget.Format.ToString();
+                        }
+
+                        if (HasImportantViewParams(state.m_OM.DepthTarget, texs[t]))
+                            viewDetails = true;
+
+                        tag = new ViewTexTag(state.m_OM.DepthTarget, texs[t]);
                     }
                 }
 
@@ -1410,6 +1626,9 @@ namespace renderdocui.Windows.PipelineState
                 node.Image = global::renderdocui.Properties.Resources.action;
                 node.HoverImage = global::renderdocui.Properties.Resources.action_hover;
                 node.Tag = tag;
+
+                if (viewDetails)
+                    ViewDetailsRow(node);
 
                 if (state.m_OM.DepthTarget.Resource == ResourceId.Null)
                     EmptyRow(node);
@@ -1556,6 +1775,96 @@ namespace renderdocui.Windows.PipelineState
             UpdateState();
         }
 
+        private void HideViewDetailsTooltip()
+        {
+            if (m_CurViewDetailNode != null)
+                toolTip.Hide(m_CurViewDetailNode.OwnerView);
+            m_CurViewDetailNode = null;
+        }
+
+        private void textureCell_MouseLeave(object sender, EventArgs e)
+        {
+            HideViewDetailsTooltip();
+        }
+
+        private void textureCell_MouseMove(object sender, MouseEventArgs e)
+        {
+            TreelistView.TreeListView view = sender as TreelistView.TreeListView;
+
+            if (view == null)
+            {
+                HideViewDetailsTooltip();
+                return;
+            }
+
+            TreelistView.Node node = view.GetHitNode();
+
+            if (node == null)
+            {
+                HideViewDetailsTooltip();
+                return;
+            }
+
+            if (m_ViewDetailNodes.Contains(node))
+            {
+                if (node != m_CurViewDetailNode)
+                {
+                    // round y up to the next row
+                    int y = (e.Location.Y - view.Columns.Options.HeaderHeight) / view.RowOptions.ItemHeight;
+                    y = view.Columns.Options.HeaderHeight + (y + 1) * view.RowOptions.ItemHeight;
+
+                    string text = "";
+
+                    ViewTexTag tex = (node.Tag as ViewTexTag);
+                    ViewBufTag buf = (node.Tag as ViewBufTag);
+
+                    if (tex != null)
+                    {
+                        if (tex.tex.format != tex.view.Format)
+                            text += String.Format("The texture is format {0}, the view treats it as {1}.\n",
+                                tex.tex.format, tex.view.Format);
+
+                        if (tex.tex.mips > 1 && (tex.tex.mips != tex.view.NumMipLevels || tex.view.HighestMip > 0))
+                        {
+                            if (tex.view.NumMipLevels == 1)
+                                text += String.Format("The texture has {0} mips, the view covers mip {1}.\n",
+                                    tex.tex.mips, tex.view.HighestMip, tex.view.HighestMip);
+                            else
+                                text += String.Format("The texture has {0} mips, the view covers mips {1}-{2}.\n",
+                                    tex.tex.mips, tex.view.HighestMip, tex.view.HighestMip + tex.view.NumMipLevels - 1);
+                        }
+
+                        if (tex.tex.arraysize > 1 && (tex.tex.arraysize != tex.view.ArraySize || tex.view.FirstArraySlice > 0))
+                        {
+                            if (tex.view.ArraySize == 1)
+                                text += String.Format("The texture has {0} array slices, the view covers slice {1}.\n",
+                                    tex.tex.arraysize, tex.view.FirstArraySlice, tex.view.FirstArraySlice);
+                            else
+                                text += String.Format("The texture has {0} array slices, the view covers slices {1}-{2}.\n",
+                                    tex.tex.arraysize, tex.view.FirstArraySlice, tex.view.FirstArraySlice + tex.view.ArraySize);
+                        }
+                    }
+                    else if (buf != null)
+                    {
+                        text += String.Format("The view covers bytes {0}-{1} ({2} elements).\nThe buffer is {3} bytes in length ({4} elements).",
+                            buf.view.FirstElement * buf.view.ElementSize,
+                            (buf.view.FirstElement + buf.view.NumElements) * buf.view.ElementSize,
+                            buf.view.NumElements,
+                            buf.buf.length,
+                            buf.buf.length / buf.view.ElementSize);
+                    }
+
+                    toolTip.Show(text.TrimEnd(), view, e.Location.X + Cursor.Size.Width, y);
+
+                    m_CurViewDetailNode = node;
+                }
+            }
+            else
+            {
+                HideViewDetailsTooltip();
+            }
+        }
+
         // launch the appropriate kind of viewer, depending on the type of resource that's in this node
         private void textureCell_CellDoubleClick(TreelistView.Node node)
         {
@@ -1565,6 +1874,19 @@ namespace renderdocui.Windows.PipelineState
 
             if (stage == null) return;
 
+            D3D11PipelineState.ShaderStage.ResourceView view = null;
+
+            if (tag is ViewTexTag)
+            {
+                view = (tag as ViewTexTag).view;
+                tag = (tag as ViewTexTag).tex;
+            }
+            if (tag is ViewBufTag)
+            {
+                view = (tag as ViewBufTag).view;
+                tag = (tag as ViewBufTag).buf;
+            }
+
             if (tag is FetchTexture)
             {
                 FetchTexture tex = (FetchTexture)tag;
@@ -1572,7 +1894,7 @@ namespace renderdocui.Windows.PipelineState
                 if (tex.resType == ShaderResourceType.Buffer)
                 {
                     var viewer = new BufferViewer(m_Core, false);
-                    viewer.ViewRawBuffer(false, 0, ulong.MaxValue, tex.ID);
+                    viewer.ViewRawBuffer(false, view.FirstElement, view.NumElements*view.ElementSize, tex.ID);
                     viewer.Show(m_DockContent.DockPanel);
                 }
                 else
@@ -1586,7 +1908,6 @@ namespace renderdocui.Windows.PipelineState
             else if(tag is FetchBuffer)
             {
                 FetchBuffer buf = (FetchBuffer)tag;
-                D3D11PipelineState.ShaderStage.ResourceView view = null;
 
                 string format = "";
 
@@ -1595,32 +1916,89 @@ namespace renderdocui.Windows.PipelineState
                 int bind = -1;
                 bool uav = false;
 
-                for (int i = 0; i < stage.SRVs.Length; i++)
+                if (view == null)
                 {
-                    if (stage.SRVs[i].Resource == buf.ID)
+                    for (int i = 0; i < stage.SRVs.Length; i++)
                     {
-                        bind = i;
-                        view = stage.SRVs[i];
-                        break;
+                        if (stage.SRVs[i].Resource == buf.ID)
+                        {
+                            bind = i;
+                            view = stage.SRVs[i];
+                            break;
+                        }
+                    }
+
+                    for (int i = 0; i < stage.UAVs.Length; i++)
+                    {
+                        if (stage.UAVs[i].Resource == buf.ID)
+                        {
+                            bind = i;
+                            uav = true;
+                            view = stage.UAVs[i];
+                            break;
+                        }
+                        if (stage == m_Core.CurD3D11PipelineState.m_PS &&
+                            m_Core.CurD3D11PipelineState.m_OM.UAVs[i].Resource == buf.ID)
+                        {
+                            bind = i + (int)m_Core.CurD3D11PipelineState.m_OM.UAVStartSlot;
+                            uav = true;
+                            view = m_Core.CurD3D11PipelineState.m_OM.UAVs[i];
+                            break;
+                        }
+                    }
+                }
+                else
+                {
+                    for (int i = 0; i < stage.SRVs.Length; i++)
+                    {
+                        if (stage.SRVs[i] == view)
+                        {
+                            bind = i;
+                            break;
+                        }
+                    }
+
+                    for (int i = 0; i < stage.UAVs.Length; i++)
+                    {
+                        if (stage.UAVs[i] == view)
+                        {
+                            bind = i;
+                            uav = true;
+                            break;
+                        }
+                        if (stage == m_Core.CurD3D11PipelineState.m_PS &&
+                            m_Core.CurD3D11PipelineState.m_OM.UAVs[i] == view)
+                        {
+                            bind = i + (int)m_Core.CurD3D11PipelineState.m_OM.UAVStartSlot;
+                            uav = true;
+                            break;
+                        }
                     }
                 }
 
-                for (int i = 0; i < stage.UAVs.Length; i++)
+                ulong offs = 0;
+                ulong size = buf.length;
+
+                if (view != null)
                 {
-                    if (stage.UAVs[i].Resource == buf.ID)
+                    offs = view.FirstElement * view.ElementSize;
+                    size = view.NumElements * view.ElementSize;
+                }
+                else
+                {
+                    // last thing, see if it's a streamout buffer
+
+                    if (stage == m_Core.CurD3D11PipelineState.m_GS)
                     {
-                        bind = i;
-                        uav = true;
-                        view = stage.UAVs[i];
-                        break;
-                    }
-                    if (stage == m_Core.CurD3D11PipelineState.m_PS &&
-                        m_Core.CurD3D11PipelineState.m_OM.UAVs[i].Resource == buf.ID)
-                    {
-                        bind = i + (int)m_Core.CurD3D11PipelineState.m_OM.UAVStartSlot;
-                        uav = true;
-                        view = m_Core.CurD3D11PipelineState.m_OM.UAVs[i];
-                        break;
+                        for(int i=0; i < m_Core.CurD3D11PipelineState.m_SO.Outputs.Length; i++)
+                        {
+                            if(buf.ID == m_Core.CurD3D11PipelineState.m_SO.Outputs[i].Buffer)
+                            {
+                                size -= m_Core.CurD3D11PipelineState.m_SO.Outputs[i].Offset;
+                                offs += m_Core.CurD3D11PipelineState.m_SO.Outputs[i].Offset;
+                                break;
+                            }
+                        }
                     }
                 }
 
@@ -1675,11 +2053,16 @@ namespace renderdocui.Windows.PipelineState
                                             }
                                         }
 
+                                        if (view.Flags.HasFlag(D3D11BufferViewFlags.Raw))
+                                            format = "xint";
+
                                         format += view.Format.compCount;
                                     }
                                 }
 
-                                if (format == "" && r.variableType.Name.Length > 0)
+                                // if view format is unknown, use the variable type
+                                if (!view.Format.special && view.Format.compCount == 0 &&
+                                    view.Format.compByteWidth == 0 && r.variableType.Name.Length > 0)
                                     format = r.variableType.Name;
 
                                 format += " " + r.name + ";";
@@ -1698,9 +2081,9 @@ namespace renderdocui.Windows.PipelineState
                 {
                     var viewer = new BufferViewer(m_Core, false);
                     if (format.Length == 0)
-                        viewer.ViewRawBuffer(true, view.FirstElement * view.ElementSize, view.NumElements * view.ElementSize, buf.ID);
+                        viewer.ViewRawBuffer(true, offs, size, buf.ID);
                     else
-                        viewer.ViewRawBuffer(true, view.FirstElement * view.ElementSize, view.NumElements * view.ElementSize, buf.ID, format);
+                        viewer.ViewRawBuffer(true, offs, size, buf.ID, format);
                     viewer.Show(m_DockContent.DockPanel);
                 }
             }
@@ -1806,7 +2189,8 @@ namespace renderdocui.Windows.PipelineState
 
         private void inputLayouts_NodeDoubleClick(TreelistView.Node node)
         {
-            (new BufferViewer(m_Core, true)).Show(m_DockContent.DockPanel);
+            var viewer = m_Core.GetMeshViewer();
+            viewer.Show(m_DockContent.DockPanel);
         }
 
         private D3D11PipelineState.ShaderStage GetStageForSender(object sender)
@@ -1878,6 +2262,39 @@ namespace renderdocui.Windows.PipelineState
             s.Show(m_DockContent.DockPanel);
         }
 
+        private void shaderSave_Click(object sender, EventArgs e)
+        {
+            D3D11PipelineState.ShaderStage stage = GetStageForSender(sender);
+
+            if (stage == null) return;
+
+            ShaderReflection shaderDetails = stage.ShaderDetails;
+
+            if (stage.Shader == ResourceId.Null) return;
+
+            shaderSaveDialog.FileName = "";
+
+            DialogResult res = shaderSaveDialog.ShowDialog();
+
+            if (res == DialogResult.OK)
+            {
+                try
+                {
+                    FileStream writer = File.Create(shaderSaveDialog.FileName);
+
+                    writer.Write(shaderDetails.RawBytes, 0, shaderDetails.RawBytes.Length);
+
+                    writer.Flush();
+                    writer.Close();
+                }
+                catch (System.Exception ex)
+                {
+                    MessageBox.Show("Couldn't save to " + shaderSaveDialog.FileName + Environment.NewLine + ex.ToString(), "Cannot save",
+                                                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
+
         private void MakeShaderVariablesHLSL(bool cbufferContents, ShaderConstant[] vars, ref string struct_contents, ref string struct_defs)
         {
             var nl = Environment.NewLine;
@@ -1934,13 +2351,18 @@ namespace renderdocui.Windows.PipelineState
                 entryFunc = shaderDetails.DebugInfo.entryFunc;
 
                 foreach (var s in shaderDetails.DebugInfo.files)
-                    files.Add(s.BaseFilename, s.filetext);
+                {
+                    if (files.ContainsKey(s.FullFilename))
+                        renderdoc.StaticExports.LogText(String.Format("Duplicate full filename {0}", s.FullFilename));
+                    else
+                        files.Add(s.FullFilename, s.filetext);
+                }
 
                 int entryFile = shaderDetails.DebugInfo.entryFile;
                 if (entryFile < 0 || entryFile >= shaderDetails.DebugInfo.files.Length)
                     entryFile = 0;
 
-                mainfile = shaderDetails.DebugInfo.files[entryFile].BaseFilename;
+                mainfile = shaderDetails.DebugInfo.files[entryFile].FullFilename;
             }
             else
             {
@@ -2090,10 +2512,27 @@ namespace renderdocui.Windows.PipelineState
 
                     string fileText = "";
 
+                    // look for exact match first
                     if (updatedfiles.ContainsKey(fname))
+                    {
                         fileText = updatedfiles[fname];
+                    }
                     else
-                        fileText = "// Can't find file " + fname + "\n";
+                    {
+                        string search = renderdocui.Code.Helpers.SafeGetFileName(fname);
+                        // if not, try and find the same filename (this is not proper include handling!)
+                        foreach (var k in updatedfiles.Keys)
+                        {
+                            if (renderdocui.Code.Helpers.SafeGetFileName(k) == search)
+                            {
+                                fileText = updatedfiles[k];
+                                break;
+                            }
+                        }
+
+                        if(fileText == "")
+                            fileText = "// Can't find file " + fname + "\n";
+                    }
 
                     compileSource = compileSource.Substring(0, offs) + "\n\n" + fileText + "\n\n" + (tail ? compileSource.Substring(lineEnd + 1) : "");
 
@@ -2374,7 +2813,7 @@ namespace renderdocui.Windows.PipelineState
 
         private void meshView_MouseEnter(object sender, EventArgs e)
         {
-            meshView.BackColor = Color.LightGray;
+            meshView.BackColor = SystemColors.ButtonShadow;
         }
 
         private void meshView_MouseLeave(object sender, EventArgs e)
@@ -2384,7 +2823,8 @@ namespace renderdocui.Windows.PipelineState
 
         private void meshView_Click(object sender, EventArgs e)
         {
-            (new BufferViewer(m_Core, true)).Show(m_DockContent.DockPanel);
+            var viewer = m_Core.GetMeshViewer();
+            viewer.Show(m_DockContent.DockPanel);
         }
 
         private float GetHueForVB(int i)
@@ -2424,15 +2864,24 @@ namespace renderdocui.Windows.PipelineState
             Color c = HSLColor(GetHueForVB((int)slot), 1.0f, 0.95f);
 
             if (slot < m_VBNodes.Count)
+            {
                 m_VBNodes[(int)slot].DefaultBackColor = c;
+                m_VBNodes[(int)slot].ForeColor = Color.Black;
+            }
 
             for (int i = 0; i < inputLayouts.Nodes.Count; i++)
             {
                 var n = inputLayouts.Nodes[i];
                 if (IA.layouts[i].InputSlot == slot)
+                {
                     n.DefaultBackColor = c;
+                    n.ForeColor = Color.Black;
+                }
                 else
+                {
                     n.DefaultBackColor = Color.Transparent;
+                    n.ForeColor = Color.Transparent;
+                }
             }
 
             inputLayouts.Invalidate();
@@ -2442,10 +2891,16 @@ namespace renderdocui.Windows.PipelineState
         private void ia_MouseLeave(object sender, EventArgs e)
         {
             foreach (var n in iabuffers.Nodes)
+            {
                 n.DefaultBackColor = Color.Transparent;
+                n.ForeColor = Color.Transparent;
+            }
 
             foreach (var n in inputLayouts.Nodes)
+            {
                 n.DefaultBackColor = Color.Transparent;
+                n.ForeColor = Color.Transparent;
+            }
 
             inputLayouts.Invalidate();
             iabuffers.Invalidate();
@@ -2540,13 +2995,24 @@ namespace renderdocui.Windows.PipelineState
 
             ShaderResource shaderInput = null;
 
+            bool rw = false;
+
             if (refl != null)
             {
+                foreach (var bind in refl.ReadOnlyResources)
+                {
+                    if (bind.bindPoint == i)
+                    {
+                        shaderInput = bind;
+                        break;
+                    }
+                }
                 foreach (var bind in refl.ReadWriteResources)
                 {
                     if (bind.bindPoint == i)
                     {
                         shaderInput = bind;
+                        rw = true;
                         break;
                     }
                 }
@@ -2555,7 +3021,11 @@ namespace renderdocui.Windows.PipelineState
             string name = "Empty";
             string typename = "Unknown";
             string format = "Unknown";
-            uint w = 0, h = 0, d = 0, a = 0;
+            UInt64 w = 1;
+            UInt32 h = 1, d = 1;
+            UInt32 a = 0;
+
+            string viewFormat = view.Format.ToString();
 
             FetchTexture tex = null;
             FetchBuffer buf = null;
@@ -2590,11 +3060,17 @@ namespace renderdocui.Windows.PipelineState
                     name = bufs[t].name;
                     typename = "Buffer";
 
-                    // for structured buffers, display how many 'elements' there are in the buffer
-                    if (bufs[t].structureSize > 0)
-                        typename = "StructuredBuffer[" + (bufs[t].length / bufs[t].structureSize) + "]";
+                    if (view.Flags.HasFlag(D3D11BufferViewFlags.Raw))
+                    {
+                        typename = rw ? "RWByteAddressBuffer" : "ByteAddressBuffer";
+                    }
+                    else if (view.ElementSize > 0)
+                    {
+                        // for structured buffers, display how many 'elements' there are in the buffer
+                        typename = (rw ? "RWStructuredBuffer" : "StructuredBuffer") + "[" + (bufs[t].length / view.ElementSize) + "]";
+                    }
 
-                    if (view.Structured)
+                    if (view.Flags.HasFlag(D3D11BufferViewFlags.Append) || view.Flags.HasFlag(D3D11BufferViewFlags.Counter))
                     {
                         typename += " (Count: " + view.BufferStructCount + ")";
                     }
@@ -2604,9 +3080,9 @@ namespace renderdocui.Windows.PipelineState
                         if (view.Format.compType == FormatComponentType.None)
                         {
                             if (shaderInput.variableType.members.Length > 0)
-                                format = "struct " + shaderInput.variableType.Name;
+                                viewFormat = format = "struct " + shaderInput.variableType.Name;
                             else
-                                format = shaderInput.variableType.Name;
+                                viewFormat = format = shaderInput.variableType.Name;
                         }
                         else
                         {
@@ -2647,7 +3123,7 @@ namespace renderdocui.Windows.PipelineState
                         i, name,
                         view.Type, typename,
                         w, h, d, a,
-                        view.Format, format,
+                        viewFormat, format,
                         viewParams };
         }
 
@@ -2684,7 +3160,7 @@ namespace renderdocui.Windows.PipelineState
                 foreach (var vb in ia.vbuffers)
                 {
                     string name = "Buffer " + vb.Buffer.ToString();
-                    UInt32 length = 0;
+                    UInt64 length = 0;
 
                     if (vb.Buffer == ResourceId.Null)
                     {
@@ -2716,7 +3192,7 @@ namespace renderdocui.Windows.PipelineState
                 writer.WriteEndElement();
 
                 string name = "Buffer " + ia.ibuffer.Buffer.ToString();
-                UInt32 length = 0;
+                UInt64 length = 0;
 
                 if (ia.ibuffer.Buffer == ResourceId.Null)
                 {
@@ -2791,7 +3267,7 @@ namespace renderdocui.Windows.PipelineState
                 {
                     if (sh.SRVs[i].View == ResourceId.Null) continue;
 
-                    rows.Add(ExportViewHTML(sh.SRVs[i], i, null, ""));
+                    rows.Add(ExportViewHTML(sh.SRVs[i], i, sh.ShaderDetails, ""));
                 }
 
                 ExportHTMLTable(writer,
@@ -2817,7 +3293,7 @@ namespace renderdocui.Windows.PipelineState
                 {
                     if (sh.UAVs[i].View == ResourceId.Null) continue;
 
-                    rows.Add(ExportViewHTML(sh.UAVs[i], i, null, ""));
+                    rows.Add(ExportViewHTML(sh.UAVs[i], i, sh.ShaderDetails, ""));
                 }
 
                 ExportHTMLTable(writer,
@@ -2910,8 +3386,9 @@ namespace renderdocui.Windows.PipelineState
                         shaderCBuf = sh.ShaderDetails.ConstantBlocks[i];
 
                     string name = "Constant Buffer " + sh.ConstantBuffers[i].Buffer.ToString();
-                    UInt32 length = 1;
+                    UInt64 length = 1;
                     int numvars = shaderCBuf != null ? shaderCBuf.variables.Length : 0;
+                    UInt32 byteSize = shaderCBuf != null ? shaderCBuf.byteSize : 0;
 
                     if (sh.ConstantBuffers[i].Buffer == ResourceId.Null)
                     {
@@ -2928,10 +3405,10 @@ namespace renderdocui.Windows.PipelineState
                         }
                     }
 
-                    rows.Add(new object[] { i, name, sh.ConstantBuffers[i].VecOffset, sh.ConstantBuffers[i].VecCount, numvars, length });
+                    rows.Add(new object[] { i, name, sh.ConstantBuffers[i].VecOffset, sh.ConstantBuffers[i].VecCount, numvars, byteSize, length });
                 }
 
-                ExportHTMLTable(writer, new string[] { "Slot", "Buffer", "Vector Offset", "Vector Count", "Number of Variables", "Byte Length", }, rows.ToArray());
+                ExportHTMLTable(writer, new string[] { "Slot", "Buffer", "Vector Offset", "Vector Count", "Number of Variables", "Bytes Needed", "Bytes Provided" }, rows.ToArray());
             }
 
             if (sh.ClassInstances.Length > 0)
@@ -2971,7 +3448,7 @@ namespace renderdocui.Windows.PipelineState
                 foreach (var o in so.Outputs)
                 {
                     string name = "Buffer " + o.Buffer.ToString();
-                    UInt32 length = 0;
+                    UInt64 length = 0;
 
                     if (o.Buffer == ResourceId.Null)
                     {
@@ -3013,9 +3490,10 @@ namespace renderdocui.Windows.PipelineState
                 writer.WriteEndElement();
 
                 ExportHTMLTable(writer,
-                    new string[] { "Scissor Enable", "Line AA Enable", "Multisample Enable", "Forced Sample Count" },
+                    new string[] { "Scissor Enable", "Line AA Enable", "Multisample Enable", "Forced Sample Count", "Conservative Raster" },
                     new object[] { rs.m_State.ScissorEnable ? "Yes" : "No", rs.m_State.AntialiasedLineEnable ? "Yes" : "No",
-                                   rs.m_State.MultisampleEnable ? "Yes" : "No", rs.m_State.ForcedSampleCount });
+                                   rs.m_State.MultisampleEnable ? "Yes" : "No", rs.m_State.ForcedSampleCount,
+                                   rs.m_State.ConservativeRasterization ? "Yes" : "No" });
 
                 writer.WriteStartElement("p");
                 writer.WriteEndElement();
@@ -3100,7 +3578,11 @@ namespace renderdocui.Windows.PipelineState
                         b.Enabled ? "Yes" : "No", b.LogicEnabled ? "Yes" : "No",
                         b.m_Blend.Source, b.m_Blend.Destination, b.m_Blend.Operation,
                         b.m_AlphaBlend.Source, b.m_AlphaBlend.Destination, b.m_AlphaBlend.Operation,
-                        b.LogicOp, b.WriteMask });
+                        b.LogicOp,
+                        ((b.WriteMask & 0x1) == 0 ? "_" : "R") +
+                        ((b.WriteMask & 0x2) == 0 ? "_" : "G") +
+                        ((b.WriteMask & 0x4) == 0 ? "_" : "B") +
+                        ((b.WriteMask & 0x8) == 0 ? "_" : "A")  });
 
                     i++;
                 }
@@ -3124,6 +3606,26 @@ namespace renderdocui.Windows.PipelineState
                 ExportHTMLTable(writer,
                     new string[] { "Depth Test Enable", "Depth Writes Enable", "Depth Function" },
                     new object[] { om.m_State.DepthEnable ? "Yes" : "No", om.m_State.DepthWrites ? "Yes" : "No", om.m_State.DepthFunc });
+            }
+
+            {
+                writer.WriteStartElement("h3");
+                writer.WriteString("Stencil State");
+                writer.WriteEndElement();
+
+                ExportHTMLTable(writer,
+                    new string[] { "Stencil Test Enable", "Stencil Read Mask", "Stencil Write Mask" },
+                    new object[] { om.m_State.StencilEnable ? "Yes" : "No", om.m_State.StencilReadMask.ToString("X2"), om.m_State.StencilWriteMask.ToString("X2") });
+
+                writer.WriteStartElement("p");
+                writer.WriteEndElement();
+
+                ExportHTMLTable(writer,
+                    new string[] { "Face", "Function", "Pass Operation", "Fail Operation", "Depth Fail Operation" },
+                    new object[][] {
+                        new object[] { "Front", om.m_State.m_FrontFace.Func, om.m_State.m_FrontFace.PassOp, om.m_State.m_FrontFace.FailOp, om.m_State.m_FrontFace.DepthFailOp },
+                        new object[] { "Back", om.m_State.m_BackFace.Func, om.m_State.m_BackFace.PassOp, om.m_State.m_BackFace.FailOp, om.m_State.m_BackFace.DepthFailOp },
+                    });
             }
 
             {
@@ -3312,19 +3814,7 @@ div.stage table tr td { border-right: 1px solid #AAAAAA; background-color: #EEEE
                                 context += String.Format(" > {0}", d.name);
                             }
 
-                            FetchDrawcall prev = null;
-
-                            for (uint i = draw.events[0].eventID; i <= draw.events.Last().eventID; i++)
-                            {
-                                prev = m_Core.GetDrawcall(i);
-                                if (prev != null)
-                                    break;
-                            }
-
-                            if (prev != null)
-                                context += String.Format(" => {0}, {1}", prev.name, draw.name);
-                            else
-                                context += String.Format(" => {0}", draw.name);
+                            context += String.Format(" => {0}", draw.name);
 
                             writer.WriteString(context);
                         }
@@ -3398,12 +3888,17 @@ div.stage table tr td { border-right: 1px solid #AAAAAA; background-color: #EEEE
         {
             if (!m_Core.LogLoaded) return;
             
-            DialogResult res = exportDialog.ShowDialog();
+            DialogResult res = pipeExportDialog.ShowDialog();
 
             if (res == DialogResult.OK)
             {
-                ExportHTML(exportDialog.FileName);
+                ExportHTML(pipeExportDialog.FileName);
             }
+        }
+
+        private void vsShaderSave_Click(object sender, EventArgs e)
+        {
+
         }
    }
 }

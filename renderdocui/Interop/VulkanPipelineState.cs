@@ -24,6 +24,7 @@
 
 using System;
 using System.Runtime.InteropServices;
+using System.Collections.Generic;
 
 namespace renderdoc
 {
@@ -55,9 +56,22 @@ namespace renderdoc
                         public ResourceId view;
                         public ResourceId res;
                         public ResourceId sampler;
+                        public bool immutableSampler;
+
+                        [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
+                        public string SamplerName;
+                        public bool customSamplerName;
+
+                        [CustomMarshalAs(CustomUnmanagedType.CustomClass)]
+                        public ResourceFormat viewfmt;
+
+                        [CustomMarshalAs(CustomUnmanagedType.FixedArray, FixedLength = 4)]
+                        public TextureSwizzle[] swizzle;
 
                         public UInt32 baseMip;
                         public UInt32 baseLayer;
+                        public UInt32 numMip;
+                        public UInt32 numLayer;
 
                         public UInt64 offset;
                         public UInt64 size;
@@ -365,8 +379,16 @@ namespace renderdoc
                     public ResourceId view;
                     public ResourceId img;
 
+                    [CustomMarshalAs(CustomUnmanagedType.CustomClass)]
+                    public ResourceFormat viewfmt;
+
+                    [CustomMarshalAs(CustomUnmanagedType.FixedArray, FixedLength = 4)]
+                    public TextureSwizzle[] swizzle;
+
                     public UInt32 baseMip;
-                    public UInt32 baseArray;
+                    public UInt32 baseLayer;
+                    public UInt32 numMip;
+                    public UInt32 numLayer;
                 };
                 [CustomMarshalAs(CustomUnmanagedType.TemplatedArray)]
                 public Attachment[] attachments;
@@ -387,5 +409,41 @@ namespace renderdoc
         };
         [CustomMarshalAs(CustomUnmanagedType.CustomClass)]
         public CurrentPass Pass;
+
+        [StructLayout(LayoutKind.Sequential)]
+        public class ImageData
+        {
+            public ResourceId image;
+
+            [StructLayout(LayoutKind.Sequential)]
+            public class ImageLayout
+            {
+                public UInt32 baseMip;
+                public UInt32 baseLayer;
+                public UInt32 numMip;
+                public UInt32 numLayer;
+
+                [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
+                public string name;
+            };
+
+            [CustomMarshalAs(CustomUnmanagedType.TemplatedArray)]
+            public ImageLayout[] layouts;
+        };
+
+        [CustomMarshalAs(CustomUnmanagedType.TemplatedArray)]
+        private ImageData[] images_;
+
+        // add to dictionary for convenience
+        private void PostMarshal()
+        {
+            Images = new Dictionary<ResourceId, ImageData>();
+
+            foreach (ImageData i in images_)
+                Images.Add(i.image, i);
+        }
+
+        [CustomMarshalAs(CustomUnmanagedType.Skip)]
+        public Dictionary<ResourceId, ImageData> Images;
     };
 }

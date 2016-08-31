@@ -25,6 +25,9 @@
     <ClCompile Include="vk_memory.cpp" />
     <ClCompile Include="vk_state.cpp" />
     <ClCompile Include="vk_tracelayer.cpp" />
+    <ClCompile Include="vk_tracelayer_android.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="vk_common.cpp" />
     <ClCompile Include="vk_core.cpp" />
     <ClCompile Include="vk_debug.cpp" />
@@ -32,7 +35,13 @@
     <ClCompile Include="vk_manager.cpp" />
     <ClCompile Include="vk_replay.cpp" />
     <ClCompile Include="vk_win32.cpp" />
+    <ClCompile Include="vk_posix.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="vk_linux.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="vk_android.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
     <ClCompile Include="vk_resources.cpp" />
@@ -61,7 +70,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="official\vk_layer.h" />
-    <ClInclude Include="official\vk_lunarg_debug_marker.h" />
     <ClInclude Include="official\vk_platform.h" />
     <ClInclude Include="official\vulkan.h" />
     <ClInclude Include="vk_common.h" />

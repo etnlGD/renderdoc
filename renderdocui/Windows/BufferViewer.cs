@@ -163,6 +163,9 @@ namespace renderdocui.Windows
         // is different.
         private int m_ReqID = 0;
 
+        private const int CellDefaultWidth = 100;
+        private int CellFloatWidth = CellDefaultWidth;
+
         private BufferFormatSpecifier m_FormatSpecifier = null;
 
         private string m_FormatText = "";
@@ -218,6 +221,14 @@ namespace renderdocui.Windows
         {
             InitializeComponent();
 
+            if (SystemInformation.HighContrast)
+            {
+                dockPanel.Skin = Helpers.MakeHighContrastDockPanelSkin();
+
+                toolStrip1.Renderer = new ToolStripSystemRenderer();
+                toolStrip2.Renderer = new ToolStripSystemRenderer();
+            }
+
             Icon = global::renderdocui.Properties.Resources.icon;
 
             UI_SetupDocks(meshview);
@@ -254,14 +265,8 @@ namespace renderdocui.Windows
 
             SetStyle(ControlStyles.OptimizedDoubleBuffer, true);
 
-            RenderHandle = render.Handle;
+            RecreateRenderPanel();
 
-            render.Painting = true;
-
-            render.MouseWheel += render_MouseWheel;
-            render.MouseWheelHandler = render_MouseWheel;
-            (render as Control).KeyDown += new KeyEventHandler(BufferViewer_KeyDown);
-            (render as Control).KeyUp += new KeyEventHandler(BufferViewer_KeyUp);
             ResetConfig();
 
             MeshView = meshview;
@@ -278,6 +283,10 @@ namespace renderdocui.Windows
                 rowRange.Text = DefaultMaxRows.ToString();
 
                 Text = "Buffer Contents";
+
+                // only add log viewer for non-mesh output buffer viewers.
+                // The mesh viewer is added in Core.GetMeshViewer()
+                m_Core.AddLogViewer(this);
             }
             else
             {
@@ -288,8 +297,6 @@ namespace renderdocui.Windows
 
                 Text = "Mesh Output";
             }
-
-            m_Core.AddLogViewer(this);
         }
 
         private void ResetConfig()
@@ -303,11 +310,10 @@ namespace renderdocui.Windows
             m_MeshDisplay.solidShadeMode = SolidShadeMode.None;
             solidShading.SelectedIndex = 0;
 
-            m_MeshDisplay.thisDrawOnly = true;
+            m_MeshDisplay.showPrevInstances = false;
+            m_MeshDisplay.showAllInstances = false;
+            m_MeshDisplay.showWholePass = false;
             drawRange.SelectedIndex = 0;
-
-            m_MeshDisplay.currentMeshColour = new FloatVector(1, 0, 0, 1);
-            m_MeshDisplay.prevMeshColour = new FloatVector(0, 0, 0, 1);
 
             if (m_Arcball != null)
                 m_Arcball.Camera.Shutdown();
@@ -362,15 +368,17 @@ namespace renderdocui.Windows
 
         public class PersistData
         {
-            public static int currentPersistVersion = 2;
+            public static int currentPersistVersion = 3;
             public int persistVersion = currentPersistVersion;
 
+            public string panelLayout;
             public bool meshView;
 
             public static PersistData GetDefaults()
             {
                 PersistData data = new PersistData();
 
+                data.panelLayout = "";
                 data.meshView = true;
 
                 return data;
@@ -409,9 +417,34 @@ namespace renderdocui.Windows
             ApplyPersistData(data);
         }
 
+        private string onloadLayout = "";
+
+        Control[] LayoutPersistors
+        {
+            get
+            {
+                return new Control[] {
+                                         previewTab,
+                                         vsInBufferView,
+                                         gsOutBufferView,
+                                         vsOutBufferView,
+                                     };
+            }
+        }
+
+        private IDockContent GetContentFromPersistString(string persistString)
+        {
+            foreach (var p in LayoutPersistors)
+                if (persistString == p.Name && p.Parent is IDockContent && (p.Parent as DockContent).DockPanel == null)
+                    return p.Parent as IDockContent;
+
+            return null;
+        }
+
         private void ApplyPersistData(PersistData data)
         {
             MeshView = data.meshView;
+            onloadLayout = data.panelLayout;
         }
 
         // note that raw buffer viewers do not persist deliberately
@@ -425,6 +458,22 @@ namespace renderdocui.Windows
 
             PersistData data = new PersistData();
 
+            // passing in a MemoryStream gets disposed - can't see a way to retrieve this
+            // in-memory.
+            var enc = new UnicodeEncoding();
+            var path = Path.GetTempFileName();
+            dockPanel.SaveAsXml(path, "", enc);
+            try
+            {
+                data.panelLayout = File.ReadAllText(path, enc);
+                File.Delete(path);
+            }
+            catch (System.Exception)
+            {
+                // can't recover
+                return writer.ToString();
+            }
+
             data.meshView = MeshView;
 
             System.Xml.Serialization.XmlSerializer xs = new System.Xml.Serialization.XmlSerializer(typeof(PersistData));
@@ -435,8 +484,39 @@ namespace renderdocui.Windows
 
         #region ILogViewerForm
 
+        void RecreateRenderPanel()
+        {
+            renderTable.Controls.Clear();
+
+            render.Dispose();
+
+            render = new Controls.NoScrollPanel();
+
+            render.Painting = true;
+
+            render.BackColor = Color.Black;
+            render.Dock = DockStyle.Fill;
+            render.Paint += new PaintEventHandler(render_Paint);
+            render.MouseClick += new MouseEventHandler(render_MouseClick);
+            render.MouseDown += new MouseEventHandler(render_MouseDown);
+            render.MouseMove += new MouseEventHandler(render_MouseMove);
+            render.MouseWheel += render_MouseWheel;
+            render.MouseWheelHandler = render_MouseWheel;
+            render.KeyDown += new KeyEventHandler(render_KeyDown);
+            render.KeyUp += new KeyEventHandler(render_KeyUp);
+
+            RenderHandle = render.Handle;
+
+            renderTable.Controls.Add(render, 1, 0);
+            renderTable.Controls.Add(configCamControls, 0, 0);
+        }
+
         public void OnLogfileClosed()
         {
+            if (IsDisposed) return;
+
+            RecreateRenderPanel();
+
             m_Output = null;
 
             ResetConfig();
@@ -449,6 +529,8 @@ namespace renderdocui.Windows
         public void OnLogfileLoaded()
         {
             ClearStoredData();
+
+            RecreateRenderPanel();
 
             exportToToolStripMenuItem.Enabled = exportToolItem.Enabled = true;
 
@@ -530,8 +612,36 @@ namespace renderdocui.Windows
             }
         }
 
+        private void CalcCellFloatWidth()
+        {
+            Graphics g = vsInBufferView.CreateGraphics();
+            Font f = vsInBufferView.DefaultCellStyle.Font;
+
+            // measure a few doubles at different extremes to get a max column width
+            // for floats under the current float formatter settings
+
+            // all numbers are negative to account for negative sign
+            double[] testNums = new double[] {
+                -1.0, // some default number
+                -1.2345e-200, // something that will definitely be exponential notation
+                -123456.7890123456789, // some number with a 'large' value before the decimal, and numbers after the decimal
+            };
+
+            CellFloatWidth = CellDefaultWidth;
+
+            foreach (double d in testNums)
+            {
+                float stringWidth = g.MeasureString(Formatter.Format(d), f).Width;
+                CellFloatWidth = Math.Max(CellFloatWidth, (int)stringWidth + 5);
+            }
+
+            g.Dispose();
+        }
+
         public void OnEventSelected(UInt32 eventID)
         {
+            if (IsDisposed) return;
+
             // ignore OnEventSelected until we've loaded
             if (!m_Loaded)
                 return;
@@ -690,13 +800,17 @@ namespace renderdocui.Windows
 
         public bool MeshView;
 
-        private int RowOffset
+        public int RowOffset
         {
             get
             {
                 int row = 0;
                 int.TryParse(rowOffset.Text, out row);
                 return row;
+            }
+            set
+            {
+                rowOffset.Text = value.ToString();
             }
         }
 
@@ -745,7 +859,7 @@ namespace renderdocui.Windows
                 if (b.ID == id)
                 {
                     Text = b.name + " - Contents";
-                    len = b.byteSize;
+                    len = b.length;
                     break;
                 }
             }
@@ -776,6 +890,9 @@ namespace renderdocui.Windows
 
                 if (rows * input.Strides[0] < size)
                     rows++;
+
+                if (rows > DefaultMaxRows)
+                    rows = DefaultMaxRows;
 
                 rowRange.Text = rows.ToString();
             }
@@ -813,7 +930,7 @@ namespace renderdocui.Windows
 
             Input ret = new Input();
             ret.Drawcall = draw;
-            ret.Topology = draw.topology;
+            ret.Topology = draw != null ? draw.topology : PrimitiveTopology.Unknown;
 
             ResourceId ibuffer = ResourceId.Null;
             ulong ioffset = 0;
@@ -1268,17 +1385,29 @@ namespace renderdocui.Windows
                     if (e == m_PosElement[(int)type] && active)
                     {
                         if (i != 3 || !input)
+                        {
                             col.DefaultCellStyle.BackColor = Color.SkyBlue;
+                            col.DefaultCellStyle.ForeColor = Color.Black;
+                        }
                         else
+                        {
                             col.DefaultCellStyle.BackColor = Color.LightCyan;
+                            col.DefaultCellStyle.ForeColor = Color.Black;
+                        }
                     }
                     else if (e == m_SecondElement[(int)type] && active && m_MeshDisplay.solidShadeMode == SolidShadeMode.Secondary)
                     {
                         if ((m_MeshDisplay.secondary.showAlpha && i == 3) ||
                             (!m_MeshDisplay.secondary.showAlpha && i != 3))
+                        {
                             col.DefaultCellStyle.BackColor = Color.LightGreen;
+                            col.DefaultCellStyle.ForeColor = Color.Black;
+                        }
                         else
+                        {
                             col.DefaultCellStyle.BackColor = Color.FromArgb(200, 238, 200);
+                            col.DefaultCellStyle.ForeColor = Color.Black;
+                        }
                     }
                     else
                         col.DefaultCellStyle.BackColor = defaultCol;
@@ -1324,8 +1453,12 @@ namespace renderdocui.Windows
                 {
                     DataGridViewTextBoxColumn col = new DataGridViewTextBoxColumn();
 
-                    col.AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells;
+                    col.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
                     col.MinimumWidth = 50;
+                    col.Width =
+                        (el[e].format.compType == FormatComponentType.Double ||
+                        el[e].format.compType == FormatComponentType.Float)
+                        ? CellFloatWidth : CellDefaultWidth;
                     col.HeaderText = el[e].name;
                     col.ReadOnly = true;
                     col.SortMode = DataGridViewColumnSortMode.Programmatic;
@@ -1364,8 +1497,12 @@ namespace renderdocui.Windows
                 {
                     DataGridViewTextBoxColumn col = new DataGridViewTextBoxColumn();
 
-                    col.AutoSizeMode = DataGridViewAutoSizeColumnMode.AllCells;
+                    col.AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
                     col.MinimumWidth = 50;
+                    col.Width =
+                        (el[e].format.compType == FormatComponentType.Double ||
+                        el[e].format.compType == FormatComponentType.Float)
+                        ? CellFloatWidth : CellDefaultWidth;
                     col.HeaderText = el[e].name;
                     col.ReadOnly = true;
                     col.SortMode = DataGridViewColumnSortMode.Programmatic;
@@ -1415,6 +1552,10 @@ namespace renderdocui.Windows
         private void UI_SetRowsData(MeshDataStage type, Dataset data, int horizScroll)
         {
             var state = GetUIState(type);
+
+            // only do this once, VSIn is guaranteed to be set (even if it's empty data)
+            if(type == MeshDataStage.VSIn)
+                CalcCellFloatWidth();
 
             Input input = state.m_Input;
 
@@ -1627,7 +1768,7 @@ namespace renderdocui.Windows
                             var fmt = bufferFormats[el].format;
                             int byteWidth = (int)fmt.compByteWidth;
 
-                            int bytesToRead = (int)(fmt.compByteWidth * fmt.compCount);
+                            int bytesToRead = (int)bufferFormats[el].ByteSize;
 
                             byte[] bytes = read.ReadBytes(bytesToRead);
                             rawWriter.Write(bytes);
@@ -1635,30 +1776,37 @@ namespace renderdocui.Windows
                             if (bytes.Length != bytesToRead)
                                 continue;
 
+                            object[] elements = null;
+
+                            {
+                                MemoryStream tempStream = new MemoryStream(bytes);
+                                BinaryReader tempReader = new BinaryReader(tempStream);
+
+                                elements = bufferFormats[el].GetObjects(tempReader);
+
+                                tempReader.Dispose();
+                                tempStream.Dispose();
+                            }
+
                             // update min/max for this element
                             {
-                                for (int i = 0; i < fmt.compCount; i++)
+                                for (int i = 0; !outofBounds && i < elements.Length; i++)
                                 {
-                                    float val = 0;
+                                    object o = elements[i];
+                                    float val;
 
-                                    if (fmt.compType == FormatComponentType.Float)
-                                    {
-                                        if (byteWidth == 4)
-                                            val = BitConverter.ToSingle(bytes, i * byteWidth);
-                                        else if (byteWidth == 2)
-                                            val = fmt.ConvertFromHalf(BitConverter.ToUInt16(bytes, i * byteWidth));
-                                    }
+                                    if (o is uint)
+                                        val = (float)(uint)elements[i];
+                                    else if (o is int)
+                                        val = (float)(int)elements[i];
+                                    else if (o is UInt16)
+                                        val = (float)(int)elements[i];
+                                    else if (o is Int16)
+                                        val = (float)(int)elements[i];
+                                    else if (o is double)
+                                        val = (float)(double)elements[i];
                                     else
-                                    {
-                                        if (byteWidth == 4)
-                                            val = (float)BitConverter.ToUInt32(bytes, i * byteWidth);
-                                        else if (byteWidth == 2)
-                                            val = (float)BitConverter.ToUInt16(bytes, i * byteWidth);
-                                        else if (byteWidth == 1)
-                                            val = (float)bytes[i * byteWidth];
-                                    }
-
-                                    if (outofBounds) continue;
+                                        val = (float)elements[i];
 
                                     if (i == 0)
                                     {
@@ -1717,14 +1865,6 @@ namespace renderdocui.Windows
                 return;
 
             SuppressCaching = true;
-
-            for (int i = 0; i < bufView.Columns.Count; i++)
-            {
-                if (bufView.Columns[i].AutoSizeMode == DataGridViewAutoSizeColumnMode.AllCells)
-                {
-                    bufView.Columns[i].AutoSizeMode = DataGridViewAutoSizeColumnMode.None;
-                }
-            }
 
             bufView.RowCount = 0;
             if(!MeshView) byteOffset.Enabled = true;
@@ -2263,12 +2403,12 @@ namespace renderdocui.Windows
             });
         }
 
-        void BufferViewer_KeyUp(object sender, KeyEventArgs e)
+        void render_KeyUp(object sender, KeyEventArgs e)
         {
             m_CurrentCamera.KeyUp(sender, e);
         }
 
-        void BufferViewer_KeyDown(object sender, KeyEventArgs e)
+        void render_KeyDown(object sender, KeyEventArgs e)
         {
             m_CurrentCamera.KeyDown(sender, e);
         }
@@ -2428,13 +2568,38 @@ namespace renderdocui.Windows
                 return;
             }
 
-            m_Core.Renderer.Invoke((ReplayRenderer r) => { RT_UpdateRenderOutput(r);  if (m_Output != null) m_Output.Display(); });
+            m_Core.Renderer.InvokeForPaint((ReplayRenderer r) => { RT_UpdateRenderOutput(r); if (m_Output != null) m_Output.Display(); });
         }
 
         private void BufferViewer_Load(object sender, EventArgs e)
         {
             matrixType.SelectedIndex = 0;
             configCamControls.Visible = false;
+
+            if (onloadLayout.Length > 0)
+            {
+                foreach (var p in LayoutPersistors)
+                    (p.Parent as DockContent).DockPanel = null;
+
+                var enc = new UnicodeEncoding();
+                using (var strm = new MemoryStream(enc.GetBytes(onloadLayout)))
+                {
+                    strm.Flush();
+                    strm.Position = 0;
+
+                    try
+                    {
+                        dockPanel.LoadFromXml(strm, new DeserializeDockContent(GetContentFromPersistString));
+                    }
+                    catch (System.Exception)
+                    {
+                        // on error, go back to default layout
+                        UI_SetupDocks(MeshView);
+                    }
+                }
+
+                onloadLayout = "";
+            }
         }
 
         private void BufferViewer_FormClosed(object sender, FormClosedEventArgs e)
@@ -2527,7 +2692,7 @@ namespace renderdocui.Windows
                 }
                 catch (System.Exception ex)
                 {
-                    MessageBox.Show("Couldn't save to " + csvSaveDialog.FileName + Environment.NewLine + ex.ToString(), "Cannot save",
+                    MessageBox.Show("Couldn't save to " + rawSaveDialog.FileName + Environment.NewLine + ex.ToString(), "Cannot save",
                                                     MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
             }
@@ -2990,7 +3155,16 @@ namespace renderdocui.Windows
 
         private void drawRange_SelectedIndexChanged(object sender, EventArgs e)
         {
-            m_MeshDisplay.thisDrawOnly = (drawRange.SelectedIndex == 0);
+            /*
+            "Only this draw",
+            "Show previous instances",
+            "Show all instances",
+            "Show whole pass"
+             */
+
+            m_MeshDisplay.showPrevInstances = (drawRange.SelectedIndex >= 1);
+            m_MeshDisplay.showAllInstances = (drawRange.SelectedIndex >= 2);
+            m_MeshDisplay.showWholePass = (drawRange.SelectedIndex >= 3);
 
             render.Invalidate();
         }
@@ -3360,7 +3534,8 @@ namespace renderdocui.Windows
 
                 if (scroll)
                 {
-                    if (g.RowCount > 0 && g.RowCount > primary.FirstDisplayedScrollingRowIndex)
+                    if (g.RowCount > 0 && primary.FirstDisplayedScrollingRowIndex >= 0 &&
+                        g.RowCount > primary.FirstDisplayedScrollingRowIndex)
                         g.FirstDisplayedScrollingRowIndex = primary.FirstDisplayedScrollingRowIndex;
                 }
             }

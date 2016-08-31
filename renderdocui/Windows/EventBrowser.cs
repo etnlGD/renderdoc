@@ -61,6 +61,14 @@ namespace renderdocui.Windows
         {
             InitializeComponent();
 
+            if (SystemInformation.HighContrast)
+            {
+                toolStrip1.Renderer = new ToolStripSystemRenderer();
+                jumpStrip.Renderer = new ToolStripSystemRenderer();
+                findStrip.Renderer = new ToolStripSystemRenderer();
+                bookmarkStrip.Renderer = new ToolStripSystemRenderer();
+            }
+
             Icon = global::renderdocui.Properties.Resources.icon;
 
             jumpToEID.Font =
@@ -86,6 +94,7 @@ namespace renderdocui.Windows
             jumpEventButton.Enabled = false;
             timeDraws.Enabled = false;
             toggleBookmark.Enabled = false;
+            export.Enabled = false;
         }
 
         public class PersistData
@@ -226,9 +235,22 @@ namespace renderdocui.Windows
             return new TreelistView.Node(new object[] { "", "", text, -1.0 });
         }
 
+        private TreelistView.Node MakeNode(UInt32 minEID, UInt32 maxEID, UInt32 draw, string text, double duration)
+        {
+            return new TreelistView.Node(new object[] { String.Format("{0}-{1}", minEID, maxEID), draw, text, duration });
+        }
+
         private TreelistView.Node MakeNode(UInt32 EID, UInt32 draw, string text, double duration)
         {
             return new TreelistView.Node(new object[] { EID, draw, text, duration });
+        }
+
+        private uint GetEndEventID(FetchDrawcall drawcall)
+        {
+            if (drawcall.children.Length == 0)
+                return drawcall.eventID;
+
+            return GetEndEventID(drawcall.children.Last());
         }
 
         private TreelistView.Node AddDrawcall(FetchDrawcall drawcall, TreelistView.Node root)
@@ -240,7 +262,33 @@ namespace renderdocui.Windows
             }
 
             UInt32 eventNum = drawcall.eventID;
-            TreelistView.Node drawNode = MakeNode(eventNum, drawcall.drawcallID, drawcall.name, 0.0);
+            TreelistView.Node drawNode = null;
+            
+            if(drawcall.children.Length > 0)
+                drawNode = MakeNode(eventNum, GetEndEventID(drawcall), drawcall.drawcallID, drawcall.name, 0.0);
+            else
+                drawNode = MakeNode(eventNum, drawcall.drawcallID, drawcall.name, 0.0);
+
+            if (m_Core.Config.EventBrowser_ApplyColours)
+            {
+                // if alpha isn't 0, assume the colour is valid
+                if ((drawcall.flags & (DrawcallFlags.PushMarker | DrawcallFlags.SetMarker)) > 0 && drawcall.markerColour[3] > 0.0f)
+                {
+                    float red = drawcall.markerColour[0];
+                    float green = drawcall.markerColour[1];
+                    float blue = drawcall.markerColour[2];
+                    float alpha = drawcall.markerColour[3];
+
+                    drawNode.TreeLineColor = drawcall.GetColor();
+                    drawNode.TreeLineWidth = 3.0f;
+
+                    if (m_Core.Config.EventBrowser_ColourEventRow)
+                    {
+                        drawNode.BackColor = drawcall.GetColor();
+                        drawNode.ForeColor = drawcall.GetTextColor(eventView.ForeColor);
+                    }
+                }
+            }
 
             DeferredEvent def = new DeferredEvent();
             def.eventID = eventNum;
@@ -302,6 +350,16 @@ namespace renderdocui.Windows
             return drawNode;
         }
 
+        private uint GetNodeEventID(TreelistView.Node n)
+        {
+            DeferredEvent def = n.Tag as DeferredEvent;
+
+            if (def != null)
+                return def.eventID;
+
+            return 0;
+        }
+
         private void SetDrawcallTimes(TreelistView.Node n, Dictionary<uint, List<CounterResult>> times)
         {
             if (n == null || times == null) return;
@@ -312,7 +370,7 @@ namespace renderdocui.Windows
             // look up leaf nodes in the dictionary
             if (n.Nodes.IsEmpty())
             {
-                uint eid = (uint)n["EID"];
+                uint eid = GetNodeEventID(n);
 
                 if (times.ContainsKey(eid))
                     duration = times[eid][0].value.d;
@@ -370,6 +428,7 @@ namespace renderdocui.Windows
             jumpEventButton.Enabled = false;
             timeDraws.Enabled = false;
             toggleBookmark.Enabled = false;
+            export.Enabled = false;
         }
 
         public void OnLogfileLoaded()
@@ -378,6 +437,7 @@ namespace renderdocui.Windows
             jumpEventButton.Enabled = true;
             timeDraws.Enabled = true;
             toggleBookmark.Enabled = true;
+            export.Enabled = true;
 
             ClearBookmarks();
 
@@ -402,6 +462,8 @@ namespace renderdocui.Windows
                 DeferredEvent evt = eventView.Nodes[0].Nodes.LastNode.Tag as DeferredEvent;
 
                 m_Core.SetEventID(null, evt.eventID + 1);
+
+                m_FrameNode.Tag = evt;
 
                 eventView.NodesSelection.Clear();
                 eventView.NodesSelection.Add(eventView.Nodes[0]);
@@ -485,7 +547,7 @@ namespace renderdocui.Windows
         {
             foreach (var n in nodes)
             {
-                if (!IsBookmarked((UInt32)n["EID"]))
+                if (!IsBookmarked(GetNodeEventID(n)))
                     n.Image = null;
 
                 if (n.Nodes.Count > 0)
@@ -515,7 +577,7 @@ namespace renderdocui.Windows
                 {
                     if (n["Name"].ToString().ToUpperInvariant().Contains(filter))
                     {
-                        if (!IsBookmarked((UInt32)n["EID"]))
+                        if (!IsBookmarked(GetNodeEventID(n)))
                             n.Image = global::renderdocui.Properties.Resources.find;
                         results++;
                     }
@@ -544,7 +606,7 @@ namespace renderdocui.Windows
             {
                 if (n.Tag is DeferredEvent)
                 {
-                    if ((UInt32)n["EID"] > after && n["Name"].ToString().ToUpperInvariant().Contains(filter))
+                    if (GetNodeEventID(n) > after && n["Name"].ToString().ToUpperInvariant().Contains(filter))
                         return n;
                 }
 
@@ -1105,6 +1167,74 @@ namespace renderdocui.Windows
             bookmarkStrip.Visible = m_BookmarkButtons.Count > 0;
 
             eventView.Invalidate();
+        }
+
+        private string GetExportDrawcallString(int indent, bool firstchild, FetchDrawcall drawcall)
+        {
+            string prefix = new string(' ', indent * 2 - (firstchild ? 1 : 0));
+            if(firstchild)
+                prefix += '\\';
+
+            return String.Format("{0}- {1}", prefix, drawcall.name);
+        }
+
+        private void GetMaxNameLength(ref int maxNameLength, int indent, bool firstchild, FetchDrawcall drawcall)
+        {
+            string nameString = GetExportDrawcallString(indent, firstchild, drawcall);
+
+            maxNameLength = Math.Max(maxNameLength, nameString.Length);
+
+            for (int i = 0; i < drawcall.children.Length; i++)
+                GetMaxNameLength(ref maxNameLength, indent + 1, i == 0, drawcall.children[i]);
+        }
+
+        private void ExportDrawcall(StreamWriter sw, int maxNameLength, int indent, bool firstchild, FetchDrawcall drawcall)
+        {
+            string eidString = drawcall.children.Length > 0 ? "" : drawcall.eventID.ToString();
+
+            string nameString = GetExportDrawcallString(indent, firstchild, drawcall);
+
+            sw.WriteLine(String.Format("{0,-5} | {1,-" + maxNameLength + "} | {2,-5}", eidString, nameString, drawcall.drawcallID));
+
+            for (int i = 0; i < drawcall.children.Length; i++)
+                ExportDrawcall(sw, maxNameLength, indent + 1, i == 0, drawcall.children[i]);
+        }
+
+        private void export_Click(object sender, EventArgs e)
+        {
+            DialogResult res = exportDialog.ShowDialog();
+
+            if (res == DialogResult.OK)
+            {
+                try
+                {
+                    using (Stream s = new FileStream(exportDialog.FileName, FileMode.Create))
+                    {
+                        StreamWriter sw = new StreamWriter(s);
+
+                        sw.WriteLine(String.Format("{0} - Frame #{1}", m_Core.LogFileName, m_Core.FrameInfo.frameNumber));
+                        sw.WriteLine("");
+
+                        int maxNameLength = 0;
+
+                        foreach (FetchDrawcall d in m_Core.GetDrawcalls())
+                            GetMaxNameLength(ref maxNameLength, 0, false, d);
+
+                        sw.WriteLine(String.Format(" EID  | {0,-" + maxNameLength + "} | Draw #", "Event"));
+                        sw.WriteLine(String.Format("--------{0}-----------", new string('-', maxNameLength)));
+
+                        foreach (FetchDrawcall d in m_Core.GetDrawcalls())
+                            ExportDrawcall(sw, maxNameLength, 0, false, d);
+
+                        sw.Dispose();
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    MessageBox.Show("Couldn't save to " + exportDialog.FileName + Environment.NewLine + ex.ToString(), "Cannot save",
+                                                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
         }
     }
 }

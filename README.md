@@ -1,17 +1,23 @@
 RenderDoc
 ==============
 
+[![Travis CI](https://travis-ci.org/baldurk/renderdoc.svg?branch=master)](https://travis-ci.org/baldurk/renderdoc)
+[![AppVeyor](https://ci.appveyor.com/api/projects/status/x46lrnvdy29ysgqp?svg=true)](https://ci.appveyor.com/project/baldurk/renderdoc)
+[![Coverity Scan](https://scan.coverity.com/projects/8525/badge.svg)](https://scan.coverity.com/projects/baldurk-renderdoc)
+[![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
+
 Welcome to RenderDoc - a graphics debugger, currently available for D3D11, Vulkan and OpenGL development on windows. 
 
 Quick Links:
 
 * **Downloads**: https://renderdoc.org/builds
-* **Documentation**: renderdoc.chm in the build, or http://docs.renderdoc.org/
+* **Documentation**: renderdoc.chm in the build, or https://renderdoc.org/docs
 * **Tutorials**: There are some video tutorials on Youtube: http://www.youtube.com/user/baldurkarlsson/
-* **Email contact**: baldurk@baldurk.org
+* **Email contact**: [baldurk@baldurk.org](mailto:baldurk@baldurk.org)
 * **IRC channel**: #renderdoc on freenode
 * **Roadmap/future development**: [Roadmap](https://github.com/baldurk/renderdoc/wiki/Roadmap)
 * **Starting place for developing/contributing**: [CONTRIBUTING.md](CONTRIBUTING.md)
+* **Code of Conduct**: [contributor covenent](CODE_OF_CONDUCT.md)
 * **How to compile**: [COMPILE.md](COMPILE.md)
 
 Screenshots
@@ -29,7 +35,7 @@ API Support
 | D3D11            | Well supported, all features.          | :heavy_check_mark:       | :heavy_multiplication_x:        |
 | OpenGL 3.2 core+ | Well supported, most features.\*       | :heavy_check_mark:       | :heavy_check_mark: No UI\*\*    |
 | Vulkan           | Well supported, most features.         | :heavy_check_mark:       | :heavy_check_mark: No UI\*\*    |
-| D3D12            | Planned for the future.                | :heavy_multiplication_x: | :heavy_multiplication_x:        |
+| D3D12            | In Progress.                           | :arrows_clockwise:       | :heavy_multiplication_x:        |
 | OpenGL Pre-3.2   | No immediate plans                     | :heavy_multiplication_x: | :heavy_multiplication_x:        |
 | D3D10            | No immediate plans                     | :heavy_multiplication_x: | :heavy_multiplication_x:        |
 | D3D9             | No immediate plans                     | :heavy_multiplication_x: | :heavy_multiplication_x:        |
@@ -65,5 +71,5 @@ Building RenderDoc is fairly straight forward. See [COMPILE.md](COMPILE.md) for 
 Contributing & Development
 --------------
 
-I've added some notes on how to contribute, as well as where to get started looking through the code in [COMPILE.md](COMPILE.md) - check there for more details on how to set up to build renderdoc and where to start contributing to its development.
+I've added some notes on how to contribute, as well as where to get started looking through the code in [CONTRIBUTING.md](CONTRIBUTING.md) - also look at [COMPILE.md](COMPILE.md) for details on how to set up to build renderdoc.
 

@@ -54,10 +54,15 @@ namespace renderdocui.Windows
         Thread m_ConnectThread = null;
         bool m_TriggerCapture = false;
         bool m_QueueCapture = false;
+        int m_CaptureNumFrames = 1;
         int m_CaptureFrameNum = 0;
         int m_CaptureCounter = 0;
         bool m_Disconnect = false;
-        RemoteAccess m_Connection = null;
+        TargetControl m_Connection = null;
+
+        uint m_CopyLogID = uint.MaxValue;
+        string m_CopyLogLocalPath = "";
+        List<uint> m_DeleteLogs = new List<uint>();
 
         bool m_IgnoreThreadClosed = false;
 
@@ -71,11 +76,11 @@ namespace renderdocui.Windows
             public string api;
             public DateTime timestamp;
 
-            public bool copying;
             public bool saved;
             public bool opened;
 
-            public string localpath;
+            public string path;
+            public bool local;
         };
 
         class ChildProcess
@@ -91,6 +96,9 @@ namespace renderdocui.Windows
         public LiveCapture(Core core, string host, UInt32 remoteIdent, MainWindow main)
         {
             InitializeComponent();
+
+            if (SystemInformation.HighContrast)
+                toolStrip1.Renderer = new ToolStripSystemRenderer();
 
             m_Core = core;
             m_Main = main;
@@ -129,6 +137,14 @@ namespace renderdocui.Windows
             m_QueueCapture = true;
         }
 
+        public string Hostname
+        {
+            get
+            {
+                return m_Host;
+            }
+        }
+
         private void LiveCapture_Shown(object sender, EventArgs e)
         {
             m_ConnectThread = Helpers.NewThread(new ThreadStart(ConnectionThreadEntry));
@@ -141,7 +157,7 @@ namespace renderdocui.Windows
             {
                 string username = System.Security.Principal.WindowsIdentity.GetCurrent().Name;
 
-                m_Connection = StaticExports.CreateRemoteAccessConnection(m_Host, m_RemoteIdent, username, true);
+                m_Connection = StaticExports.CreateTargetControl(m_Host, m_RemoteIdent, username, true);
 
                 if (m_Connection.Connected)
                 {
@@ -165,7 +181,7 @@ namespace renderdocui.Windows
                 }
                 else
                 {
-                    throw new ApplicationException();
+                    throw new ReplayCreateException(ReplayCreateStatus.NetworkIOFailed);
                 }
 
                 while (m_Connection.Connected)
@@ -174,7 +190,7 @@ namespace renderdocui.Windows
 
                     if (m_TriggerCapture)
                     {
-                        m_Connection.TriggerCapture();
+                        m_Connection.TriggerCapture((uint)m_CaptureNumFrames);
                         m_TriggerCapture = false;
                     }
 
@@ -184,6 +200,23 @@ namespace renderdocui.Windows
                         m_QueueCapture = false;
                         m_CaptureFrameNum = 0;
                     }
+
+                    if (m_CopyLogLocalPath != "")
+                    {
+                        m_Connection.CopyCapture(m_CopyLogID, m_CopyLogLocalPath);
+                        m_CopyLogLocalPath = "";
+                        m_CopyLogID = uint.MaxValue;
+                    }
+
+                    List<uint> dels = new List<uint>();
+                    lock (m_DeleteLogs)
+                    {
+                        dels.AddRange(m_DeleteLogs);
+                        m_DeleteLogs.Clear();
+                    }
+
+                    foreach(var del in dels)
+                        m_Connection.DeleteCapture(del);
 
                     if (m_Disconnect)
                     {
@@ -210,32 +243,26 @@ namespace renderdocui.Windows
                         DateTime timestamp = new DateTime(1970, 1, 1, 0, 0, 0);
                         timestamp = timestamp.AddSeconds(m_Connection.CaptureFile.timestamp).ToLocalTime();
                         byte[] thumb = m_Connection.CaptureFile.thumbnail;
-                        string path = m_Connection.CaptureFile.localpath;
+                        string path = m_Connection.CaptureFile.path;
+                        bool local = m_Connection.CaptureFile.local;
 
-                        if (path.Length == 0 || File.Exists(path))
+                        this.BeginInvoke((MethodInvoker)delegate
                         {
-                            this.BeginInvoke((MethodInvoker)delegate
-                            {
-                                CaptureAdded(capID, m_Connection.Target, m_Connection.API, thumb, timestamp);
-                                if (path.Length > 0)
-                                    CaptureRetrieved(capID, path);
-                            });
-                            m_Connection.CaptureExists = false;
-
-                            if (path.Length == 0)
-                                m_Connection.CopyCapture(capID, m_Core.TempLogFilename("remotecopy_" + m_Connection.Target));
-                        }
+                            CaptureAdded(capID, m_Connection.Target, m_Connection.API, thumb, timestamp, path, local);
+                        });
+                        m_Connection.CaptureExists = false;
                     }
 
                     if (m_Connection.CaptureCopied)
                     {
                         uint capID = m_Connection.CaptureFile.ID;
-                        string path = m_Connection.CaptureFile.localpath;
+                        string path = m_Connection.CaptureFile.path;
 
                         this.BeginInvoke((MethodInvoker)delegate
                         {
-                            CaptureRetrieved(capID, path);
+                            CaptureCopied(capID, path);
                         });
+
                         m_Connection.CaptureCopied = false;
                     }
 
@@ -270,10 +297,13 @@ namespace renderdocui.Windows
                     connectionStatus.Text = "Connection closed";
                     connectionIcon.Image = global::renderdocui.Properties.Resources.disconnect;
 
+                    numFrames.Enabled = captureDelay.Enabled = captureFrame.Enabled =
+                        triggerCapture.Enabled = queueCap.Enabled = false;
+
                     ConnectionClosed();
                 });
             }
-            catch (ApplicationException)
+            catch (ReplayCreateException)
             {
                 this.BeginInvoke((MethodInvoker)delegate
                 {
@@ -343,21 +373,8 @@ namespace renderdocui.Windows
                 openMenu.Enabled = openThisCaptureToolStripMenuItem.Enabled =
                 (captures.SelectedItems.Count == 1);
 
-            if (captures.SelectedItems.Count > 0)
-            {
-                foreach(ListViewItem i in captures.SelectedItems)
-                {
-                    var log = i.Tag as CaptureLog;
-
-                    if (log.copying)
-                    {
-                        deleteMenu.Enabled =
-                            saveMenu.Enabled = saveThisCaptureToolStripMenuItem.Enabled =
-                            openMenu.Enabled = openThisCaptureToolStripMenuItem.Enabled = false;
-                        return;
-                    }
-                }
-            }
+            if(captures.SelectedItems.Count == 1)
+                newInstanceToolStripMenuItem.Enabled = (captures.SelectedItems[0].Tag as CaptureLog).local;
         }
 
         private void captures_MouseDoubleClick(object sender, MouseEventArgs e)
@@ -374,17 +391,26 @@ namespace renderdocui.Windows
 
         private void OpenCapture(CaptureLog log)
         {
-            if (!log.copying)
+            log.opened = true;
+
+            if (!log.local &&
+               (m_Core.Renderer.Remote == null ||
+                m_Core.Renderer.Remote.Hostname != m_Host ||
+                !m_Core.Renderer.Remote.Connected)
+              )
             {
-                m_Main.LoadLogfile(log.localpath, !log.saved);
-                log.opened = true;
+                MessageBox.Show(
+                    String.Format("This capture is on remote host {0} and there is no active replay context on that host.\n" +
+                        "You can either save the log locally, or switch to a replay context on {0}.\n\n", m_Host),
+                    "No active replay context", MessageBoxButtons.OK);
+                return;
             }
+
+            m_Main.LoadLogfile(log.path, !log.saved, log.local);
         }
 
         private bool SaveCapture(CaptureLog log)
         {
-            if (log.copying) return false;
-
             string path = m_Main.GetSavePath();
 
             // we copy the temp log to the desired path, but the log item remains referring to the temp path.
@@ -393,8 +419,35 @@ namespace renderdocui.Windows
             {
                 try
                 {
-                    File.Copy(log.localpath, path, true);
+                    if (log.local)
+                    {
+                        File.Copy(log.path, path, true);
+                    }
+                    else if (m_Connection.Connected)
+                    {
+                        // if we have a current live connection, prefer using it
+                        m_CopyLogLocalPath = path;
+                        m_CopyLogID = log.remoteID;
+                    }
+                    else
+                    {
+                        if (m_Core.Renderer.Remote == null ||
+                            m_Core.Renderer.Remote.Hostname != m_Host ||
+                            !m_Core.Renderer.Remote.Connected)
+                        {
+                            MessageBox.Show(
+                                String.Format("This capture is on remote host {0} and there is no active replay context on that host.\n" +
+                                "Without an active replay context the capture cannot be saved, try switching to a replay context on {0}.\n\n", m_Host),
+                                "No active replay context", MessageBoxButtons.OK);
+                            return false;
+                        }
+
+                        m_Core.Renderer.CopyCaptureFromRemote(log.path, path, this);
+                        m_Core.Renderer.DeleteCapture(log.path, false);
+                    }
+
                     log.saved = true;
+                    log.path = path;
                     m_Core.Config.AddRecentFile(m_Core.Config.RecentLogFiles, path, 10);
                     m_Main.PopulateRecentFiles();
                 }
@@ -413,6 +466,8 @@ namespace renderdocui.Windows
         {
             m_IgnoreThreadClosed = true;
 
+            bool suppressRemoteWarning = false;
+
             foreach (ListViewItem i in captures.Items)
             {
                 var log = i.Tag as CaptureLog;
@@ -424,13 +479,44 @@ namespace renderdocui.Windows
                 captures.Focus();
                 i.Selected = true;
 
-                DialogResult res = MessageBox.Show(String.Format("Save this logfile from {0} at {1}?", log.exe, log.timestamp.ToString("T")),
-                                                    "Unsaved log", MessageBoxButtons.YesNoCancel);
+                DialogResult res = DialogResult.No;
+
+                if (!suppressRemoteWarning)
+                {
+                    res = MessageBox.Show(String.Format("Save this logfile from {0} at {1}?", log.exe, log.timestamp.ToString("T")),
+                                                        "Unsaved log", MessageBoxButtons.YesNoCancel);
+                }
 
                 if (res == DialogResult.Cancel)
                 {
                     m_IgnoreThreadClosed = false;
                     return false;
+                }
+
+                // we either have to save or delete the log. Make sure that if it's remote that we are able
+                // to by having an active connection or replay context on that host.
+                if (suppressRemoteWarning == false && !m_Connection.Connected &&
+                    (m_Core.Renderer.Remote == null ||
+                     m_Core.Renderer.Remote.Hostname != m_Host ||
+                     !m_Core.Renderer.Remote.Connected)
+                    )
+                {
+                    DialogResult res2 = MessageBox.Show(
+                        String.Format("This capture is on remote host {0} and there is no active replay context on that host.\n", m_Host) +
+                        "Without an active replay context the capture cannot be " + (res == DialogResult.Yes ? "saved.\n\n" : "deleted.\n\n") +
+                        "Would you like to continue and discard this capture and any others, to be left in the temporary folder on the remote machine?",
+                        "No active replay context", MessageBoxButtons.YesNoCancel);
+
+                    if (res2 == DialogResult.Yes)
+                    {
+                        suppressRemoteWarning = true;
+                        res = DialogResult.No;
+                    }
+                    else
+                    {
+                        m_IgnoreThreadClosed = false;
+                        return false;
+                    }
                 }
 
                 if (res == DialogResult.Yes)
@@ -459,10 +545,25 @@ namespace renderdocui.Windows
                 {
                     try
                     {
-                        if (log.localpath == m_Core.LogFileName)
+                        if (log.path == m_Core.LogFileName)
+                        {
                             m_Main.OwnTemporaryLog = true;
+                        }
                         else
-                            File.Delete(log.localpath);
+                        {
+                            // if connected, prefer using the live connection
+                            if (m_Connection.Connected && !log.local)
+                            {
+                                lock (m_DeleteLogs)
+                                {
+                                    m_DeleteLogs.Add(log.remoteID);
+                                }
+                            }
+                            else
+                            {
+                                m_Core.Renderer.DeleteCapture(log.path, log.local);
+                            }
+                        }
                     }
                     catch (System.Exception)
                     {
@@ -481,6 +582,7 @@ namespace renderdocui.Windows
                 return;
             }
 
+            CleanItems();
             KillThread();
         }
 
@@ -501,8 +603,8 @@ namespace renderdocui.Windows
             captures.LargeImageList.Images.Clear();
             thumbs.Dispose();
 
-            KillThread();
             CleanItems();
+            KillThread();
         }
 
         private bool CheckAllowDelete()
@@ -538,15 +640,26 @@ namespace renderdocui.Windows
 
             if (!log.saved)
             {
-                if (log.localpath == m_Core.LogFileName)
+                if (log.path == m_Core.LogFileName)
                 {
-                    m_Main.OwnTemporaryLog = false;
+                    m_Main.OwnTemporaryLog = true;
                     m_Main.CloseLogfile();
                 }
 
                 try
                 {
-                    File.Delete(log.localpath);
+                    // if connected, prefer using the live connection
+                    if (m_Connection.Connected && !log.local)
+                    {
+                        lock (m_DeleteLogs)
+                        {
+                            m_DeleteLogs.Add(log.remoteID);
+                        }
+                    }
+                    else
+                    {
+                        m_Core.Renderer.DeleteCapture(log.path, log.local);
+                    }
                 }
                 catch (System.Exception)
                 {
@@ -571,9 +684,16 @@ namespace renderdocui.Windows
 
                 var temppath = m_Core.TempLogFilename(log.exe);
 
+                if (!log.local)
+                {
+                    MessageBox.Show("Can't open log in new instance with remote server in use", "Cannot open new instance",
+                                                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    return;
+                }
+
                 try
                 {
-                    File.Copy(log.localpath, temppath);
+                    File.Copy(log.path, temppath);
                 }
                 catch (System.Exception ex)
                 {
@@ -612,7 +732,23 @@ namespace renderdocui.Windows
             }
         }
 
-        private void CaptureAdded(uint ID, string executable, string api, byte[] thumbnail, DateTime timestamp)
+        private void CaptureCopied(uint ID, string localPath)
+        {
+            foreach (ListViewItem item in captures.Items)
+            {
+                var log = item.Tag as CaptureLog;
+
+                if (log != null && log.remoteID == ID)
+                {
+                    log.local = true;
+                    log.path = localPath;
+                    item.SubItems[0].Text = log.exe;
+                    item.SubItems[0].Font = new Font(item.SubItems[0].Font, FontStyle.Regular);
+                }
+            }
+        }
+
+        private void CaptureAdded(uint ID, string executable, string api, byte[] thumbnail, DateTime timestamp, string path, bool local)
         {
             if (thumbnail == null || thumbnail.Length == 0)
             {
@@ -635,30 +771,20 @@ namespace renderdocui.Windows
             log.exe = executable;
             log.api = api;
             log.timestamp = timestamp;
-            log.copying = true;
             log.saved = false;
+            log.path = path;
+            log.local = local;
 
-            var item = new ListViewItem(new string[] { log.exe + " (Copying)", log.api, log.timestamp.ToString() }, thumbs.Images.Count - 1);
+            string title = log.exe;
+            if (!local)
+                title += " (Remote)";
+
+            var item = new ListViewItem(new string[] { title, log.api, log.timestamp.ToString() }, thumbs.Images.Count - 1);
             item.Tag = log;
-            item.SubItems[0].Font = new Font(item.SubItems[0].Font, FontStyle.Italic);
+            if(!local)
+                item.SubItems[0].Font = new Font(item.SubItems[0].Font, FontStyle.Italic);
 
             captures.Items.Add(item);
-        }
-
-        private void CaptureRetrieved(uint ID, string localpath)
-        {
-            foreach (ListViewItem i in captures.Items)
-            {
-                var log = i.Tag as CaptureLog;
-
-                if (log.remoteID == ID && log.copying)
-                {
-                    log.copying = false;
-                    log.localpath = localpath;
-                    i.SubItems[0].Text = log.exe;
-                    i.SubItems[0].Font = new Font(i.SubItems[0].Font, FontStyle.Regular);
-                }
-            }
         }
 
         private void ConnectionClosed()
@@ -670,6 +796,16 @@ namespace renderdocui.Windows
                 if (captures.Items.Count == 1)
                 {
                     var log = captures.Items[0].Tag as CaptureLog;
+
+                    // only auto-open a non-local log if we are successfully connected
+                    // to this machine as a remote context
+                    if (!log.local)
+                    {
+                        if (m_Core.Renderer.Remote == null ||
+                           m_Host != m_Core.Renderer.Remote.Hostname ||
+                           !m_Core.Renderer.Remote.Connected)
+                            return;
+                    }
 
                     if (log.opened)
                         return;
@@ -703,6 +839,7 @@ namespace renderdocui.Windows
 
         private void triggerCapture_Click(object sender, EventArgs e)
         {
+            m_CaptureNumFrames = (int)numFrames.Value;
             if (captureDelay.Value == 0)
             {
                 m_TriggerCapture = true;

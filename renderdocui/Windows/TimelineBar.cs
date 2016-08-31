@@ -153,8 +153,7 @@ namespace renderdocui.Windows
                 using(var brush = new SolidBrush(col))
                     g.FillPie(brush, x, y, width, height, 0.0f, 360.0f);
             }
-
-            if (type == 1 || type == 2 || type == 3 || type == 4)
+            else if(type < 999)
             {
                 height += 2;
                 width += 4;
@@ -172,12 +171,23 @@ namespace renderdocui.Windows
                     {
                         uptri[1] = new PointF(x + width / 2.0f, y + height - 2);
                         update = false;
+                        type = 1;
                     }
                     if (type == 4)
                     {
                         uptri[0] = new PointF(x + width / 2.0f, y + height - 2);
+                        type = 1;
                     }
-                    type = 1;
+                    if (type == 5)
+                    {
+                        update = false;
+                        type = 1;
+                    }
+                    if (type == 6)
+                    {
+                        update = false;
+                        type = 2;
+                    }
                 }
 
                 if (x - lastPipX[type] > pipRadius*2.0f)
@@ -242,7 +252,7 @@ namespace renderdocui.Windows
                 m_ranges[m_ranges.Count-1].last = eid;
         }
 
-        private RectangleF DrawBar(Graphics g, Color back, RectangleF rect, float startSeg, float segWidth, string text, bool visible)
+        private RectangleF DrawBar(Graphics g, Color back, Color fore, RectangleF rect, float startSeg, float segWidth, string text, bool visible)
         {
             var subRect = GetSubrect(rect, startSeg, segWidth);
             subRect.Height = barHeight;
@@ -250,6 +260,7 @@ namespace renderdocui.Windows
             if (subRect.Contains(markerPos) && visible && showMarker && markerPos.Y < ClientRectangle.Height - pipRadius*6)
             {
                 back = Color.LightYellow;
+                fore = Color.Black;
                 Cursor = Cursors.Hand;
             }
 
@@ -284,7 +295,8 @@ namespace renderdocui.Windows
             if (visible)
             {
                 g.Clip = new Region(textRect);
-                g.DrawString(text, barFont, Brushes.Black, textRect.X, textRect.Y);
+                using (var brush = new SolidBrush(fore))
+                    g.DrawString(text, barFont, brush, textRect.X, textRect.Y);
                 g.ResetClip();
             }
 
@@ -300,6 +312,10 @@ namespace renderdocui.Windows
         private class Section
         {
             public string Name = "";
+
+            public Color color;
+            public Color textcolor;
+
             public bool Expanded = false;
             public List<Section> subsections = null;
             public List<FetchDrawcall> draws = null;
@@ -352,6 +368,16 @@ namespace renderdocui.Windows
                 if (s.Count == 1 && (s[0].flags & (DrawcallFlags.PushMarker | DrawcallFlags.MultiDraw)) > 0)
                 {
                     sec = GatherEvents(s[0].children);
+                    if (m_Core.Config.EventBrowser_ApplyColours)
+                    {
+                        sec.color = s[0].GetColor();
+                        sec.textcolor = s[0].GetTextColor(Color.Black);
+                    }
+                    else
+                    {
+                        sec.color = Color.Transparent;
+                        sec.textcolor = Color.Black;
+                    }
                     sec.Name = s[0].name;
                 }
                 else
@@ -490,8 +516,6 @@ namespace renderdocui.Windows
             for (int i = 0; i < section.subsections.Count; i++)
                 widths[i] /= rect.Width;
 
-            var col = depth % 2 == 0 ? lightBack : darkBack;
-
             var clipRect = rect;
             clipRect.Height -= pipRadius * 6;
 
@@ -500,8 +524,17 @@ namespace renderdocui.Windows
                 var s = section.subsections[i];
                 if (s.Name.Length > 0)
                 {
+                    var col = depth % 2 == 0 ? lightBack : darkBack;
+                    var textcol = Color.Black;
+
+                    if (s.color.A > 0)
+                    {
+                        col = s.color;
+                        textcol = s.textcolor;
+                    }
+
                     g.Clip = new Region(clipRect);
-                    var childRect = DrawBar(g, col, rect, start, widths[i], (s.Expanded ? "- " : "+ ") + s.Name, visible);
+                    var childRect = DrawBar(g, col, textcol, rect, start, widths[i], (s.Expanded ? "- " : "+ ") + s.Name, visible);
                     g.ResetClip();
 
                     RenderSection(depth + 1, g, childRect, s, visible && s.Expanded, visible ? childRect.Top : lastVisibleHeight);
@@ -576,11 +609,15 @@ namespace renderdocui.Windows
                             {
                                 foreach (var u in m_HighlightUsage)
                                 {
-                                    if (u.eventID == s.draws[d].eventID)
+                                    if ((u.eventID == s.draws[d].eventID) ||
+                                        (u.eventID < s.draws[d].eventID && s.draws[d].events.Length > 0 && u.eventID >= s.draws[d].events[0].eventID))
                                     {
                                         var barcol = Color.Black;
 
                                         int type = 2;
+
+                                        if (u.usage == ResourceUsage.Barrier)
+                                            type = 6;
 
                                         DrawPip(g, barcol, highlightBarRect, type, d, s.draws.Count, start, widths[i], "");
                                     }
@@ -618,7 +655,8 @@ namespace renderdocui.Windows
                             {
                                 foreach (var u in m_HighlightUsage)
                                 {
-                                    if (u.eventID == s.draws[d].eventID)
+                                    if ((u.eventID == s.draws[d].eventID) ||
+                                        (u.eventID < s.draws[d].eventID && s.draws[d].events.Length > 0 && u.eventID >= s.draws[d].events[0].eventID))
                                     {
                                         // read/write
                                         if (
@@ -646,6 +684,12 @@ namespace renderdocui.Windows
                                         else if (u.usage == ResourceUsage.Clear)
                                         {
                                             DrawPip(g, Color.Silver, highlightBarRect, 1, d, s.draws.Count, start, widths[i], "");
+                                            MarkWrite(s.draws[d].eventID);
+                                        }
+                                        // barrier
+                                        else if (u.usage == ResourceUsage.Barrier)
+                                        {
+                                            DrawPip(g, Color.Tomato, highlightBarRect, 5, d, s.draws.Count, start, widths[i], "");
                                             MarkWrite(s.draws[d].eventID);
                                         }
                                         // read
@@ -799,6 +843,19 @@ namespace renderdocui.Windows
 
                 DrawPip(g, Color.Black, new RectangleF(barRect.X, barRect.Y - pipRadius, pipRadius * 2, pipRadius * 2), 2, 0, 1, 0.0f, 1.0f, "");
                 DrawPip(g, Color.Silver, new RectangleF(barRect.X, barRect.Y - pipRadius, pipRadius * 2, pipRadius * 2), 1, 0, 1, 0.0f, 1.0f, "");
+
+                if (m_Core.CurPipelineState.SupportsBarriers)
+                {
+                    barRect.X += pipRadius * 2;
+                    barRect.X += pipRadius;
+
+                    g.DrawString(", Barriers ", barFont, Brushes.Black, barRect.X, barRect.Y + 2);
+                    barRect.X += (int)Math.Ceiling(g.MeasureString(", Barriers ", barFont).Width);
+                    barRect.X += pipRadius;
+
+                    DrawPip(g, Color.Black, new RectangleF(barRect.X, barRect.Y - pipRadius, pipRadius * 2, pipRadius * 2), 2, 0, 1, 0.0f, 1.0f, "");
+                    DrawPip(g, Color.Tomato, new RectangleF(barRect.X, barRect.Y - pipRadius, pipRadius * 2, pipRadius * 2), 1, 0, 1, 0.0f, 1.0f, "");
+                }
 
                 barRect.X += pipRadius * 2;
                 barRect.X += pipRadius;

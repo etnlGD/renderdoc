@@ -2,7 +2,6 @@
  * The MIT License (MIT)
  * 
  * Copyright (c) 2015-2016 Baldur Karlsson
- * Copyright (c) 2014 Crytek
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,15 +22,13 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
-#version 420 core
-
 layout (location = 0) out vec4 color_out;
 
-layout (binding = 0, std140) uniform checker
+layout (binding = 0, std140) uniform checkeruniforms
 {
     vec4 lightCol;
     vec4 darkCol;
-};
+} checker;
 
 void main(void)
 {
@@ -42,10 +39,10 @@ void main(void)
 		(ab.x > 64 && ab.y > 64)
 		)
 	{
-		color_out = vec4(sqrt(lightCol.rgb), 1);
+		color_out = vec4(checker.darkCol.rgb*checker.darkCol.rgb, 1);
 	}
 	else
 	{
-		color_out = vec4(sqrt(darkCol.rgb), 1);
+		color_out = vec4(checker.lightCol.rgb*checker.lightCol.rgb, 1);
 	}
 }

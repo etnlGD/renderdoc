@@ -29,6 +29,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.IO;
+using System.Threading;
 using System.Xml;
 using System.Xml.Serialization;
 using renderdoc;
@@ -36,6 +37,89 @@ using System.Windows.Forms;
 
 namespace renderdocui.Code
 {
+    [Serializable]
+    public class RemoteHost
+    {
+        public string Hostname = "";
+        public string RunCommand = "";
+
+        [XmlIgnore]
+        public bool ServerRunning = false;
+        [XmlIgnore]
+        public bool Connected = false;
+        [XmlIgnore]
+        public bool Busy = false;
+        [XmlIgnore]
+        public bool VersionMismatch = false;
+
+        public void CheckStatus()
+        {
+            // special case - this is the local context
+            if (Hostname == "localhost")
+            {
+                ServerRunning = false;
+                VersionMismatch = Busy = false;
+                return;
+            }
+
+            try
+            {
+                RemoteServer server = StaticExports.CreateRemoteServer(Hostname, 0);
+                ServerRunning = true;
+                VersionMismatch = Busy = false;
+                server.ShutdownConnection();
+
+                // since we can only have one active client at once on a remote server, we need
+                // to avoid DDOS'ing by doing multiple CheckStatus() one after the other so fast
+                // that the active client can't be properly shut down. Sleeping here for a short
+                // time gives that breathing room.
+                // Not the most elegant solution, but it is simple
+
+                Thread.Sleep(15);
+            }
+            catch (ReplayCreateException ex)
+            {
+                if (ex.Status == ReplayCreateStatus.NetworkRemoteBusy)
+                {
+                    ServerRunning = true;
+                    Busy = true;
+                }
+                else if (ex.Status == ReplayCreateStatus.NetworkVersionMismatch)
+                {
+                    ServerRunning = true;
+                    Busy = true;
+                    VersionMismatch = true;
+                }
+                else
+                {
+                    ServerRunning = false;
+                    Busy = false;
+                }
+            }
+        }
+
+        public void Launch()
+        {
+            try
+            {
+                System.Diagnostics.ProcessStartInfo startInfo = new System.Diagnostics.ProcessStartInfo("cmd.exe");
+                startInfo.CreateNoWindow = true;
+                startInfo.UseShellExecute = false;
+                startInfo.WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden;
+                startInfo.Arguments = "/C " + RunCommand;
+                System.Diagnostics.Process cmd = System.Diagnostics.Process.Start(startInfo);
+
+                // wait up to 2s for the command to exit 
+                cmd.WaitForExit(2000);
+            }
+            catch (Exception)
+            {
+                MessageBox.Show(String.Format("Error running command to launch remote server:\n{0}", RunCommand),
+                                "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+    }
+
     [Serializable]
     public class PersistantConfig
     {
@@ -46,21 +130,37 @@ namespace renderdocui.Code
         public List<string> RecentCaptureSettings = new List<string>();
         public int CallstackLevelSkip = 0;
 
-        public string CaptureSavePath = "";
+        // for historical reasons, this was named CaptureSavePath
+        [XmlElement("CaptureSavePath")]
+        public string TemporaryCaptureDirectory = "";
+        public string DefaultCaptureSaveDirectory = "";
 
         public bool TextureViewer_ResetRange = false;
         public bool TextureViewer_PerTexSettings = true;
         public bool ShaderViewer_FriendlyNaming = true;
 
-        public List<string> RecentHosts = new List<string>();
+        public bool AlwaysReplayLocally = false;
+        public List<RemoteHost> RemoteHosts = new List<RemoteHost>();
 
         public int LocalProxy = 0;
 
         [XmlIgnore] // not directly serializable
-        public Dictionary<string, string> ReplayHosts = new Dictionary<string, string>();
-        public List<SerializableKeyValuePair<string, string>> ReplayHostKeyValues = new List<SerializableKeyValuePair<string, string>>();
+        public Dictionary<string, string> ConfigSettings = new Dictionary<string, string>();
+        private List<SerializableKeyValuePair<string, string>> ConfigSettingsValues = new List<SerializableKeyValuePair<string, string>>();
 
-        public List<SerializableKeyValuePair<string, string>> PreviouslyUsedHosts = new List<SerializableKeyValuePair<string, string>>();
+        public void SetConfigSetting(string name, string value)
+        {
+            ConfigSettings[name] = value;
+            StaticExports.SetConfigSetting(name, value);
+        }
+
+        public string GetConfigSetting(string name)
+        {
+            if(ConfigSettings.ContainsKey(name))
+                return ConfigSettings[name];
+
+            return "";
+        }
 
         public enum TimeUnit
         {
@@ -86,6 +186,9 @@ namespace renderdocui.Code
 
         public TimeUnit EventBrowser_TimeUnit = TimeUnit.Microseconds;
         public bool EventBrowser_HideEmpty = false;
+
+        public bool EventBrowser_ApplyColours = true;
+        public bool EventBrowser_ColourEventRow = true;
 
         public int Formatter_MinFigures = 2;
         public int Formatter_MaxFigures = 5;
@@ -154,9 +257,9 @@ namespace renderdocui.Code
 
             try
             {
-                ReplayHostKeyValues.Clear();
-                foreach (var kv in ReplayHosts)
-                    ReplayHostKeyValues.Add(new SerializableKeyValuePair<string, string>(kv.Key, kv.Value));
+                ConfigSettingsValues.Clear();
+                foreach (var kv in ConfigSettings)
+                    ConfigSettingsValues.Add(new SerializableKeyValuePair<string, string>(kv.Key, kv.Value));
 
                 XmlSerializer xs = new XmlSerializer(this.GetType());
                 StreamWriter writer = File.CreateText(file);
@@ -178,11 +281,32 @@ namespace renderdocui.Code
             PersistantConfig c = (PersistantConfig)xs.Deserialize(reader);
             reader.Close();
 
-            foreach (var kv in c.ReplayHostKeyValues)
+            foreach (var kv in c.ConfigSettingsValues)
             {
                 if (kv.Key != null && kv.Key.Length > 0 &&
                     kv.Value != null)
-                c.ReplayHosts.Add(kv.Key, kv.Value);
+                {
+                    c.SetConfigSetting(kv.Key, kv.Value);
+                }
+            }
+
+            // localhost should always be available
+            bool foundLocalhost = false;
+
+            for (int i = 0; i < c.RemoteHosts.Count; i++)
+            {
+                if (c.RemoteHosts[i].Hostname == "localhost")
+                {
+                    foundLocalhost = true;
+                    break;
+                }
+            }
+
+            if (!foundLocalhost)
+            {
+                RemoteHost host = new RemoteHost();
+                host.Hostname = "localhost";
+                c.RemoteHosts.Add(host);
             }
 
             return c;

@@ -1,11 +1,3 @@
-Drivers
---------------
-
-Each RenderDoc back-end is called a 'driver' and is under the renderdoc/driver/ folder. If you don't have the SDK or don't care about a particular API you can remove a driver from building - in the Makefile by editing LIBS= in renderdoc/Makefile, in VS by removing the project and the reference on the renderdoc reference. Be aware of dependencies, such as D3D11 expecting DXGI to be loaded too.
-
-Some shared code for handling shader formats used in multiple APIs such as DXBC and SPIR-V are in renderdoc/driver/shaders/ folder.
-
-
 Windows
 --------------
 
@@ -29,30 +21,25 @@ You might find these visualisers useful, going under your [Visualizer] section i
 Linux
 --------------
 
-Just 'make' in the root should do the trick. This build system is work in progress as the linux port is very early, so it may change!
+Currently linux supports gcc-4.8 and clang-3.5, as these are the compilers used in CI builds. Once the linux port is more mature, more compilers can be supported.
 
-There's no configuration or cmake setup, it assumes gcc/g++ (this can be overwridden via variables CC and CPP, or just in the makefiles).
+Just 'make' in the root should do the trick. This build system is work in progress as the linux port is very early, so it may change! Currently it uses cmake, running the default Makefile will run cmake inside a 'build' folder then build from there.
+
+Configuration is as usual for cmake, you can override the compiler with environment variables CC and CXX, and there are some options you can toggle in the root CMakeLists files.
 
 Requirements are linking against -lX11 and -lGL. For qrenderdoc you need qt5 along with the 'x11extras' package.
 
 This is the apt-get line you'd need to install the requirements on Ubuntu 14.04:
 
 ```
-sudo apt-get install libx11-dev mesa-common-dev libgl1-mesa-dev qt5-default libqt5x11extras5-dev libxcb-keysyms1-dev
+sudo apt-get install libx11-dev libx11-xcb-dev mesa-common-dev libgl1-mesa-dev qt5-default libqt5x11extras5-dev libxcb-keysyms1-dev cmake
 ```
 
-For Archlinux (as of 2016.02.01) you'll need:
+For Archlinux (as of 2016.08.04) you'll need:
 
 ```
-sudo pacman -S libx11 xcb-util-keysyms mesa mesa-libgl qt5-base qt5-x11extras
+sudo pacman -S libx11 libx11-xcb xcb-util-keysyms mesa mesa-libgl qt5-base qt5-x11extras cmake
 ```
 
 If you know the required packages for another distribution, please share (or pull request this file!)
-
-Builds
---------------
-
-Official releases will get a github release made for them, nightly builds and beta are just marked with the hash of the commit they were built from.
-
-Please don't distribute releases marked with a version number and commit hash as it will confuse me with auto-submitted crashes since I won't have the symbols for them. If you distribute releases leave the version information as is (master is always marked as an unofficial non-versioned build).
 

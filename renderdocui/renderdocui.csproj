@@ -223,6 +223,12 @@
     <Compile Include="Windows\Dialogs\ColumnSelector.Designer.cs">
       <DependentUpon>ColumnSelector.cs</DependentUpon>
     </Compile>
+    <Compile Include="Windows\Dialogs\EnvironmentEditor.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Windows\Dialogs\EnvironmentEditor.Designer.cs">
+      <DependentUpon>EnvironmentEditor.cs</DependentUpon>
+    </Compile>
     <Compile Include="Windows\Dialogs\FindAllDialog.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -235,23 +241,35 @@
     <Compile Include="Windows\Dialogs\PythonShell.Designer.cs">
       <DependentUpon>PythonShell.cs</DependentUpon>
     </Compile>
-    <Compile Include="Windows\Dialogs\RemoteHostSelect.cs">
+    <Compile Include="Windows\Dialogs\RemoteManager.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="Windows\Dialogs\RemoteHostSelect.Designer.cs">
-      <DependentUpon>RemoteHostSelect.cs</DependentUpon>
+    <Compile Include="Windows\Dialogs\RemoteManager.Designer.cs">
+      <DependentUpon>RemoteManager.cs</DependentUpon>
     </Compile>
-    <Compile Include="Windows\Dialogs\ReplayHostManager.cs">
+    <Compile Include="Windows\Dialogs\OrderedListEditor.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="Windows\Dialogs\ReplayHostManager.Designer.cs">
-      <DependentUpon>ReplayHostManager.cs</DependentUpon>
+    <Compile Include="Windows\Dialogs\OrderedListEditor.Designer.cs">
+      <DependentUpon>OrderedListEditor.cs</DependentUpon>
     </Compile>
     <Compile Include="Windows\Dialogs\SettingsDialog.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="Windows\Dialogs\SettingsDialog.Designer.cs">
       <DependentUpon>SettingsDialog.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Windows\Dialogs\SuggestRemoteDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Windows\Dialogs\SuggestRemoteDialog.Designer.cs">
+      <DependentUpon>SuggestRemoteDialog.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Windows\Dialogs\TextureGoto.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Windows\Dialogs\TextureGoto.Designer.cs">
+      <DependentUpon>TextureGoto.cs</DependentUpon>
     </Compile>
     <Compile Include="Windows\Dialogs\TextureSaveDialog.cs">
       <SubType>Form</SubType>
@@ -271,17 +289,23 @@
     <Compile Include="Windows\Dialogs\UpdateDialog.Designer.cs">
       <DependentUpon>UpdateDialog.cs</DependentUpon>
     </Compile>
+    <Compile Include="Windows\Dialogs\VirtualOpenFileDialog.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Windows\Dialogs\VirtualOpenFileDialog.Designer.cs">
+      <DependentUpon>VirtualOpenFileDialog.cs</DependentUpon>
+    </Compile>
     <Compile Include="Windows\EventBrowser.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="Windows\EventBrowser.Designer.cs">
       <DependentUpon>EventBrowser.cs</DependentUpon>
     </Compile>
-    <Compile Include="Windows\Dialogs\ModalPopup.cs">
+    <Compile Include="Windows\Dialogs\ProgressPopup.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="Windows\Dialogs\ModalPopup.Designer.cs">
-      <DependentUpon>ModalPopup.cs</DependentUpon>
+    <Compile Include="Windows\Dialogs\ProgressPopup.Designer.cs">
+      <DependentUpon>ProgressPopup.cs</DependentUpon>
     </Compile>
     <Compile Include="Windows\Dialogs\LiveCapture.cs">
       <SubType>Form</SubType>
@@ -388,20 +412,29 @@
     <EmbeddedResource Include="Windows\Dialogs\ColumnSelector.resx">
       <DependentUpon>ColumnSelector.cs</DependentUpon>
     </EmbeddedResource>
+    <EmbeddedResource Include="Windows\Dialogs\EnvironmentEditor.resx">
+      <DependentUpon>EnvironmentEditor.cs</DependentUpon>
+    </EmbeddedResource>
     <EmbeddedResource Include="Windows\Dialogs\FindAllDialog.resx">
       <DependentUpon>FindAllDialog.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="Windows\Dialogs\PythonShell.resx">
       <DependentUpon>PythonShell.cs</DependentUpon>
     </EmbeddedResource>
-    <EmbeddedResource Include="Windows\Dialogs\RemoteHostSelect.resx">
-      <DependentUpon>RemoteHostSelect.cs</DependentUpon>
+    <EmbeddedResource Include="Windows\Dialogs\OrderedListEditor.resx">
+      <DependentUpon>OrderedListEditor.cs</DependentUpon>
     </EmbeddedResource>
-    <EmbeddedResource Include="Windows\Dialogs\ReplayHostManager.resx">
-      <DependentUpon>ReplayHostManager.cs</DependentUpon>
+    <EmbeddedResource Include="Windows\Dialogs\RemoteManager.resx">
+      <DependentUpon>RemoteManager.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="Windows\Dialogs\SettingsDialog.resx">
       <DependentUpon>SettingsDialog.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Windows\Dialogs\SuggestRemoteDialog.resx">
+      <DependentUpon>SuggestRemoteDialog.cs</DependentUpon>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Windows\Dialogs\TextureGoto.resx">
+      <DependentUpon>TextureGoto.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="Windows\Dialogs\TextureSaveDialog.resx">
       <DependentUpon>TextureSaveDialog.cs</DependentUpon>
@@ -412,11 +445,14 @@
     <EmbeddedResource Include="Windows\Dialogs\UpdateDialog.resx">
       <DependentUpon>UpdateDialog.cs</DependentUpon>
     </EmbeddedResource>
+    <EmbeddedResource Include="Windows\Dialogs\VirtualOpenFileDialog.resx">
+      <DependentUpon>VirtualOpenFileDialog.cs</DependentUpon>
+    </EmbeddedResource>
     <EmbeddedResource Include="Windows\EventBrowser.resx">
       <DependentUpon>EventBrowser.cs</DependentUpon>
     </EmbeddedResource>
-    <EmbeddedResource Include="Windows\Dialogs\ModalPopup.resx">
-      <DependentUpon>ModalPopup.cs</DependentUpon>
+    <EmbeddedResource Include="Windows\Dialogs\ProgressPopup.resx">
+      <DependentUpon>ProgressPopup.cs</DependentUpon>
     </EmbeddedResource>
     <EmbeddedResource Include="Windows\Dialogs\LiveCapture.resx">
       <DependentUpon>LiveCapture.cs</DependentUpon>
@@ -504,12 +540,16 @@
     <Content Include="3rdparty\ScintillaNET\SciLexer.dll">
       <Link>SciLexer.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
     </Content>
     <Content Include="3rdparty\ScintillaNET\SciLexer64.dll">
       <Link>SciLexer64.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Visible>false</Visible>
     </Content>
     <Content Include="Controls\TreeListView\README.txt" />
+    <None Include="Resources\upfolder.png" />
+    <None Include="Resources\up_arrow.png" />
     <None Include="Resources\wireframe_mesh.png" />
     <None Include="Resources\zoom.png" />
     <None Include="Resources\wand.png" />
@@ -539,6 +579,10 @@
     <None Include="Resources\folder_page.png" />
     <EmbeddedResource Include="Resources\glsl.xml" />
     <None Include="Resources\page_white_code.png" />
+    <None Include="Resources\down_arrow.png" />
+    <None Include="Resources\house.png" />
+    <None Include="Resources\forward.png" />
+    <None Include="Resources\back.png" />
     <Content Include="Resources\RightArrow_Green_16x16.png" />
     <Content Include="Resources\icon.ico" />
     <None Include="Resources\page_white_delete.png" />

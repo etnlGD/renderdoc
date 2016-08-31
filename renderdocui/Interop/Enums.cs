@@ -24,11 +24,24 @@
  ******************************************************************************/
 
 using System;
+using System.Runtime.InteropServices;
 
 // from replay_enums.h
 
 namespace renderdoc
 {
+    [Flags]
+    public enum DirectoryFileProperty
+    {
+        Directory = 0x1,
+        Hidden = 0x2,
+        Executable = 0x4,
+
+        ErrorUnknown = 0x2000,
+        ErrorAccessDenied = 0x4000,
+        ErrorInvalidPath = 0x8000,
+    };
+
     public enum VarType
     {
         Float = 0,
@@ -204,7 +217,14 @@ namespace renderdoc
         YUV,
     };
 
-    public enum APIPipelineStateType
+    public enum QualityHint
+    {
+      DontCare,
+      Nicest,
+      Fastest,
+    };
+
+    public enum GraphicsAPI
     {
         D3D11,
         OpenGL,
@@ -278,6 +298,14 @@ namespace renderdoc
         DSV = 0x4,
         UAV = 0x8,
         SwapBuffer = 0x10,
+    };
+
+    [Flags]
+    public enum D3D11BufferViewFlags
+    {
+        Raw = 0x1,
+        Append = 0x2,
+        Counter = 0x4,
     };
 
     public enum ShaderStageType
@@ -396,6 +424,8 @@ namespace renderdoc
         Copy,
         CopySrc,
         CopyDst,
+
+        Barrier,
     };
 
     [Flags]
@@ -474,22 +504,35 @@ namespace renderdoc
         Percentage,
     };
 
+    public enum ReplaySupport
+    {
+        Unsupported,
+        Supported,
+        SuggestRemote,
+    };
+
     public enum ReplayCreateStatus
     {
         Success = 0,
         UnknownError,
         InternalError,
+        FileNotFound,
+        InjectionFailed,
+        IncompatibleProcess,
         NetworkIOFailed,
+        NetworkRemoteBusy,
+        NetworkVersionMismatch,
         FileIOFailed,
         FileIncompatibleVersion,
         FileCorrupted,
+        ImageUnsupported,
         APIUnsupported,
         APIInitFailed,
         APIIncompatibleVersion,
         APIHardwareUnsupported,
     };
 
-    public enum RemoteMessageType
+    public enum TargetControlMessageType
     {
         Unknown = 0,
         Disconnected,
@@ -501,8 +544,31 @@ namespace renderdoc
         NewChild,
     };
 
+    public enum EnvironmentModificationType
+    {
+        Set,
+        Append,
+        Prepend,
+    };
+
+    public enum EnvironmentSeparator
+    {
+        Platform,
+        SemiColon,
+        Colon,
+        None,
+    };
+
     public static class EnumString
     {
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern UInt32 Topology_VertexOffset(PrimitiveTopology topology, UInt32 prim);
+
+        public static UInt32 GetVertexOffset(this PrimitiveTopology topology, UInt32 primitiveIndex)
+        {
+            return Topology_VertexOffset(topology, primitiveIndex);
+        }
+
         public static string Str(this DebugMessageSource source)
         {
             switch (source)
@@ -554,13 +620,19 @@ namespace renderdoc
                 case ReplayCreateStatus.Success: return "Success";
                 case ReplayCreateStatus.UnknownError: return "Unknown Error";
                 case ReplayCreateStatus.InternalError: return "Internal Error";
+                case ReplayCreateStatus.FileNotFound: return "File not found";
+                case ReplayCreateStatus.InjectionFailed: return "RenderDoc injection failed";
+                case ReplayCreateStatus.IncompatibleProcess: return "Process is incompatible (likely 64-bit/32-bit issue)";
                 case ReplayCreateStatus.NetworkIOFailed: return "Network I/O operation failed";
+                case ReplayCreateStatus.NetworkRemoteBusy: return "Remote side of network connection is busy";
+                case ReplayCreateStatus.NetworkVersionMismatch: return "Version mismatch between network clients";
                 case ReplayCreateStatus.FileIOFailed: return "File I/O operation failed";
-                case ReplayCreateStatus.FileIncompatibleVersion: return "Logfile is of an incompatible version";
-                case ReplayCreateStatus.FileCorrupted: return "Logfile data is corrupted";
-                case ReplayCreateStatus.APIUnsupported: return "API used in logfile is not supported";
+                case ReplayCreateStatus.FileIncompatibleVersion: return "File is of an incompatible version";
+                case ReplayCreateStatus.FileCorrupted: return "File is corrupted or unrecognisable format";
+                case ReplayCreateStatus.ImageUnsupported: return "The contents or format of the image is not supported";
+                case ReplayCreateStatus.APIUnsupported: return "API used is not supported";
                 case ReplayCreateStatus.APIInitFailed: return "Replay API failed to initialise";
-                case ReplayCreateStatus.APIIncompatibleVersion: return "API-specific data used in logfile is of an incompatible version";
+                case ReplayCreateStatus.APIIncompatibleVersion: return "API-specific data used is of an incompatible version";
                 case ReplayCreateStatus.APIHardwareUnsupported: return "Your hardware or software configuration doesn't meet this API's minimum requirements";
             }
 
@@ -613,9 +685,9 @@ namespace renderdoc
             return "Unknown resource type";
         }
 
-        public static string Str(this ResourceUsage usage, APIPipelineStateType apitype)
+        public static string Str(this ResourceUsage usage, GraphicsAPI apitype)
         {
-            if (apitype == APIPipelineStateType.D3D11)
+            if (apitype == GraphicsAPI.D3D11)
             {
                 switch (usage)
                 {
@@ -658,11 +730,13 @@ namespace renderdoc
                     case ResourceUsage.Copy: return "Copy";
                     case ResourceUsage.CopySrc: return "Copy - Source";
                     case ResourceUsage.CopyDst: return "Copy - Dest";
+
+                    case ResourceUsage.Barrier: return "Barrier";
                 }
             }
-            else if (apitype == APIPipelineStateType.OpenGL || apitype == APIPipelineStateType.Vulkan)
+            else if (apitype == GraphicsAPI.OpenGL || apitype == GraphicsAPI.Vulkan)
             {
-                bool vk = (apitype == APIPipelineStateType.Vulkan);
+                bool vk = (apitype == GraphicsAPI.Vulkan);
 
                 switch (usage)
                 {
@@ -705,15 +779,17 @@ namespace renderdoc
                     case ResourceUsage.Copy: return "Copy";
                     case ResourceUsage.CopySrc: return "Copy - Source";
                     case ResourceUsage.CopyDst: return "Copy - Dest";
+
+                    case ResourceUsage.Barrier: return "Barrier";
                 }
             }
 
             return "Unknown Usage String";
         }
 
-        public static string Str(this ShaderStageType stage, APIPipelineStateType apitype)
+        public static string Str(this ShaderStageType stage, GraphicsAPI apitype)
         {
-            if (apitype == APIPipelineStateType.D3D11)
+            if (apitype == GraphicsAPI.D3D11)
             {
                 switch (stage)
                 {
@@ -725,7 +801,7 @@ namespace renderdoc
                     case ShaderStageType.Compute: return "Compute";
                 }
             }
-            else if (apitype == APIPipelineStateType.OpenGL || apitype == APIPipelineStateType.Vulkan)
+            else if (apitype == GraphicsAPI.OpenGL || apitype == GraphicsAPI.Vulkan)
             {
                 switch (stage)
                 {
@@ -788,6 +864,40 @@ namespace renderdoc
                 case ShaderBindType.ReadOnlyBuffer:   return "Buffer";
                 case ShaderBindType.ReadWriteBuffer:  return "RW Buffer";
                 case ShaderBindType.InputAttachment:  return "Input";
+                default: break;
+            }
+
+            return "Unknown";
+        }
+
+        public static string Str(this FormatComponentType compType)
+        {
+            switch (compType)
+            {
+                case FormatComponentType.None: return "Typeless";
+                case FormatComponentType.Float: return "Float";
+                case FormatComponentType.UNorm: return "UNorm";
+                case FormatComponentType.SNorm: return "SNorm";
+                case FormatComponentType.UInt: return "UInt";
+                case FormatComponentType.SInt: return "SInt";
+                case FormatComponentType.UScaled: return "UScaled";
+                case FormatComponentType.SScaled: return "SScaled";
+                case FormatComponentType.Depth: return "Depth/Stencil";
+                case FormatComponentType.Double: return "Double";
+                default: break;
+            }
+
+            return "Unknown";
+        }
+
+        public static string Str(this EnvironmentSeparator sep)
+        {
+            switch (sep)
+            {
+                case EnvironmentSeparator.Platform: return "Platform style";
+                case EnvironmentSeparator.SemiColon: return "Semi-colon (;)";
+                case EnvironmentSeparator.Colon: return "Colon (:)";
+                case EnvironmentSeparator.None: return "No Separator";
                 default: break;
             }
 

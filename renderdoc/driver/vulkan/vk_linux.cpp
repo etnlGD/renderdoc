@@ -1,18 +1,18 @@
 /******************************************************************************
  * The MIT License (MIT)
- * 
- * Copyright (c) 2015-2016 Baldur Karlsson
- * 
+ *
+ * Copyright (c) 2016 Baldur Karlsson
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
  * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
  * copies of the Software, and to permit persons to whom the Software is
  * furnished to do so, subject to the following conditions:
- * 
+ *
  * The above copyright notice and this permission notice shall be included in
  * all copies or substantial portions of the Software.
- * 
+ *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
  * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
  * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -22,173 +22,116 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
-#include "vk_replay.h"
+#include "api/replay/renderdoc_replay.h"
+
 #include "vk_core.h"
+#include "vk_replay.h"
 
-struct xcb_connection_t;
-namespace Keyboard
+void VulkanReplay::OutputWindow::SetWindowHandle(WindowingSystem system, void *data)
 {
-	void UseConnection(xcb_connection_t *conn);
-}
+  m_WindowSystem = system;
 
-void VulkanReplay::OutputWindow::SetWindowHandle(void *wn)
-{
-	void **connectionScreenWindow = (void **)wn;
+#if defined(RENDERDOC_WINDOWING_XLIB)
+  if(system == eWindowingSystem_Xlib)
+  {
+    XlibWindowData *xdata = (XlibWindowData *)data;
+    xlib.display = xdata->display;
+    xlib.window = xdata->window;
+    return;
+  }
+#endif
 
-	connection = (xcb_connection_t *)connectionScreenWindow[0];
-	int scr = (int)(uintptr_t)connectionScreenWindow[1];
-	wnd = (xcb_window_t)(uintptr_t)connectionScreenWindow[2];
+#if defined(RENDERDOC_WINDOWING_XCB)
+  if(system == eWindowingSystem_XCB)
+  {
+    XCBWindowData *xdata = (XCBWindowData *)data;
+    xcb.connection = xdata->connection;
+    xcb.window = xdata->window;
+    return;
+  }
+#endif
 
-	const xcb_setup_t *setup = xcb_get_setup(connection);
-	xcb_screen_iterator_t iter = xcb_setup_roots_iterator(setup);
-	while (scr-- > 0) xcb_screen_next(&iter);
-
-	screen = iter.data;
+  RDCERR("Unrecognised/unsupported window system %d", system);
 }
 
 void VulkanReplay::OutputWindow::CreateSurface(VkInstance inst)
 {
-	VkXcbSurfaceCreateInfoKHR createInfo;
+#if defined(RENDERDOC_WINDOWING_XLIB)
+  if(m_WindowSystem == eWindowingSystem_Xlib)
+  {
+    VkXlibSurfaceCreateInfoKHR createInfo;
 
-	createInfo.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
-	createInfo.pNext = NULL;
-	createInfo.flags = 0;
-	createInfo.connection = connection;
-	createInfo.window = wnd;
+    createInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
+    createInfo.pNext = NULL;
+    createInfo.flags = 0;
+    createInfo.dpy = xlib.display;
+    createInfo.window = xlib.window;
 
-	VkResult vkr = ObjDisp(inst)->CreateXcbSurfaceKHR(Unwrap(inst), &createInfo, NULL, &surface);
-	RDCASSERTEQUAL(vkr, VK_SUCCESS);
+    VkResult vkr = ObjDisp(inst)->CreateXlibSurfaceKHR(Unwrap(inst), &createInfo, NULL, &surface);
+    RDCASSERTEQUAL(vkr, VK_SUCCESS);
+
+    return;
+  }
+#endif
+
+#if defined(RENDERDOC_WINDOWING_XCB)
+  if(m_WindowSystem == eWindowingSystem_XCB)
+  {
+    VkXcbSurfaceCreateInfoKHR createInfo;
+
+    createInfo.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
+    createInfo.pNext = NULL;
+    createInfo.flags = 0;
+    createInfo.connection = xcb.connection;
+    createInfo.window = xcb.window;
+
+    VkResult vkr = ObjDisp(inst)->CreateXcbSurfaceKHR(Unwrap(inst), &createInfo, NULL, &surface);
+    RDCASSERTEQUAL(vkr, VK_SUCCESS);
+
+    return;
+  }
+#endif
+
+  RDCERR("Unrecognised/unsupported window system %d", m_WindowSystem);
 }
 
 void VulkanReplay::GetOutputWindowDimensions(uint64_t id, int32_t &w, int32_t &h)
 {
-	if(id == 0 || m_OutputWindows.find(id) == m_OutputWindows.end())
-		return;
-	
-	OutputWindow &outw = m_OutputWindows[id];
-	
-	xcb_get_geometry_cookie_t  geomCookie = xcb_get_geometry (outw.connection, outw.wnd);  // window is a xcb_drawable_t
-	xcb_get_geometry_reply_t  *geom       = xcb_get_geometry_reply (outw.connection, geomCookie, NULL);
+  if(id == 0 || m_OutputWindows.find(id) == m_OutputWindows.end())
+    return;
 
-	w = (int32_t)geom->width;
-	h = (int32_t)geom->height;
+  OutputWindow &outw = m_OutputWindows[id];
 
-	free(geom);
-}
+#if defined(RENDERDOC_WINDOWING_XLIB)
+  if(outw.m_WindowSystem == eWindowingSystem_Xlib)
+  {
+    XWindowAttributes attr = {};
+    XGetWindowAttributes(outw.xlib.display, outw.xlib.window, &attr);
 
-bool VulkanReplay::IsOutputWindowVisible(uint64_t id)
-{
-	if(id == 0 || m_OutputWindows.find(id) == m_OutputWindows.end())
-		return false;
+    w = (int32_t)attr.width;
+    h = (int32_t)attr.height;
 
-	VULKANNOTIMP("Optimisation missing - output window always returning true");
-
-	return true;
-}
-
-void WrappedVulkan::AddRequiredExtensions(bool instance, vector<string> &extensionList)
-{
-	bool device = !instance;
-
-	// TODO should check if these are present..
-
-	if(instance)
-	{
-		extensionList.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
-
-#if defined(VK_USE_PLATFORM_XCB_KHR)
-		extensionList.push_back(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
+    return;
+  }
 #endif
 
-#if defined(VK_USE_PLATFORM_XLIB_KHR)
-		extensionList.push_back(VK_KHR_XLIB_SURFACE_EXTENSION_NAME);
-#endif
-	}
-	else if(device)
-	{
-		extensionList.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-	}
-}
+#if defined(RENDERDOC_WINDOWING_XCB)
+  if(outw.m_WindowSystem == eWindowingSystem_XCB)
+  {
+    xcb_get_geometry_cookie_t geomCookie =
+        xcb_get_geometry(outw.xcb.connection, outw.xcb.window);    // window is a xcb_drawable_t
+    xcb_get_geometry_reply_t *geom = xcb_get_geometry_reply(outw.xcb.connection, geomCookie, NULL);
 
-#if defined(VK_USE_PLATFORM_XCB_KHR)
+    w = (int32_t)geom->width;
+    h = (int32_t)geom->height;
 
-VkBool32 WrappedVulkan::vkGetPhysicalDeviceXcbPresentationSupportKHR(
-    VkPhysicalDevice                            physicalDevice,
-    uint32_t                                    queueFamilyIndex,
-    xcb_connection_t*                           connection,
-    xcb_visualid_t                              visual_id)
-{
-	return ObjDisp(physicalDevice)->GetPhysicalDeviceXcbPresentationSupportKHR(Unwrap(physicalDevice), queueFamilyIndex, connection, visual_id);
-}
+    free(geom);
 
-VkResult WrappedVulkan::vkCreateXcbSurfaceKHR(
-    VkInstance                                  instance,
-    const VkXcbSurfaceCreateInfoKHR*            pCreateInfo,
-    const VkAllocationCallbacks*                pAllocator,
-    VkSurfaceKHR*                               pSurface)
-{
-	// should not come in here at all on replay
-	RDCASSERT(m_State >= WRITING);
-
-	VkResult ret = ObjDisp(instance)->CreateXcbSurfaceKHR(Unwrap(instance), pCreateInfo, pAllocator, pSurface);
-
-	if(ret == VK_SUCCESS)
-	{
-		GetResourceManager()->WrapResource(Unwrap(instance), *pSurface);
-		
-		WrappedVkSurfaceKHR *wrapped = GetWrapped(*pSurface);
-		
-		// since there's no point in allocating a full resource record and storing the window
-		// handle under there somewhere, we just cast. We won't use the resource record for anything
-		wrapped->record = (VkResourceRecord *)(uintptr_t)pCreateInfo->window;
-		
-		Keyboard::UseConnection(pCreateInfo->connection);
-	}
-
-	return ret;
-}
-
+    return;
+  }
 #endif
 
-#if defined(VK_USE_PLATFORM_XLIB_KHR)
-
-VkBool32 WrappedVulkan::vkGetPhysicalDeviceXlibPresentationSupportKHR(
-    VkPhysicalDevice                            physicalDevice,
-    uint32_t                                    queueFamilyIndex,
-    Display*                                    dpy,
-    VisualID                                    visualID)
-{
-	return ObjDisp(physicalDevice)->GetPhysicalDeviceXlibPresentationSupportKHR(Unwrap(physicalDevice), queueFamilyIndex, dpy, visualID);
+  RDCERR("Unrecognised/unsupported window system %d", outw.m_WindowSystem);
 }
 
-VkResult WrappedVulkan::vkCreateXlibSurfaceKHR(
-    VkInstance                                  instance,
-    const VkXlibSurfaceCreateInfoKHR*           pCreateInfo,
-    const VkAllocationCallbacks*                pAllocator,
-    VkSurfaceKHR*                               pSurface)
-{
-	// should not come in here at all on replay
-	RDCASSERT(m_State >= WRITING);
-
-	VkResult ret = ObjDisp(instance)->CreateXlibSurfaceKHR(Unwrap(instance), pCreateInfo, pAllocator, pSurface);
-
-	if(ret == VK_SUCCESS)
-	{
-		GetResourceManager()->WrapResource(Unwrap(instance), *pSurface);
-		
-		WrappedVkSurfaceKHR *wrapped = GetWrapped(*pSurface);
-		
-		// since there's no point in allocating a full resource record and storing the window
-		// handle under there somewhere, we just cast. We won't use the resource record for anything
-		wrapped->record = (VkResourceRecord *)pCreateInfo->window;
-		
-		// VKTODOLOW Should support Xlib here
-		//Keyboard::UseConnection(pCreateInfo->dpy);
-	}
-
-	return ret;
-}
-
-#endif
-
-const char *VulkanLibraryName = "libvulkan.so";
+const char *VulkanLibraryName = "libvulkan.so.1";

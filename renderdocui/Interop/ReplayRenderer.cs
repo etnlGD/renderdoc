@@ -29,10 +29,49 @@ using System.Collections.Generic;
 
 namespace renderdoc
 {
-    [StructLayout(LayoutKind.Sequential)]
-    public class RemoteMessage
+    // this isn't an Interop struct, since it needs to be passed C# -> C++ and
+    // it's not POD which we don't support. It's here just as a utility container
+    public class EnvironmentModification
     {
-        public RemoteMessageType Type;
+        public string variable;
+        public string value;
+
+        public EnvironmentModificationType type;
+        public EnvironmentSeparator separator;
+
+        public string GetTypeString()
+        {
+            string ret;
+
+            if (type == EnvironmentModificationType.Append)
+                ret = String.Format("Append, {0}", separator.Str());
+            else if (type == EnvironmentModificationType.Prepend)
+                ret = String.Format("Prepend, {0}", separator.Str());
+            else
+                ret = "Set";
+
+            return ret;
+        }
+
+        public string GetDescription()
+        {
+            string ret;
+
+            if (type == EnvironmentModificationType.Append)
+                ret = String.Format("Append {0} with {1} using {2}", variable, value, separator.Str());
+            else if (type == EnvironmentModificationType.Prepend)
+                ret = String.Format("Prepend {0} with {1} using {2}", variable, value, separator.Str());
+            else
+                ret = String.Format("Set {0} to {1}", variable, value);
+
+            return ret;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public class TargetControlMessage
+    {
+        public TargetControlMessageType Type;
 
         [StructLayout(LayoutKind.Sequential)]
         public struct NewCaptureData
@@ -42,7 +81,8 @@ namespace renderdoc
             [CustomMarshalAs(CustomUnmanagedType.TemplatedArray)]
             public byte[] thumbnail;
             [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
-            public string localpath;
+            public string path;
+            public bool local;
         };
         [CustomMarshalAs(CustomUnmanagedType.CustomClass)]
         public NewCaptureData NewCapture;
@@ -88,13 +128,13 @@ namespace renderdoc
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern bool ReplayOutput_ClearThumbnails(IntPtr real);
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern bool ReplayOutput_AddThumbnail(IntPtr real, IntPtr wnd, ResourceId texID);
+        private static extern bool ReplayOutput_AddThumbnail(IntPtr real, UInt32 windowSystem, IntPtr wnd, ResourceId texID, FormatComponentType typeHint);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern bool ReplayOutput_Display(IntPtr real);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern bool ReplayOutput_SetPixelContext(IntPtr real, IntPtr wnd);
+        private static extern bool ReplayOutput_SetPixelContext(IntPtr real, UInt32 windowSystem, IntPtr wnd);
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern bool ReplayOutput_SetPixelContextLocation(IntPtr real, UInt32 x, UInt32 y);
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
@@ -130,9 +170,10 @@ namespace renderdoc
         {
             return ReplayOutput_ClearThumbnails(m_Real);
         }
-        public bool AddThumbnail(IntPtr wnd, ResourceId texID)
+        public bool AddThumbnail(IntPtr wnd, ResourceId texID, FormatComponentType typeHint)
         {
-            return ReplayOutput_AddThumbnail(m_Real, wnd, texID);
+            // 1 == eWindowingSystem_Win32
+            return ReplayOutput_AddThumbnail(m_Real, 1u, wnd, texID, typeHint);
         }
 
         public bool Display()
@@ -142,7 +183,8 @@ namespace renderdoc
 
         public bool SetPixelContext(IntPtr wnd)
         {
-            return ReplayOutput_SetPixelContext(m_Real, wnd);
+            // 1 == eWindowingSystem_Win32
+            return ReplayOutput_SetPixelContext(m_Real, 1u, wnd);
         }
         public bool SetPixelContextLocation(UInt32 x, UInt32 y)
         {
@@ -194,7 +236,7 @@ namespace renderdoc
         private static extern void ReplayRenderer_GetAPIProperties(IntPtr real, IntPtr propsOut);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern IntPtr ReplayRenderer_CreateOutput(IntPtr real, IntPtr WindowHandle, OutputType type);
+        private static extern IntPtr ReplayRenderer_CreateOutput(IntPtr real, UInt32 windowSystem, IntPtr WindowHandle, OutputType type);
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern void ReplayRenderer_ShutdownOutput(IntPtr real, IntPtr replayOutput);
 
@@ -251,7 +293,7 @@ namespace renderdoc
         private static extern bool ReplayRenderer_GetDebugMessages(IntPtr real, IntPtr outmsgs);
         
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern bool ReplayRenderer_PixelHistory(IntPtr real, ResourceId target, UInt32 x, UInt32 y, UInt32 slice, UInt32 mip, UInt32 sampleIdx, IntPtr history);
+        private static extern bool ReplayRenderer_PixelHistory(IntPtr real, ResourceId target, UInt32 x, UInt32 y, UInt32 slice, UInt32 mip, UInt32 sampleIdx, FormatComponentType typeHint, IntPtr history);
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern bool ReplayRenderer_DebugVertex(IntPtr real, UInt32 vertid, UInt32 instid, UInt32 idx, UInt32 instOffset, UInt32 vertOffset, IntPtr outtrace);
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
@@ -272,9 +314,9 @@ namespace renderdoc
         private static extern bool ReplayRenderer_GetPostVSData(IntPtr real, UInt32 instID, MeshDataStage stage, IntPtr outdata);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern bool ReplayRenderer_GetMinMax(IntPtr real, ResourceId tex, UInt32 sliceFace, UInt32 mip, UInt32 sample, IntPtr outminval, IntPtr outmaxval);
+        private static extern bool ReplayRenderer_GetMinMax(IntPtr real, ResourceId tex, UInt32 sliceFace, UInt32 mip, UInt32 sample, FormatComponentType typeHint, IntPtr outminval, IntPtr outmaxval);
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern bool ReplayRenderer_GetHistogram(IntPtr real, ResourceId tex, UInt32 sliceFace, UInt32 mip, UInt32 sample, float minval, float maxval, bool[] channels, IntPtr outhistogram);
+        private static extern bool ReplayRenderer_GetHistogram(IntPtr real, ResourceId tex, UInt32 sliceFace, UInt32 mip, UInt32 sample, FormatComponentType typeHint, float minval, float maxval, bool[] channels, IntPtr outhistogram);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern bool ReplayRenderer_GetBufferData(IntPtr real, ResourceId buff, UInt64 offset, UInt64 len, IntPtr outdata);
@@ -282,6 +324,8 @@ namespace renderdoc
         private static extern bool ReplayRenderer_GetTextureData(IntPtr real, ResourceId tex, UInt32 arrayIdx, UInt32 mip, IntPtr outdata);
 
         private IntPtr m_Real = IntPtr.Zero;
+
+        public IntPtr Real { get { return m_Real; } }
 
         public ReplayRenderer(IntPtr real) { m_Real = real; }
 
@@ -309,7 +353,9 @@ namespace renderdoc
 
         public ReplayOutput CreateOutput(IntPtr WindowHandle, OutputType type)
         {
-            IntPtr ret = ReplayRenderer_CreateOutput(m_Real, WindowHandle, type);
+            // 0 == eWindowingSystem_Unknown
+            // 1 == eWindowingSystem_Win32
+            IntPtr ret = ReplayRenderer_CreateOutput(m_Real, WindowHandle == IntPtr.Zero ? 0u : 1u, WindowHandle, type);
 
             if (ret == IntPtr.Zero)
                 return null;
@@ -634,11 +680,11 @@ namespace renderdoc
             return ret;
         }
 
-        public PixelModification[] PixelHistory(ResourceId target, UInt32 x, UInt32 y, UInt32 slice, UInt32 mip, UInt32 sampleIdx)
+        public PixelModification[] PixelHistory(ResourceId target, UInt32 x, UInt32 y, UInt32 slice, UInt32 mip, UInt32 sampleIdx, FormatComponentType typeHint)
         {
             IntPtr mem = CustomMarshal.Alloc(typeof(templated_array));
 
-            bool success = ReplayRenderer_PixelHistory(m_Real, target, x, y, slice, mip, sampleIdx, mem);
+            bool success = ReplayRenderer_PixelHistory(m_Real, target, x, y, slice, mip, sampleIdx, typeHint, mem);
 
             PixelModification[] ret = null;
 
@@ -761,12 +807,12 @@ namespace renderdoc
             return ret;
         }
 
-        public bool GetMinMax(ResourceId tex, UInt32 sliceFace, UInt32 mip, UInt32 sample, out PixelValue minval, out PixelValue maxval)
+        public bool GetMinMax(ResourceId tex, UInt32 sliceFace, UInt32 mip, UInt32 sample, FormatComponentType typeHint, out PixelValue minval, out PixelValue maxval)
         {
             IntPtr mem1 = CustomMarshal.Alloc(typeof(PixelValue));
             IntPtr mem2 = CustomMarshal.Alloc(typeof(PixelValue));
 
-            bool success = ReplayRenderer_GetMinMax(m_Real, tex, sliceFace, mip, sample, mem1, mem2);
+            bool success = ReplayRenderer_GetMinMax(m_Real, tex, sliceFace, mip, sample, typeHint, mem1, mem2);
 
             if (success)
             {
@@ -785,7 +831,7 @@ namespace renderdoc
             return success;
         }
 
-        public bool GetHistogram(ResourceId tex, UInt32 sliceFace, UInt32 mip, UInt32 sample, float minval, float maxval,
+        public bool GetHistogram(ResourceId tex, UInt32 sliceFace, UInt32 mip, UInt32 sample, FormatComponentType typeHint, float minval, float maxval,
                                  bool Red, bool Green, bool Blue, bool Alpha,
                                  out UInt32[] histogram)
         {
@@ -793,7 +839,7 @@ namespace renderdoc
 
             bool[] channels = new bool[] { Red, Green, Blue, Alpha };
 
-            bool success = ReplayRenderer_GetHistogram(m_Real, tex, sliceFace, mip, sample, minval, maxval, channels, mem);
+            bool success = ReplayRenderer_GetHistogram(m_Real, tex, sliceFace, mip, sample, typeHint, minval, maxval, channels, mem);
 
             histogram = null;
 
@@ -811,7 +857,7 @@ namespace renderdoc
 
             bool success = ReplayRenderer_GetBufferData(m_Real, buff, offset, len, mem);
 
-            byte[] ret = null;
+            byte[] ret = new byte[] { };
 
             if (success)
                 ret = (byte[])CustomMarshal.GetTemplatedArray(mem, typeof(byte), true);
@@ -827,7 +873,7 @@ namespace renderdoc
 
             bool success = ReplayRenderer_GetTextureData(m_Real, tex, arrayIdx, mip, mem);
 
-            byte[] ret = null;
+            byte[] ret = new byte[] { };
 
             if (success)
                 ret = (byte[])CustomMarshal.GetTemplatedArray(mem, typeof(byte), true);
@@ -838,36 +884,120 @@ namespace renderdoc
         }
     };
 
-    public class RemoteRenderer
+    public class RemoteServer
     {
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern void RemoteRenderer_Shutdown(IntPtr real);
-        
-        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern bool RemoteRenderer_LocalProxies(IntPtr real, IntPtr outlist);
-        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern bool RemoteRenderer_RemoteSupportedReplays(IntPtr real, IntPtr outlist);
+        private static extern void RemoteServer_ShutdownConnection(IntPtr real);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern ReplayCreateStatus RemoteRenderer_CreateProxyRenderer(IntPtr real, UInt32 proxyid, IntPtr logfile, ref float progress, ref IntPtr rendPtr);
+        private static extern void RemoteServer_ShutdownServerAndConnection(IntPtr real);
+
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern bool RemoteServer_Ping(IntPtr real);
+
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern bool RemoteServer_LocalProxies(IntPtr real, IntPtr outlist);
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern bool RemoteServer_RemoteSupportedReplays(IntPtr real, IntPtr outlist);
+
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void RemoteServer_GetHomeFolder(IntPtr real, IntPtr outfolder);
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void RemoteServer_ListFolder(IntPtr real, IntPtr path, IntPtr outlist);
+
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern UInt32 RemoteServer_ExecuteAndInject(IntPtr real, IntPtr app, IntPtr workingDir, IntPtr cmdLine, IntPtr env, CaptureOptions opts);
+
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void RemoteServer_TakeOwnershipCapture(IntPtr real, IntPtr filename);
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void RemoteServer_CopyCaptureToRemote(IntPtr real, IntPtr filename, ref float progress, IntPtr remotepath);
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void RemoteServer_CopyCaptureFromRemote(IntPtr real, IntPtr remotepath, IntPtr localpath, ref float progress);
+
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern ReplayCreateStatus RemoteServer_OpenCapture(IntPtr real, UInt32 proxyid, IntPtr logfile, ref float progress, ref IntPtr rendPtr);
+
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void RemoteServer_CloseCapture(IntPtr real, IntPtr rendPtr);
+
+        // static exports for lists of environment modifications
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern IntPtr RENDERDOC_MakeEnvironmentModificationList(int numElems);
+
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void RENDERDOC_SetEnvironmentModification(IntPtr mem, int idx, IntPtr variable, IntPtr value,
+                                                                        EnvironmentModificationType type, EnvironmentSeparator separator);
+
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void RENDERDOC_FreeEnvironmentModificationList(IntPtr mem);
 
         private IntPtr m_Real = IntPtr.Zero;
 
-        public RemoteRenderer(IntPtr real) { m_Real = real; }
+        public RemoteServer(IntPtr real) { m_Real = real; }
 
-        public void Shutdown()
+        public void ShutdownConnection()
         {
             if (m_Real != IntPtr.Zero)
             {
-                RemoteRenderer_Shutdown(m_Real);
+                RemoteServer_ShutdownConnection(m_Real);
                 m_Real = IntPtr.Zero;
             }
+        }
+
+        public void ShutdownServerAndConnection()
+        {
+            if (m_Real != IntPtr.Zero)
+            {
+                RemoteServer_ShutdownServerAndConnection(m_Real);
+                m_Real = IntPtr.Zero;
+            }
+        }
+
+        public string GetHomeFolder()
+        {
+            IntPtr homepath_mem = CustomMarshal.Alloc(typeof(templated_array));
+
+            RemoteServer_GetHomeFolder(m_Real, homepath_mem);
+
+            string home = CustomMarshal.TemplatedArrayToString(homepath_mem, true);
+
+            CustomMarshal.Free(homepath_mem);
+
+            // normalise to /s and with no trailing /s
+            home.Replace('\\', '/');
+            if (home[home.Length - 1] == '/')
+                home = home.Remove(0, home.Length - 1);
+
+            return home;
+        }
+
+        public DirectoryFile[] ListFolder(string path)
+        {
+            IntPtr path_mem = CustomMarshal.MakeUTF8String(path);
+            IntPtr out_mem = CustomMarshal.Alloc(typeof(templated_array));
+
+            RemoteServer_ListFolder(m_Real, path_mem, out_mem);
+
+            DirectoryFile[] ret = (DirectoryFile[])CustomMarshal.GetTemplatedArray(out_mem, typeof(DirectoryFile), true);
+
+            CustomMarshal.Free(out_mem);
+            CustomMarshal.Free(path_mem);
+
+            Array.Sort(ret);
+
+            return ret;
+        }
+
+        public bool Ping()
+        {
+            return RemoteServer_Ping(m_Real);
         }
 
         public string[] LocalProxies()
         {
             IntPtr mem = CustomMarshal.Alloc(typeof(templated_array));
-            bool success = RemoteRenderer_LocalProxies(m_Real, mem);
+            bool success = RemoteServer_LocalProxies(m_Real, mem);
 
             string[] ret = null;
 
@@ -882,7 +1012,7 @@ namespace renderdoc
         public string[] RemoteSupportedReplays()
         {
             IntPtr mem = CustomMarshal.Alloc(typeof(templated_array));
-            bool success = RemoteRenderer_RemoteSupportedReplays(m_Real, mem);
+            bool success = RemoteServer_RemoteSupportedReplays(m_Real, mem);
 
             string[] ret = null;
 
@@ -894,50 +1024,122 @@ namespace renderdoc
             return ret;
         }
 
-        public ReplayRenderer CreateProxyRenderer(int proxyid, string logfile, ref float progress)
+        public UInt32 ExecuteAndInject(string app, string workingDir, string cmdLine, EnvironmentModification[] env, CaptureOptions opts)
+        {
+            IntPtr app_mem = CustomMarshal.MakeUTF8String(app);
+            IntPtr workingDir_mem = CustomMarshal.MakeUTF8String(workingDir);
+            IntPtr cmdLine_mem = CustomMarshal.MakeUTF8String(cmdLine);
+
+            IntPtr env_mem = RENDERDOC_MakeEnvironmentModificationList(env.Length);
+
+            for (int i = 0; i < env.Length; i++)
+            {
+                IntPtr var_mem = CustomMarshal.MakeUTF8String(env[i].variable);
+                IntPtr val_mem = CustomMarshal.MakeUTF8String(env[i].value);
+
+                RENDERDOC_SetEnvironmentModification(env_mem, i, var_mem, val_mem, env[i].type, env[i].separator);
+
+                CustomMarshal.Free(var_mem);
+                CustomMarshal.Free(val_mem);
+            }
+
+            UInt32 ret = RemoteServer_ExecuteAndInject(m_Real, app_mem, workingDir_mem, cmdLine_mem, env_mem, opts);
+
+            RENDERDOC_FreeEnvironmentModificationList(env_mem);
+
+            CustomMarshal.Free(app_mem);
+            CustomMarshal.Free(workingDir_mem);
+            CustomMarshal.Free(cmdLine_mem);
+
+            return ret;
+        }
+
+        public void TakeOwnershipCapture(string filename)
+        {
+            IntPtr filename_mem = CustomMarshal.MakeUTF8String(filename);
+
+            RemoteServer_TakeOwnershipCapture(m_Real, filename_mem);
+
+            CustomMarshal.Free(filename_mem);
+        }
+
+        public string CopyCaptureToRemote(string filename, ref float progress)
+        {
+            IntPtr remotepath = CustomMarshal.Alloc(typeof(templated_array));
+
+            IntPtr filename_mem = CustomMarshal.MakeUTF8String(filename);
+
+            RemoteServer_CopyCaptureToRemote(m_Real, filename_mem, ref progress, remotepath);
+
+            CustomMarshal.Free(filename_mem);
+
+            string remote = CustomMarshal.TemplatedArrayToString(remotepath, true);
+
+            CustomMarshal.Free(remotepath);
+
+            return remote;
+        }
+
+        public void CopyCaptureFromRemote(string remotepath, string localpath, ref float progress)
+        {
+            IntPtr remotepath_mem = CustomMarshal.MakeUTF8String(remotepath);
+            IntPtr localpath_mem = CustomMarshal.MakeUTF8String(localpath);
+
+            RemoteServer_CopyCaptureFromRemote(m_Real, remotepath_mem, localpath_mem, ref progress);
+
+            CustomMarshal.Free(remotepath_mem);
+            CustomMarshal.Free(localpath_mem);
+        }
+
+        public ReplayRenderer OpenCapture(int proxyid, string logfile, ref float progress)
         {
             IntPtr rendPtr = IntPtr.Zero;
 
             IntPtr logfile_mem = CustomMarshal.MakeUTF8String(logfile);
 
-            ReplayCreateStatus ret = RemoteRenderer_CreateProxyRenderer(m_Real, (UInt32)proxyid, logfile_mem, ref progress, ref rendPtr);
+            ReplayCreateStatus ret = RemoteServer_OpenCapture(m_Real, proxyid == -1 ? UInt32.MaxValue : (UInt32)proxyid, logfile_mem, ref progress, ref rendPtr);
 
             CustomMarshal.Free(logfile_mem);
 
             if (rendPtr == IntPtr.Zero || ret != ReplayCreateStatus.Success)
             {
-                var e = new System.ApplicationException("Failed to set up local proxy replay with remote connection");
-                e.Data.Add("status", ret);
-                throw e;
+                throw new ReplayCreateException(ret, "Failed to set up local proxy replay with remote connection");
             }
 
             return new ReplayRenderer(rendPtr);
         }
+
+        public void CloseCapture(ReplayRenderer renderer)
+        {
+            RemoteServer_CloseCapture(m_Real, renderer.Real);
+        }
     };
 
-    public class RemoteAccess
+    public class TargetControl
     {
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern void RemoteAccess_Shutdown(IntPtr real);
+        private static extern void TargetControl_Shutdown(IntPtr real);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern IntPtr RemoteAccess_GetTarget(IntPtr real);
+        private static extern IntPtr TargetControl_GetTarget(IntPtr real);
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern IntPtr RemoteAccess_GetAPI(IntPtr real);
+        private static extern IntPtr TargetControl_GetAPI(IntPtr real);
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern UInt32 RemoteAccess_GetPID(IntPtr real);
+        private static extern UInt32 TargetControl_GetPID(IntPtr real);
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern IntPtr RemoteAccess_GetBusyClient(IntPtr real);
+        private static extern IntPtr TargetControl_GetBusyClient(IntPtr real);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern void RemoteAccess_TriggerCapture(IntPtr real);
+        private static extern void TargetControl_TriggerCapture(IntPtr real, UInt32 numFrames);
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern void RemoteAccess_QueueCapture(IntPtr real, UInt32 frameNumber);
+        private static extern void TargetControl_QueueCapture(IntPtr real, UInt32 frameNumber);
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern void RemoteAccess_CopyCapture(IntPtr real, UInt32 remoteID, IntPtr localpath);
+        private static extern void TargetControl_CopyCapture(IntPtr real, UInt32 remoteID, IntPtr localpath);
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void TargetControl_DeleteCapture(IntPtr real, UInt32 remoteID);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern void RemoteAccess_ReceiveMessage(IntPtr real, IntPtr outmsg);
+        private static extern void TargetControl_ReceiveMessage(IntPtr real, IntPtr outmsg);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern UInt32 RENDERDOC_EnumerateRemoteConnections(IntPtr host, UInt32[] idents);
@@ -945,7 +1147,7 @@ namespace renderdoc
         private IntPtr m_Real = IntPtr.Zero;
         private bool m_Connected;
 
-        public RemoteAccess(IntPtr real)
+        public TargetControl(IntPtr real)
         {
             m_Real = real;
 
@@ -959,10 +1161,10 @@ namespace renderdoc
             else
             {
                 m_Connected = true;
-                Target = CustomMarshal.PtrToStringUTF8(RemoteAccess_GetTarget(m_Real));
-                API = CustomMarshal.PtrToStringUTF8(RemoteAccess_GetAPI(m_Real));
-                PID = RemoteAccess_GetPID(m_Real);
-                BusyClient = CustomMarshal.PtrToStringUTF8(RemoteAccess_GetBusyClient(m_Real));
+                Target = CustomMarshal.PtrToStringUTF8(TargetControl_GetTarget(m_Real));
+                API = CustomMarshal.PtrToStringUTF8(TargetControl_GetAPI(m_Real));
+                PID = TargetControl_GetPID(m_Real);
+                BusyClient = CustomMarshal.PtrToStringUTF8(TargetControl_GetBusyClient(m_Real));
             }
 
             CaptureExists = false;
@@ -990,69 +1192,74 @@ namespace renderdoc
         public void Shutdown()
         {
             m_Connected = false;
-            if (m_Real != IntPtr.Zero) RemoteAccess_Shutdown(m_Real);
+            if (m_Real != IntPtr.Zero) TargetControl_Shutdown(m_Real);
             m_Real = IntPtr.Zero;
         }
 
-        public void TriggerCapture()
+        public void TriggerCapture(UInt32 numFrames)
         {
-            RemoteAccess_TriggerCapture(m_Real);
+            TargetControl_TriggerCapture(m_Real, numFrames);
         }
 
         public void QueueCapture(UInt32 frameNum)
         {
-            RemoteAccess_QueueCapture(m_Real, frameNum);
+            TargetControl_QueueCapture(m_Real, frameNum);
         }
 
         public void CopyCapture(UInt32 id, string localpath)
         {
             IntPtr localpath_mem = CustomMarshal.MakeUTF8String(localpath);
 
-            RemoteAccess_CopyCapture(m_Real, id, localpath_mem);
+            TargetControl_CopyCapture(m_Real, id, localpath_mem);
 
             CustomMarshal.Free(localpath_mem);
+        }
+
+        public void DeleteCapture(UInt32 id)
+        {
+            TargetControl_DeleteCapture(m_Real, id);
         }
 
         public void ReceiveMessage()
         {
             if (m_Real != IntPtr.Zero)
             {
-                RemoteMessage msg = null;
+                TargetControlMessage msg = null;
 
                 {
-                    IntPtr mem = CustomMarshal.Alloc(typeof(RemoteMessage));
+                    IntPtr mem = CustomMarshal.Alloc(typeof(TargetControlMessage));
 
-                    RemoteAccess_ReceiveMessage(m_Real, mem);
+                    TargetControl_ReceiveMessage(m_Real, mem);
 
                     if (mem != IntPtr.Zero)
-                        msg = (RemoteMessage)CustomMarshal.PtrToStructure(mem, typeof(RemoteMessage), true);
+                        msg = (TargetControlMessage)CustomMarshal.PtrToStructure(mem, typeof(TargetControlMessage), true);
 
                     CustomMarshal.Free(mem);
                 }
 
-                if (msg.Type == RemoteMessageType.Disconnected)
+                if (msg.Type == TargetControlMessageType.Disconnected)
                 {
                     m_Connected = false;
-                    RemoteAccess_Shutdown(m_Real);
+                    TargetControl_Shutdown(m_Real);
                     m_Real = IntPtr.Zero;
                 }
-                else if (msg.Type == RemoteMessageType.NewCapture)
+                else if (msg.Type == TargetControlMessageType.NewCapture)
                 {
                     CaptureFile = msg.NewCapture;
                     CaptureExists = true;
                 }
-                else if (msg.Type == RemoteMessageType.CaptureCopied)
+                else if (msg.Type == TargetControlMessageType.CaptureCopied)
                 {
                     CaptureFile.ID = msg.NewCapture.ID;
-                    CaptureFile.localpath = msg.NewCapture.localpath;
+                    CaptureFile.path = msg.NewCapture.path;
                     CaptureCopied = true;
                 }
-                else if (msg.Type == RemoteMessageType.RegisterAPI)
+                else if (msg.Type == TargetControlMessageType.RegisterAPI)
                 {
                     API = msg.RegisterAPI.APIName;
                     InfoUpdated = true;
                 }
-                else if (msg.Type == RemoteMessageType.NewChild)
+                else if (msg.Type == TargetControlMessageType.NewChild)
                 {
                     NewChild = msg.NewChild;
                     ChildAdded = true;
@@ -1070,8 +1277,8 @@ namespace renderdoc
         public bool CaptureCopied;
         public bool InfoUpdated;
 
-        public RemoteMessage.NewCaptureData CaptureFile = new RemoteMessage.NewCaptureData();
+        public TargetControlMessage.NewCaptureData CaptureFile = new TargetControlMessage.NewCaptureData();
 
-        public RemoteMessage.NewChildData NewChild = new RemoteMessage.NewChildData();
+        public TargetControlMessage.NewChildData NewChild = new TargetControlMessage.NewChildData();
     };
 };

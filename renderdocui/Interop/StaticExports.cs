@@ -29,10 +29,27 @@ using System.Text;
 
 namespace renderdoc
 {
+    public class ReplayCreateException : Exception
+    {
+        public ReplayCreateException(ReplayCreateStatus status)
+            : base(String.Format("Replay creation failure: {0}", status.Str()))
+        {
+            Status = status;
+        }
+
+        public ReplayCreateException(ReplayCreateStatus status, string msg)
+            : base(msg)
+        {
+            Status = status;
+        }
+
+        public ReplayCreateStatus Status;
+    }
+
     class StaticExports
     {
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern bool RENDERDOC_SupportLocalReplay(IntPtr logfile, IntPtr outdriver);
+        private static extern ReplaySupport RENDERDOC_SupportLocalReplay(IntPtr logfile, IntPtr outdriver, IntPtr outident);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern ReplayCreateStatus RENDERDOC_CreateReplayRenderer(IntPtr logfile, ref float progress, ref IntPtr rendPtr);
@@ -41,26 +58,26 @@ namespace renderdoc
         private static extern void RENDERDOC_StartGlobalHook(IntPtr pathmatch, IntPtr logfile, CaptureOptions opts);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern UInt32 RENDERDOC_ExecuteAndInject(IntPtr app, IntPtr workingDir, IntPtr cmdLine,
+        private static extern UInt32 RENDERDOC_ExecuteAndInject(IntPtr app, IntPtr workingDir, IntPtr cmdLine, IntPtr env,
                                                                     IntPtr logfile, CaptureOptions opts, bool waitForExit);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern UInt32 RENDERDOC_InjectIntoProcess(UInt32 pid, IntPtr logfile, CaptureOptions opts, bool waitForExit);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern IntPtr RENDERDOC_CreateRemoteAccessConnection(IntPtr host, UInt32 ident, IntPtr clientName, bool forceConnection);
+        private static extern IntPtr RENDERDOC_CreateTargetControl(IntPtr host, UInt32 ident, IntPtr clientName, bool forceConnection);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern UInt32 RENDERDOC_EnumerateRemoteConnections(IntPtr host, UInt32[] idents);
+        private static extern UInt32 RENDERDOC_EnumerateRemoteTargets(IntPtr host, UInt32 nextIdent);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern ReplayCreateStatus RENDERDOC_CreateRemoteReplayConnection(IntPtr host, ref IntPtr outrend);
+        private static extern ReplayCreateStatus RENDERDOC_CreateRemoteServerConnection(IntPtr host, UInt32 port, ref IntPtr outrend);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern void RENDERDOC_GetDefaultCaptureOptions(IntPtr outopts);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
-        private static extern void RENDERDOC_SpawnReplayHost(ref bool killReplay);
+        private static extern void RENDERDOC_BecomeRemoteServer(IntPtr host, UInt32 port, ref bool killReplay);
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern void RENDERDOC_TriggerExceptionHandler(IntPtr exceptionPtrs, bool crashed);
@@ -72,21 +89,44 @@ namespace renderdoc
         private static extern IntPtr RENDERDOC_GetLogFile();
 
         [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern IntPtr RENDERDOC_GetConfigSetting(IntPtr name);
+
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern IntPtr RENDERDOC_GetVersionString();
+
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void RENDERDOC_SetConfigSetting(IntPtr name, IntPtr value);
+
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
         private static extern bool RENDERDOC_GetThumbnail(IntPtr filename, byte[] outmem, ref UInt32 len);
 
-        public static bool SupportLocalReplay(string logfile, out string driverName)
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern IntPtr RENDERDOC_MakeEnvironmentModificationList(int numElems);
+
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void RENDERDOC_SetEnvironmentModification(IntPtr mem, int idx, IntPtr variable, IntPtr value,
+                                                                        EnvironmentModificationType type, EnvironmentSeparator separator);
+
+        [DllImport("renderdoc.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void RENDERDOC_FreeEnvironmentModificationList(IntPtr mem);
+
+        public static ReplaySupport SupportLocalReplay(string logfile, out string driverName, out string recordMachineIdent)
         {
-            IntPtr mem = CustomMarshal.Alloc(typeof(templated_array));
+            IntPtr name_mem = CustomMarshal.Alloc(typeof(templated_array));
+            IntPtr ident_mem = CustomMarshal.Alloc(typeof(templated_array));
 
             IntPtr logfile_mem = CustomMarshal.MakeUTF8String(logfile);
 
-            bool ret = RENDERDOC_SupportLocalReplay(logfile_mem, mem);
+            ReplaySupport ret = RENDERDOC_SupportLocalReplay(logfile_mem, name_mem, ident_mem);
 
             CustomMarshal.Free(logfile_mem);
 
-            driverName = CustomMarshal.TemplatedArrayToString(mem, true);
+            driverName = CustomMarshal.TemplatedArrayToString(name_mem, true);
+            recordMachineIdent = CustomMarshal.TemplatedArrayToString(ident_mem, true);
 
-            CustomMarshal.Free(mem);
+            CustomMarshal.Free(name_mem);
+            CustomMarshal.Free(ident_mem);
+
             return ret;
         }
 
@@ -102,9 +142,7 @@ namespace renderdoc
 
             if (rendPtr == IntPtr.Zero || ret != ReplayCreateStatus.Success)
             {
-                var e = new System.ApplicationException("Failed to load log for local replay");
-                e.Data.Add("status", ret);
-                throw e;
+                throw new ReplayCreateException(ret, "Failed to load log for local replay");
             }
 
             return new ReplayRenderer(rendPtr);
@@ -121,14 +159,29 @@ namespace renderdoc
             CustomMarshal.Free(pathmatch_mem);
         }
 
-        public static UInt32 ExecuteAndInject(string app, string workingDir, string cmdLine, string logfile, CaptureOptions opts)
+        public static UInt32 ExecuteAndInject(string app, string workingDir, string cmdLine, EnvironmentModification[] env, string logfile, CaptureOptions opts)
         {
             IntPtr app_mem = CustomMarshal.MakeUTF8String(app);
             IntPtr workingDir_mem = CustomMarshal.MakeUTF8String(workingDir);
             IntPtr cmdLine_mem = CustomMarshal.MakeUTF8String(cmdLine);
             IntPtr logfile_mem = CustomMarshal.MakeUTF8String(logfile);
 
-            UInt32 ret = RENDERDOC_ExecuteAndInject(app_mem, workingDir_mem, cmdLine_mem, logfile_mem, opts, false);
+            IntPtr env_mem = RENDERDOC_MakeEnvironmentModificationList(env.Length);
+
+            for(int i=0; i < env.Length; i++)
+            {
+                IntPtr var_mem = CustomMarshal.MakeUTF8String(env[i].variable);
+                IntPtr val_mem = CustomMarshal.MakeUTF8String(env[i].value);
+
+                RENDERDOC_SetEnvironmentModification(env_mem, i, var_mem, val_mem, env[i].type, env[i].separator);
+
+                CustomMarshal.Free(var_mem);
+                CustomMarshal.Free(val_mem);
+            }
+
+            UInt32 ret = RENDERDOC_ExecuteAndInject(app_mem, workingDir_mem, cmdLine_mem, env_mem, logfile_mem, opts, false);
+
+            RENDERDOC_FreeEnvironmentModificationList(env_mem);
 
             CustomMarshal.Free(app_mem);
             CustomMarshal.Free(workingDir_mem);
@@ -149,70 +202,73 @@ namespace renderdoc
             return ret;
         }
 
-        public static RemoteAccess CreateRemoteAccessConnection(string host, UInt32 ident, string clientName, bool forceConnection)
+        public static TargetControl CreateTargetControl(string host, UInt32 ident, string clientName, bool forceConnection)
         {
             IntPtr host_mem = CustomMarshal.MakeUTF8String(host);
             IntPtr clientName_mem = CustomMarshal.MakeUTF8String(clientName);
 
-            IntPtr rendPtr = RENDERDOC_CreateRemoteAccessConnection(host_mem, ident, clientName_mem, forceConnection);
+            IntPtr rendPtr = RENDERDOC_CreateTargetControl(host_mem, ident, clientName_mem, forceConnection);
 
             CustomMarshal.Free(host_mem);
             CustomMarshal.Free(clientName_mem);
 
             if (rendPtr == IntPtr.Zero)
             {
-                var e = new System.ApplicationException("Failed to open remote access connection");
-                e.Data.Add("status", ReplayCreateStatus.UnknownError);
-                throw e;
+                throw new ReplayCreateException(ReplayCreateStatus.NetworkIOFailed, "Failed to open remote access connection");
             }
 
-            return new RemoteAccess(rendPtr);
+            return new TargetControl(rendPtr);
         }
 
-        public static UInt32[] EnumerateRemoteConnections(string host)
+        public delegate void RemoteConnectionFound(UInt32 ident);
+
+        public static void EnumerateRemoteTargets(string host, RemoteConnectionFound callback)
         {
             IntPtr host_mem = CustomMarshal.MakeUTF8String(host);
 
-            UInt32 numIdents = RENDERDOC_EnumerateRemoteConnections(host_mem, null);
+            UInt32 nextIdent = 0;
 
-            if (numIdents == 0)
+            while (true)
             {
-                CustomMarshal.Free(host_mem);
-                return null;
+                // just a sanity check to make sure we don't hit some unexpected case
+                UInt32 prevIdent = nextIdent;
+
+                nextIdent = RENDERDOC_EnumerateRemoteTargets(host_mem, nextIdent);
+
+                if (nextIdent == UInt32.MaxValue || prevIdent >= nextIdent)
+                    break;
+
+                callback(nextIdent);
             }
 
-            UInt32[] ret = new UInt32[numIdents];
-
-            RENDERDOC_EnumerateRemoteConnections(host_mem, ret);
-
             CustomMarshal.Free(host_mem);
-
-            return ret;
         }
 
-        public static RemoteRenderer CreateRemoteReplayConnection(string host)
+        public static RemoteServer CreateRemoteServer(string host, uint port)
         {
             IntPtr rendPtr = IntPtr.Zero;
 
             IntPtr host_mem = CustomMarshal.MakeUTF8String(host);
 
-            ReplayCreateStatus ret = RENDERDOC_CreateRemoteReplayConnection(host_mem, ref rendPtr);
+            ReplayCreateStatus ret = RENDERDOC_CreateRemoteServerConnection(host_mem, port, ref rendPtr);
 
             CustomMarshal.Free(host_mem);
 
             if (rendPtr == IntPtr.Zero || ret != ReplayCreateStatus.Success)
             {
-                var e = new System.ApplicationException("Failed to connect to remote replay host");
-                e.Data.Add("status", ret);
-                throw e;
+                throw new ReplayCreateException(ret, "Failed to connect to remote replay host");
             }
 
-            return new RemoteRenderer(rendPtr);
+            return new RemoteServer(rendPtr);
         }
 
-        public static void SpawnReplayHost(ref bool killReplay)
+        public static void BecomeRemoteServer(string host, uint port, ref bool killReplay)
         {
-            RENDERDOC_SpawnReplayHost(ref killReplay);
+            IntPtr host_mem = CustomMarshal.MakeUTF8String(host);
+
+            RENDERDOC_BecomeRemoteServer(host_mem, port, ref killReplay);
+
+            CustomMarshal.Free(host_mem);
         }
 
         public static void TriggerExceptionHandler(IntPtr exceptionPtrs, bool crashed)
@@ -232,6 +288,33 @@ namespace renderdoc
         public static string GetLogFilename()
         {
             return CustomMarshal.PtrToStringUTF8(RENDERDOC_GetLogFile());
+        }
+
+        public static string GetVersionString()
+        {
+            return CustomMarshal.PtrToStringUTF8(RENDERDOC_GetVersionString());
+        }
+
+        public static string GetConfigSetting(string name)
+        {
+            IntPtr name_mem = CustomMarshal.MakeUTF8String(name);
+
+            string ret = CustomMarshal.PtrToStringUTF8(RENDERDOC_GetConfigSetting(name_mem));
+
+            CustomMarshal.Free(name_mem);
+
+            return ret;
+        }
+
+        public static void SetConfigSetting(string name, string value)
+        {
+            IntPtr name_mem = CustomMarshal.MakeUTF8String(name);
+            IntPtr value_mem = CustomMarshal.MakeUTF8String(value);
+
+            RENDERDOC_SetConfigSetting(name_mem, value_mem);
+
+            CustomMarshal.Free(name_mem);
+            CustomMarshal.Free(value_mem);
         }
 
         public static byte[] GetThumbnail(string filename)

@@ -2,7 +2,6 @@
  * The MIT License (MIT)
  * 
  * Copyright (c) 2015-2016 Baldur Karlsson
- * Copyright (c) 2014 Crytek
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,14 +22,13 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
-#version 420 core
-
 out gl_PerVertex
 {
 	vec4 gl_Position;
 	float gl_PointSize;
-	float gl_ClipDistance[];
 };
+
+layout (location = 0) out vec2 uv;
 
 void main(void)
 {
@@ -39,5 +37,6 @@ void main(void)
                                   vec4(-1.0,  1.0, 0.5, 1.0),
                                   vec4( 1.0,  1.0, 0.5, 1.0));
 
-    gl_Position = verts[gl_VertexID];
+    gl_Position = verts[VERTEX_ID];
+    uv = gl_Position.xy * 0.5f + 0.5f;
 }

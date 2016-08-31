@@ -19,6 +19,9 @@
     <Filter Include="official">
       <UniqueIdentifier>{069c5202-e850-427b-9353-250795a60436}</UniqueIdentifier>
     </Filter>
+    <Filter Include="official\amd">
+      <UniqueIdentifier>{b92bf274-f255-4c2f-bc1f-dbd1807643a5}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="d3d11_context1_wrap.cpp">
@@ -72,6 +75,15 @@
     <ClCompile Include="d3d11_hooks.cpp">
       <Filter>Hooks</Filter>
     </ClCompile>
+    <ClCompile Include="d3d11_context3_wrap.cpp">
+      <Filter>Wrapped</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d11_device3_wrap.cpp">
+      <Filter>Wrapped</Filter>
+    </ClCompile>
+    <ClCompile Include="d3d11_device2_wrap.cpp">
+      <Filter>Wrapped</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="d3d11_replay.h">
@@ -98,38 +110,38 @@
     <ClInclude Include="d3d11_common.h">
       <Filter>Util</Filter>
     </ClInclude>
-    <ClInclude Include="official\d3d11_1.h">
+    <ClInclude Include="..\dx\official\d3d11.h">
       <Filter>official</Filter>
     </ClInclude>
-    <ClInclude Include="official\d3d11_2.h">
+    <ClInclude Include="..\dx\official\d3d11_1.h">
       <Filter>official</Filter>
     </ClInclude>
-    <ClInclude Include="official\d3d11sdklayers.h">
+    <ClInclude Include="..\dx\official\d3d11_2.h">
       <Filter>official</Filter>
     </ClInclude>
-    <ClInclude Include="official\d3dcommon.h">
+    <ClInclude Include="..\dx\official\d3d11_3.h">
       <Filter>official</Filter>
     </ClInclude>
-    <ClInclude Include="official\d3dcompiler.h">
+    <ClInclude Include="..\dx\official\d3d11_4.h">
       <Filter>official</Filter>
     </ClInclude>
-    <ClInclude Include="official\dxgi.h">
+    <ClInclude Include="..\dx\official\d3d11sdklayers.h">
       <Filter>official</Filter>
     </ClInclude>
-    <ClInclude Include="official\dxgi1_2.h">
+    <ClInclude Include="..\dx\official\d3dcommon.h">
       <Filter>official</Filter>
     </ClInclude>
-    <ClInclude Include="official\dxgi1_3.h">
+    <ClInclude Include="..\dx\official\d3dcompiler.h">
       <Filter>official</Filter>
     </ClInclude>
-    <ClInclude Include="official\winapifamily.h">
-      <Filter>official</Filter>
+    <ClInclude Include="..\dx\official\amd\AmdDxExtIface.h">
+      <Filter>official\amd</Filter>
     </ClInclude>
-    <ClInclude Include="official\d3d11.h">
-      <Filter>official</Filter>
+    <ClInclude Include="..\dx\official\amd\AmdDxExt.h">
+      <Filter>official\amd</Filter>
     </ClInclude>
-    <ClInclude Include="official\d3d11_3.h">
-      <Filter>official</Filter>
+    <ClInclude Include="..\dx\official\amd\AmdDxExtApi.h">
+      <Filter>official\amd</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

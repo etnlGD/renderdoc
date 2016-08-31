@@ -416,7 +416,7 @@ namespace renderdocui.Controls
 
             rect.Inflate(-m_Margin, -m_Margin);
 
-            e.Graphics.FillRectangle(Brushes.Black, rect);
+            e.Graphics.FillRectangle(SystemBrushes.ControlText, rect);
 
             rect.Inflate(-m_Border, -m_Border);
 
@@ -451,6 +451,9 @@ namespace renderdocui.Controls
                         maxval = Math.Max(maxval, HistogramData[i]);
                     }
                 }
+
+                if (maxval == 0)
+                    maxval = 1;
 
                 for (int i = 0; i < HistogramData.Length; i++)
                 {

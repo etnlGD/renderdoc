@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2014-2016 Baldur Karlsson
+ * Copyright (c) 2015-2016 Baldur Karlsson
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,27 +22,26 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
-#version 420 core
-
+#ifdef VULKAN
+layout (binding = 3) uniform sampler2D tex0;
+#else // OPENGL
 layout (binding = 0) uniform sampler2D tex0;
+#endif
 layout (location = 0) out vec4 color_out;
 
-in v2f
-{
-	vec4 tex;
-	vec2 glyphuv;
-} IN;
+layout (location = 0) in vec4 tex;
+layout (location = 1) in vec2 glyphuv;
 
 void main(void)
 {
 	float text = 0;
 
-	if(IN.glyphuv.x >= 0.0f && IN.glyphuv.x <= 1.0f && 
-	   IN.glyphuv.y >= 0.0f && IN.glyphuv.y <= 1.0f)
+	if(glyphuv.x >= 0.0f && glyphuv.x <= 1.0f &&
+	   glyphuv.y >= 0.0f && glyphuv.y <= 1.0f)
 	{
 		vec2 uv;
-		uv.x = mix(IN.tex.x, IN.tex.z, IN.glyphuv.x);
-		uv.y = mix(IN.tex.y, IN.tex.w, IN.glyphuv.y);
+		uv.x = mix(tex.x, tex.z, glyphuv.x);
+		uv.y = mix(tex.y, tex.w, glyphuv.y);
 		text = texture(tex0, uv.xy).x;
 	}
 

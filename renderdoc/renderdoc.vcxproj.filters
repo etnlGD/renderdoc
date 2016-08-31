@@ -34,9 +34,6 @@
     <Filter Include="Resources\hlsl">
       <UniqueIdentifier>{0ecdcd74-a30b-457e-8b22-92bd58405c56}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Resources\glsl">
-      <UniqueIdentifier>{889cc549-e49b-430b-9e9b-5a42e7c26b03}</UniqueIdentifier>
-    </Filter>
     <Filter Include="API">
       <UniqueIdentifier>{7d6b0f22-1180-4767-b284-cc87f54ec012}</UniqueIdentifier>
     </Filter>
@@ -64,13 +61,22 @@
     <Filter Include="3rdparty\tinyexr">
       <UniqueIdentifier>{aadadb32-abbc-45b3-8f86-026eed994ba9}</UniqueIdentifier>
     </Filter>
-    <Filter Include="OS\Linux">
-      <UniqueIdentifier>{5168e1dc-8d41-4aff-b99c-1ffa2af33f95}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Hooks">
       <UniqueIdentifier>{3e51a921-b167-4794-937d-e77573a928b8}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Resources\spv">
+    <Filter Include="OS\Posix">
+      <UniqueIdentifier>{410640a4-ebf0-479a-8d08-ae277e2ded84}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="OS\Posix\Linux">
+      <UniqueIdentifier>{5168e1dc-8d41-4aff-b99c-1ffa2af33f95}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="OS\Posix\Android">
+      <UniqueIdentifier>{16bdcbe1-31de-4732-aaaf-8d77039a26ec}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="OS\Posix\Apple">
+      <UniqueIdentifier>{2d03f185-425a-4de5-8eeb-67dce5e56de9}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Resources\glsl">
       <UniqueIdentifier>{188ad934-e74f-4805-b74b-167f8760fab6}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
@@ -147,9 +153,6 @@
     <ClInclude Include="data\hlsl\debugcbuffers.h">
       <Filter>Resources\hlsl</Filter>
     </ClInclude>
-    <ClInclude Include="data\glsl\debuguniforms.h">
-      <Filter>Resources\glsl</Filter>
-    </ClInclude>
     <ClInclude Include="os\win32\win32_hook.h">
       <Filter>OS\Win32</Filter>
     </ClInclude>
@@ -204,9 +207,6 @@
     <ClInclude Include="3rdparty\stb\stb_truetype.h">
       <Filter>3rdparty\stb</Filter>
     </ClInclude>
-    <ClInclude Include="data\glsl\texsample.h">
-      <Filter>Resources\glsl</Filter>
-    </ClInclude>
     <ClInclude Include="serialise\string_utils.h">
       <Filter>Common\Strings</Filter>
     </ClInclude>
@@ -225,20 +225,29 @@
     <ClInclude Include="common\shader_cache.h">
       <Filter>Common</Filter>
     </ClInclude>
-    <ClInclude Include="data\spv\debuguniforms.h">
-      <Filter>Resources\spv</Filter>
-    </ClInclude>
-    <ClInclude Include="data\spv\texsample.h">
-      <Filter>Resources\spv</Filter>
-    </ClInclude>
     <ClInclude Include="common\custom_assert.h">
       <Filter>Common</Filter>
     </ClInclude>
-    <ClInclude Include="os\linux\linux_specific.h">
-      <Filter>OS\Linux</Filter>
-    </ClInclude>
     <ClInclude Include="os\win32\win32_specific.h">
       <Filter>OS\Win32</Filter>
+    </ClInclude>
+    <ClInclude Include="os\posix\posix_hook.h">
+      <Filter>OS\Posix</Filter>
+    </ClInclude>
+    <ClInclude Include="os\posix\posix_specific.h">
+      <Filter>OS\Posix</Filter>
+    </ClInclude>
+    <ClInclude Include="data\glsl_shaders.h">
+      <Filter>Resources</Filter>
+    </ClInclude>
+    <ClInclude Include="data\glsl\debuguniforms.h">
+      <Filter>Resources\glsl</Filter>
+    </ClInclude>
+    <ClInclude Include="data\glsl\gl_texsample.h">
+      <Filter>Resources\glsl</Filter>
+    </ClInclude>
+    <ClInclude Include="data\glsl\vk_texsample.h">
+      <Filter>Resources\glsl</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -280,12 +289,6 @@
     </ClCompile>
     <ClCompile Include="os\win32\win32_network.cpp">
       <Filter>OS\Win32</Filter>
-    </ClCompile>
-    <ClCompile Include="core\remote_access.cpp">
-      <Filter>Core\networking</Filter>
-    </ClCompile>
-    <ClCompile Include="core\remote_replay.cpp">
-      <Filter>Core\networking</Filter>
     </ClCompile>
     <ClCompile Include="core\replay_proxy.cpp">
       <Filter>Core\networking</Filter>
@@ -341,27 +344,6 @@
     <ClCompile Include="os\win32\win32_libentry.cpp">
       <Filter>OS\Win32</Filter>
     </ClCompile>
-    <ClCompile Include="os\linux\linux_callstack.cpp">
-      <Filter>OS\Linux</Filter>
-    </ClCompile>
-    <ClCompile Include="os\linux\linux_network.cpp">
-      <Filter>OS\Linux</Filter>
-    </ClCompile>
-    <ClCompile Include="os\linux\linux_hook.cpp">
-      <Filter>OS\Linux</Filter>
-    </ClCompile>
-    <ClCompile Include="os\linux\linux_process.cpp">
-      <Filter>OS\Linux</Filter>
-    </ClCompile>
-    <ClCompile Include="os\linux\linux_stringio.cpp">
-      <Filter>OS\Linux</Filter>
-    </ClCompile>
-    <ClCompile Include="os\linux\linux_threading.cpp">
-      <Filter>OS\Linux</Filter>
-    </ClCompile>
-    <ClCompile Include="os\linux\linux_libentry.cpp">
-      <Filter>OS\Linux</Filter>
-    </ClCompile>
     <ClCompile Include="os\win32\sys_win32_hooks.cpp">
       <Filter>OS\Win32</Filter>
     </ClCompile>
@@ -370,6 +352,69 @@
     </ClCompile>
     <ClCompile Include="replay\capture_options.cpp">
       <Filter>Replay</Filter>
+    </ClCompile>
+    <ClCompile Include="os\posix\android\android_callstack.cpp">
+      <Filter>OS\Posix\Android</Filter>
+    </ClCompile>
+    <ClCompile Include="os\posix\android\android_stringio.cpp">
+      <Filter>OS\Posix\Android</Filter>
+    </ClCompile>
+    <ClCompile Include="os\posix\linux\linux_callstack.cpp">
+      <Filter>OS\Posix\Linux</Filter>
+    </ClCompile>
+    <ClCompile Include="os\posix\linux\linux_stringio.cpp">
+      <Filter>OS\Posix\Linux</Filter>
+    </ClCompile>
+    <ClCompile Include="os\posix\posix_hook.cpp">
+      <Filter>OS\Posix</Filter>
+    </ClCompile>
+    <ClCompile Include="os\posix\posix_libentry.cpp">
+      <Filter>OS\Posix</Filter>
+    </ClCompile>
+    <ClCompile Include="os\posix\posix_network.cpp">
+      <Filter>OS\Posix</Filter>
+    </ClCompile>
+    <ClCompile Include="os\posix\posix_process.cpp">
+      <Filter>OS\Posix</Filter>
+    </ClCompile>
+    <ClCompile Include="os\posix\posix_stringio.cpp">
+      <Filter>OS\Posix</Filter>
+    </ClCompile>
+    <ClCompile Include="os\posix\posix_threading.cpp">
+      <Filter>OS\Posix</Filter>
+    </ClCompile>
+    <ClCompile Include="os\posix\apple\apple_callstack.cpp">
+      <Filter>OS\Posix\Apple</Filter>
+    </ClCompile>
+    <ClCompile Include="os\posix\apple\apple_process.cpp">
+      <Filter>OS\Posix\Apple</Filter>
+    </ClCompile>
+    <ClCompile Include="os\posix\apple\apple_stringio.cpp">
+      <Filter>OS\Posix\Apple</Filter>
+    </ClCompile>
+    <ClCompile Include="os\posix\apple\apple_threading.cpp">
+      <Filter>OS\Posix\Apple</Filter>
+    </ClCompile>
+    <ClCompile Include="os\posix\android\android_process.cpp">
+      <Filter>OS\Posix\Android</Filter>
+    </ClCompile>
+    <ClCompile Include="os\posix\android\android_threading.cpp">
+      <Filter>OS\Posix\Android</Filter>
+    </ClCompile>
+    <ClCompile Include="os\posix\linux\linux_process.cpp">
+      <Filter>OS\Posix\Linux</Filter>
+    </ClCompile>
+    <ClCompile Include="os\posix\linux\linux_threading.cpp">
+      <Filter>OS\Posix\Linux</Filter>
+    </ClCompile>
+    <ClCompile Include="data\glsl_shaders.cpp">
+      <Filter>Resources</Filter>
+    </ClCompile>
+    <ClCompile Include="core\remote_server.cpp">
+      <Filter>Core\networking</Filter>
+    </ClCompile>
+    <ClCompile Include="core\target_control.cpp">
+      <Filter>Core\networking</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -391,34 +436,25 @@
     <None Include="data\hlsl\multisample.hlsl">
       <Filter>Resources\hlsl</Filter>
     </None>
-    <None Include="data\glsl\blit.frag">
+    <None Include="data\hlsl\mesh.hlsl">
+      <Filter>Resources\hlsl</Filter>
+    </None>
+    <None Include="data\glsl\array2ms.comp">
       <Filter>Resources\glsl</Filter>
     </None>
     <None Include="data\glsl\blit.vert">
       <Filter>Resources\glsl</Filter>
     </None>
-    <None Include="data\glsl\texdisplay.frag">
-      <Filter>Resources\glsl</Filter>
-    </None>
     <None Include="data\glsl\checkerboard.frag">
       <Filter>Resources\glsl</Filter>
     </None>
-    <None Include="data\glsl\generic.vert">
-      <Filter>Resources\glsl</Filter>
-    </None>
-    <None Include="data\glsl\generic.frag">
-      <Filter>Resources\glsl</Filter>
-    </None>
-    <None Include="data\glsl\mesh.vert">
-      <Filter>Resources\glsl</Filter>
-    </None>
-    <None Include="data\glsl\text.frag">
-      <Filter>Resources\glsl</Filter>
-    </None>
-    <None Include="data\glsl\text.vert">
+    <None Include="data\glsl\fixedcol.frag">
       <Filter>Resources\glsl</Filter>
     </None>
     <None Include="data\glsl\histogram.comp">
+      <Filter>Resources\glsl</Filter>
+    </None>
+    <None Include="data\glsl\mesh.comp">
       <Filter>Resources\glsl</Filter>
     </None>
     <None Include="data\glsl\mesh.frag">
@@ -427,65 +463,35 @@
     <None Include="data\glsl\mesh.geom">
       <Filter>Resources\glsl</Filter>
     </None>
-    <None Include="data\glsl\arraymscopy.comp">
+    <None Include="data\glsl\mesh.vert">
       <Filter>Resources\glsl</Filter>
     </None>
-    <None Include="data\glsl\quadoverdraw.frag">
+    <None Include="data\glsl\minmaxresult.comp">
       <Filter>Resources\glsl</Filter>
     </None>
-    <None Include="data\hlsl\mesh.hlsl">
-      <Filter>Resources\hlsl</Filter>
+    <None Include="data\glsl\minmaxtile.comp">
+      <Filter>Resources\glsl</Filter>
     </None>
-    <None Include="data\glsl\mesh.comp">
+    <None Include="data\glsl\ms2array.comp">
       <Filter>Resources\glsl</Filter>
     </None>
     <None Include="data\glsl\outline.frag">
       <Filter>Resources\glsl</Filter>
     </None>
-    <None Include="data\spv\blit.vert">
-      <Filter>Resources\spv</Filter>
+    <None Include="data\glsl\quadresolve.frag">
+      <Filter>Resources\glsl</Filter>
     </None>
-    <None Include="data\spv\texdisplay.frag">
-      <Filter>Resources\spv</Filter>
+    <None Include="data\glsl\quadwrite.frag">
+      <Filter>Resources\glsl</Filter>
     </None>
-    <None Include="data\spv\checkerboard.frag">
-      <Filter>Resources\spv</Filter>
+    <None Include="data\glsl\texdisplay.frag">
+      <Filter>Resources\glsl</Filter>
     </None>
-    <None Include="data\spv\text.frag">
-      <Filter>Resources\spv</Filter>
+    <None Include="data\glsl\text.frag">
+      <Filter>Resources\glsl</Filter>
     </None>
-    <None Include="data\spv\text.vert">
-      <Filter>Resources\spv</Filter>
-    </None>
-    <None Include="data\spv\fixedcol.frag">
-      <Filter>Resources\spv</Filter>
-    </None>
-    <None Include="data\spv\mesh.frag">
-      <Filter>Resources\spv</Filter>
-    </None>
-    <None Include="data\spv\mesh.geom">
-      <Filter>Resources\spv</Filter>
-    </None>
-    <None Include="data\spv\mesh.vert">
-      <Filter>Resources\spv</Filter>
-    </None>
-    <None Include="data\spv\histogram.comp">
-      <Filter>Resources\spv</Filter>
-    </None>
-    <None Include="data\spv\minmaxresult.comp">
-      <Filter>Resources\spv</Filter>
-    </None>
-    <None Include="data\spv\minmaxtile.comp">
-      <Filter>Resources\spv</Filter>
-    </None>
-    <None Include="data\spv\outline.frag">
-      <Filter>Resources\spv</Filter>
-    </None>
-    <None Include="data\spv\quadwrite.frag">
-      <Filter>Resources\spv</Filter>
-    </None>
-    <None Include="data\spv\quadresolve.frag">
-      <Filter>Resources\spv</Filter>
+    <None Include="data\glsl\text.vert">
+      <Filter>Resources\glsl</Filter>
     </None>
   </ItemGroup>
   <ItemGroup>

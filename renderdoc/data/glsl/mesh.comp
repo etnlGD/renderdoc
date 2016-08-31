@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2016 Baldur Karlsson
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,37 +22,23 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
-#version 420 core
-
-#extension GL_ARB_compute_shader : require
-#extension GL_ARB_shader_storage_buffer_object : require
-
-layout(binding = 0) uniform atomic_uint pickresult_counter;
-layout(binding = 0) writeonly buffer pickresult_buffer
-{
-	uvec4 results[];
-} pickresult;
-
-layout(binding = 1) readonly buffer vertex_data
+layout(binding = 1, std140) readonly buffer vertex_data
 {
 	vec4 data[];
 } vb;
 
-layout(binding = 2) readonly buffer index_data
+layout(binding = 2, std430) readonly buffer index_data
 {
 	uint data[];
 } ib;
 
+layout(binding = 3, std140) buffer pickresult_buffer
+{
+	uvec4 counter;
+	uvec4 results[];
+} pickresult;
 
-uniform vec2 PickCoords;
-uniform vec2 PickViewport;
-
-uniform mat4 PickMVP;
-
-uniform uint PickIdx;
-uniform uint PickNumVerts;
-
-layout (local_size_x = 1024, local_size_y = 1) in;
+layout (local_size_x = 128, local_size_y = 1, local_size_z = 1) in;
 
 void main()
 {
@@ -60,24 +46,31 @@ void main()
 
 	uint vertid = tid.x;
 
-	if(vertid >= PickNumVerts)
+	if(vertid >= meshpick.numVerts)
 		return;
 
-	uint idx = PickIdx != 0 ? ib.data[vertid] : vertid;
+	uint idx = meshpick.use_indices != 0u ? ib.data[vertid] : vertid;
 
 	vec4 pos = vb.data[idx];
 
-	vec4 wpos = PickMVP * pos;
+#ifdef VULKAN
+	if(meshpick.unproject == 1u)
+		pos = vec4(pos.x, -pos.y, pos.z, pos.w);
+#endif
+
+	vec4 wpos = meshpick.mvp * pos;
 
 	wpos.xyz /= wpos.www;
 
-	vec2 scr = (wpos.xy*vec2(1.0f, -1.0f) + 1.0f) * 0.5f * PickViewport;
+	wpos.xy *= vec2(1.0f, -1.0f);
+
+	vec2 scr = (wpos.xy + 1.0f) * 0.5f * meshpick.viewport;
 
 	// close to target co-ords? add to list
-	float len = length(scr - PickCoords);
+	float len = length(scr - meshpick.coords);
 	if(len < 35.0f)
 	{
-		uint result_idx = atomicCounterIncrement(pickresult_counter);
+		uint result_idx = atomicAdd(pickresult.counter.x, 1u);
 		pickresult.results[result_idx] = uvec4(vertid, idx, floatBitsToUint(len), floatBitsToUint(wpos.z));
 	}
 }

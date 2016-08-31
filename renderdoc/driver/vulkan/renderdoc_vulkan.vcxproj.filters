@@ -4,9 +4,6 @@
     <ClCompile Include="vk_win32.cpp">
       <Filter>OS\Win32</Filter>
     </ClCompile>
-    <ClCompile Include="vk_linux.cpp">
-      <Filter>OS\Linux</Filter>
-    </ClCompile>
     <ClCompile Include="vk_replay.cpp">
       <Filter>Replay</Filter>
     </ClCompile>
@@ -82,6 +79,18 @@
     <ClCompile Include="vk_counters.cpp">
       <Filter>Replay</Filter>
     </ClCompile>
+    <ClCompile Include="vk_android.cpp">
+      <Filter>OS\Posix</Filter>
+    </ClCompile>
+    <ClCompile Include="vk_posix.cpp">
+      <Filter>OS\Posix</Filter>
+    </ClCompile>
+    <ClCompile Include="vk_linux.cpp">
+      <Filter>OS\Posix</Filter>
+    </ClCompile>
+    <ClCompile Include="vk_tracelayer_android.cpp">
+      <Filter>OS\Posix</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="vk_replay.h">
@@ -117,9 +126,6 @@
     <ClInclude Include="official\vk_layer.h">
       <Filter>official</Filter>
     </ClInclude>
-    <ClInclude Include="official\vk_lunarg_debug_marker.h">
-      <Filter>official</Filter>
-    </ClInclude>
     <ClInclude Include="official\vk_platform.h">
       <Filter>official</Filter>
     </ClInclude>
@@ -130,9 +136,6 @@
   <ItemGroup>
     <Filter Include="OS">
       <UniqueIdentifier>{0ca21de2-97db-4118-afc5-32b4cd80a437}</UniqueIdentifier>
-    </Filter>
-    <Filter Include="OS\Linux">
-      <UniqueIdentifier>{c6141a90-0765-4409-afe2-e59d683e5a5e}</UniqueIdentifier>
     </Filter>
     <Filter Include="OS\Win32">
       <UniqueIdentifier>{538183db-17ae-4e49-87d6-b8dc88bda2d3}</UniqueIdentifier>
@@ -154,6 +157,9 @@
     </Filter>
     <Filter Include="official">
       <UniqueIdentifier>{9580e52e-f3ab-4ef9-80d1-c673e5f25ef7}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="OS\Posix">
+      <UniqueIdentifier>{c6141a90-0765-4409-afe2-e59d683e5a5e}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>

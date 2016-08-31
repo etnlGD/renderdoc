@@ -26,6 +26,7 @@
 using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using renderdocui.Code;
 
 namespace renderdoc
 {
@@ -71,6 +72,34 @@ namespace renderdoc
         public FloatVector(Vec3f v, float W) { x = v.x; y = v.y; z = v.z; w = W; }
 
         public float x, y, z, w;
+    };
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct DirectoryFile : IComparable<DirectoryFile>
+    {
+        [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
+        public string filename;
+        public DirectoryFileProperty flags;
+
+        public override string ToString()
+        {
+            return String.Format("{0} ({1})", filename, flags);
+        }
+
+        public int CompareTo(DirectoryFile o)
+        {
+            // sort directories first
+            bool thisdir = flags.HasFlag(DirectoryFileProperty.Directory);
+            bool odir = o.flags.HasFlag(DirectoryFileProperty.Directory);
+
+            if (thisdir && !odir)
+                return -1;
+            if (!thisdir && odir)
+                return 1;
+
+            // can't have duplicates with same filename, so just compare filenames
+            return filename.CompareTo(o.filename);
+        }
     };
 
     [StructLayout(LayoutKind.Sequential)]
@@ -181,6 +210,14 @@ namespace renderdoc
             {
                 return comp;
             }
+            else if (compType == FormatComponentType.SScaled)
+            {
+                return (float)((Int16)comp);
+            }
+            else if (compType == FormatComponentType.UScaled)
+            {
+                return (float)comp;
+            }
             else if (compType == FormatComponentType.UNorm)
             {
                 return (float)comp / (float)UInt16.MaxValue;
@@ -214,6 +251,14 @@ namespace renderdoc
             {
                 return comp;
             }
+            else if (compType == FormatComponentType.SScaled)
+            {
+                return (float)((sbyte)comp);
+            }
+            else if (compType == FormatComponentType.UScaled)
+            {
+                return (float)comp;
+            }
             else if (compType == FormatComponentType.UNorm)
             {
                 return ((float)comp) / 255.0f;
@@ -243,10 +288,8 @@ namespace renderdoc
         [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
         public string name;
         public bool customName;
-        public UInt32 length;
-        public UInt32 structureSize;
         public BufferCreationFlags creationFlags;
-        public UInt64 byteSize;
+        public UInt64 length;
     };
 
     [StructLayout(LayoutKind.Sequential)]
@@ -500,6 +543,7 @@ namespace renderdoc
     {
         public UInt32 eventID;
         public ResourceUsage usage;
+        public ResourceId view;
     };
 
     [StructLayout(LayoutKind.Sequential)]
@@ -511,6 +555,43 @@ namespace renderdoc
         public string name;
 
         public DrawcallFlags flags;
+        
+        [CustomMarshalAs(CustomUnmanagedType.FixedArray, FixedLength = 4)]
+        public float[] markerColour;
+
+        public System.Drawing.Color GetColor()
+        {
+            float red = markerColour[0];
+            float green = markerColour[1];
+            float blue = markerColour[2];
+            float alpha = markerColour[3];
+
+            return System.Drawing.Color.FromArgb(
+                (int)(alpha * 255.0f),
+                (int)(red * 255.0f),
+                (int)(green * 255.0f),
+                (int)(blue * 255.0f)
+                );
+        }
+
+        public System.Drawing.Color GetTextColor(System.Drawing.Color defaultTextCol)
+        {
+            float backLum = GetColor().GetLuminance();
+            float textLum = defaultTextCol.GetLuminance();
+
+            bool backDark = backLum < 0.2f;
+            bool textDark = textLum < 0.2f;
+
+            // if they're contrasting, use the text colour desired
+            if (backDark != textDark)
+                return defaultTextCol;
+
+            // otherwise pick a contrasting colour
+            if (backDark)
+                return System.Drawing.Color.White;
+            else
+                return System.Drawing.Color.Black;
+        }
 
         public UInt32 numIndices;
         public UInt32 numInstances;
@@ -571,6 +652,8 @@ namespace renderdoc
         public bool bgraOrder;
         public SpecialFormat specialFormat;
 
+        public FloatVector meshColour;
+
         public bool showAlpha;
 
         public PrimitiveTopology topo;
@@ -592,15 +675,14 @@ namespace renderdoc
         public float fov = 90.0f;
         public float aspect = 0.0f;
 
-        public bool thisDrawOnly = true;
+        public bool showPrevInstances = false;
+        public bool showAllInstances = false;
+        public bool showWholePass = false;
         public UInt32 curInstance = 0;
 
         public UInt32 highlightVert;
         public MeshFormat position;
         public MeshFormat secondary;
-
-        public FloatVector prevMeshColour = new FloatVector();
-        public FloatVector currentMeshColour = new FloatVector();
 
         public FloatVector minBounds = new FloatVector();
         public FloatVector maxBounds = new FloatVector();
@@ -614,6 +696,7 @@ namespace renderdoc
     public class TextureDisplay
     {
         public ResourceId texid = ResourceId.Null;
+        public FormatComponentType typeHint = FormatComponentType.None;
         public float rangemin = 0.0f;
         public float rangemax = 1.0f;
         public float scale = 1.0f;
@@ -629,8 +712,8 @@ namespace renderdoc
 
         public float offx = 0.0f, offy = 0.0f;
 
-        public FloatVector lightBackgroundColour = new FloatVector(0.666f, 0.666f, 0.666f);
-        public FloatVector darkBackgroundColour = new FloatVector(0.333f, 0.333f, 0.333f);
+        public FloatVector lightBackgroundColour = new FloatVector(0.81f, 0.81f, 0.81f);
+        public FloatVector darkBackgroundColour = new FloatVector(0.57f, 0.57f, 0.57f);
 
         public TextureDisplayOverlay overlay = TextureDisplayOverlay.None;
     };
@@ -639,6 +722,8 @@ namespace renderdoc
     public class TextureSave
     {
         public ResourceId id = ResourceId.Null;
+
+        public FormatComponentType typeHint = FormatComponentType.None;
 
         public FileType destType = FileType.DDS;
 
@@ -680,8 +765,8 @@ namespace renderdoc
         public int channelExtract = -1;
 
         public AlphaMapping alpha = AlphaMapping.Discard;
-        public FloatVector alphaCol = new FloatVector(0.666f, 0.666f, 0.666f);
-        public FloatVector alphaColSecondary = new FloatVector(0.333f, 0.333f, 0.333f);
+        public FloatVector alphaCol = new FloatVector(0.81f, 0.81f, 0.81f);
+        public FloatVector alphaColSecondary = new FloatVector(0.57f, 0.57f, 0.57f);
 
         public int jpegQuality = 90;
     };
@@ -689,14 +774,15 @@ namespace renderdoc
     [StructLayout(LayoutKind.Sequential)]
     public class APIProperties
     {
-        public APIPipelineStateType pipelineType;
+        public GraphicsAPI pipelineType;
+        public GraphicsAPI localRenderer;
         public bool degraded;
 
         public string ShaderExtension
         {
             get
             {
-                return pipelineType == APIPipelineStateType.D3D11 ? ".hlsl" : ".glsl";
+                return pipelineType == GraphicsAPI.D3D11 ? ".hlsl" : ".glsl";
             }
         }
     };
@@ -771,6 +857,7 @@ namespace renderdoc
         public UInt32 eventID;
 
         public bool uavWrite;
+        public bool unboundPS;
 
         public UInt32 fragIndex;
         public UInt32 primitiveID;
@@ -782,6 +869,7 @@ namespace renderdoc
         [CustomMarshalAs(CustomUnmanagedType.CustomClass)]
         public ModificationValue postMod;
 
+        public bool sampleMasked;
         public bool backfaceCulled;
         public bool depthClipped;
         public bool viewClipped;
@@ -792,9 +880,9 @@ namespace renderdoc
 
         public bool EventPassed()
         {
-            return !backfaceCulled && !depthClipped && !viewClipped &&
-                !scissorClipped && !shaderDiscarded && !depthTestFailed &&
-                !stencilTestFailed;
+            return !sampleMasked && !backfaceCulled && !depthClipped &&
+                !viewClipped && !scissorClipped && !shaderDiscarded &&
+                !depthTestFailed && !stencilTestFailed;
         }
     };
 }

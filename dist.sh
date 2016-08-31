@@ -4,14 +4,21 @@ AUTOBUILD=1
 
 if [ $# -ne 1 ] || [ $1 != "autobuild" ]; then
 	AUTOBUILD=0
-	echo "Have you rebuilt the documentation?"
+	echo "=== Building standalone folders. Hit enter when each prompt is satisfied"
 
+	echo "Have you rebuilt the documentation? (cd docs/ && ./make.sh htmlhelp)"
 	read;
 
-	echo "Have you marked git commit hash in AssemblyInfo.cs and resource.h (run hash_version.sh)?"
-	echo "If this is an OFFICIAL build only, mark that in the assembly info and resource.h and bump their versions."
-
+	echo "Have you built the python libraries? (cd renderdocui/3rdparty/ironpython/ && ./compilelibs.sh /path/to/IronPython)"
 	read;
+
+	echo "Have you marked the git commit hash in version info? (hash_version.sh)"
+	read;
+
+	echo "Now compile 32-bit and 64-bit Release builds."
+	read;
+
+	echo "=== Building folders"
 fi
 
 # clean any old files lying around and make new structure
@@ -33,8 +40,13 @@ cp /c/Program\ Files\ \(x86\)/Windows\ Kits/8.1/Redist/D3D/x64/d3dcompiler_47.dl
 cp /c/Program\ Files\ \(x86\)/Windows\ Kits/8.1/Redist/D3D/x86/d3dcompiler_47.dll dist/Release32/
 
 # Copy associated files that should be included with the distribution
-cp LICENSE.md Documentation/*.chm dist/Release64/
-cp LICENSE.md Documentation/*.chm dist/Release32/
+cp LICENSE.md Documentation/htmlhelp/*.chm dist/Release64/
+cp LICENSE.md Documentation/htmlhelp/*.chm dist/Release32/
+
+# Delete new VS2015 incremental pdb files, these are just build artifacts
+# and aren't needed for later symbol resolution etc
+find dist/Release{32,64}/ -iname '*.ipdb' -exec rm '{}' \;
+find dist/Release{32,64}/ -iname '*.iobj' -exec rm '{}' \;
 
 # Make a copy of the main distribution folder that has PDBs
 cp -R dist/Release64 dist/ReleasePDBs64
@@ -59,19 +71,20 @@ mkdir -p dist/ReleasePDBs64/x86
 cp -R dist/ReleasePDBs32/{d3dcompiler_47.dll,renderdoc.dll,renderdoc.json,renderdoc.pdb,renderdocshim32.dll,renderdocshim32.pdb,renderdoccmd.exe,renderdoccmd.pdb,pdblocate} dist/ReleasePDBs64/x86/
 
 if [[ $AUTOBUILD -eq 0 ]]; then
-	echo "Ready to make installer MSIs - make sure to bump version numbers on package."
-
+	echo "=== Folders built. Ready to make installer MSIs."
+	echo
+	echo "Hit enter when ready"
 	read;
 fi
 
-VERSION=`egrep "#define RENDERDOC_VERSION_(MAJOR|MINOR)" renderdoc/data/version.h | tr -dc '[0-9\n]' | tr '\n' '.' | egrep -o '[0-9]+\.[0-9]+'`
+VERSION=`grep -E "#define RENDERDOC_VERSION_(MAJOR|MINOR)" renderdoc/data/version.h | tr -dc '[0-9\n]' | tr '\n' '.' | grep -Eo '[0-9]+\.[0-9]+'`
 
 export RENDERDOC_VERSION="${VERSION}.0"
 
-/c/Program\ Files\ \(x86\)/WiX\ Toolset\ v3.8/bin/candle.exe -o dist/Installer32.wixobj installer/Installer32.wxs
-/c/Program\ Files\ \(x86\)/WiX\ Toolset\ v3.8/bin/light.exe -ext WixUIExtension -sw1076 -loc installer/customtext.wxl -o dist/Installer32.msi dist/Installer32.wixobj
+"$WIX/bin/candle.exe" -o dist/Installer32.wixobj installer/Installer32.wxs
+"$WIX/bin/light.exe" -ext WixUIExtension -sw1076 -loc installer/customtext.wxl -o dist/Installer32.msi dist/Installer32.wixobj
 
-/c/Program\ Files\ \(x86\)/WiX\ Toolset\ v3.8/bin/candle.exe -o dist/Installer64.wixobj installer/Installer64.wxs
-/c/Program\ Files\ \(x86\)/WiX\ Toolset\ v3.8/bin/light.exe -ext WixUIExtension -sw1076 -loc installer/customtext.wxl -o dist/Installer64.msi dist/Installer64.wixobj
+"$WIX/bin/candle.exe" -o dist/Installer64.wixobj installer/Installer64.wxs
+"$WIX/bin/light.exe" -ext WixUIExtension -sw1076 -loc installer/customtext.wxl -o dist/Installer64.msi dist/Installer64.wixobj
 
 rm dist/*.wixobj dist/*.wixpdb

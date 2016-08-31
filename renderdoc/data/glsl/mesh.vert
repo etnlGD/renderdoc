@@ -2,7 +2,6 @@
  * The MIT License (MIT)
  * 
  * Copyright (c) 2015-2016 Baldur Karlsson
- * Copyright (c) 2014 Crytek
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,27 +22,17 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
-#version 420 core
-
 layout (location = 0) in vec4 position;
-layout (location = 1) in vec4 secondary;
-
-uniform mat4 ModelViewProj;
-uniform vec2 PointSpriteSize;
-uniform uint HomogenousInput;
+layout (location = 1) in vec4 IN_secondary;
 
 out gl_PerVertex
 {
 	vec4 gl_Position;
 	float gl_PointSize;
-	float gl_ClipDistance[];
 };
 
-out v2f
-{
-	vec4 secondary;
-	vec4 norm;
-} OUT;
+layout (location = 0) out vec4 OUT_secondary;
+layout (location = 1) out vec4 norm;
 
 void main(void)
 {
@@ -56,11 +45,27 @@ void main(void)
 	};
 
 	vec4 pos = position;
-	if(HomogenousInput == 0)
+	if(Mesh.homogenousInput == 0)
+	{
 		pos = vec4(position.xyz, 1);
+	}
+	else
+	{
+#ifdef VULKAN
+		pos = vec4(position.x, -position.y, position.z, position.w);
+#endif
+	}
 
-	gl_Position = ModelViewProj * pos;
-	gl_Position.xy += PointSpriteSize.xy*0.01f*psprite[gl_VertexID%4]*gl_Position.w;
-	OUT.secondary = secondary;
-	OUT.norm = vec4(0, 0, 1, 1);
+	gl_Position = Mesh.mvp * pos;
+	gl_Position.xy += Mesh.pointSpriteSize.xy*0.01f*psprite[VERTEX_ID%4]*gl_Position.w;
+	OUT_secondary = IN_secondary;
+	norm = vec4(0, 0, 1, 1);
+
+#ifdef VULKAN
+	// GL->VK conventions
+	gl_Position.y = -gl_Position.y;
+	gl_Position.z = (gl_Position.z + gl_Position.w) / 2.0;
+
+	gl_PointSize = 4.0f;
+#endif
 }

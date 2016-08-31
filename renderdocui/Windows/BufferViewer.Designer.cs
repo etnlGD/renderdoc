@@ -54,7 +54,7 @@
             WeifenLuo.WinFormsUI.Docking.TabGradient tabGradient7 = new WeifenLuo.WinFormsUI.Docking.TabGradient();
             System.Windows.Forms.DataGridViewCellStyle dataGridViewCellStyle3 = new System.Windows.Forms.DataGridViewCellStyle();
             this.previewTable = new System.Windows.Forms.TableLayoutPanel();
-            this.tableLayoutPanel3 = new System.Windows.Forms.TableLayoutPanel();
+            this.renderTable = new System.Windows.Forms.TableLayoutPanel();
             this.render = new renderdocui.Controls.NoScrollPanel();
             this.configCamControls = new System.Windows.Forms.GroupBox();
             this.tableLayoutPanel2 = new System.Windows.Forms.TableLayoutPanel();
@@ -131,7 +131,7 @@
             label3 = new System.Windows.Forms.Label();
             label5 = new System.Windows.Forms.Label();
             this.previewTable.SuspendLayout();
-            this.tableLayoutPanel3.SuspendLayout();
+            this.renderTable.SuspendLayout();
             this.configCamControls.SuspendLayout();
             this.tableLayoutPanel2.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)(this.camSpeed)).BeginInit();
@@ -204,7 +204,7 @@
             // 
             this.previewTable.ColumnCount = 1;
             this.previewTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
-            this.previewTable.Controls.Add(this.tableLayoutPanel3, 0, 1);
+            this.previewTable.Controls.Add(this.renderTable, 0, 1);
             this.previewTable.Controls.Add(this.toolStrip2, 0, 0);
             this.previewTable.Dock = System.Windows.Forms.DockStyle.Fill;
             this.previewTable.Location = new System.Drawing.Point(3, 3);
@@ -218,25 +218,25 @@
             // 
             // tableLayoutPanel3
             // 
-            this.tableLayoutPanel3.ColumnCount = 2;
-            this.tableLayoutPanel3.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
-            this.tableLayoutPanel3.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            this.tableLayoutPanel3.Controls.Add(this.render, 1, 0);
-            this.tableLayoutPanel3.Controls.Add(this.configCamControls, 0, 0);
-            this.tableLayoutPanel3.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.tableLayoutPanel3.Location = new System.Drawing.Point(3, 28);
-            this.tableLayoutPanel3.Name = "tableLayoutPanel3";
-            this.tableLayoutPanel3.RowCount = 1;
-            this.tableLayoutPanel3.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
-            this.tableLayoutPanel3.Size = new System.Drawing.Size(539, 250);
-            this.tableLayoutPanel3.TabIndex = 5;
+            this.renderTable.ColumnCount = 2;
+            this.renderTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
+            this.renderTable.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            this.renderTable.Controls.Add(this.render, 1, 0);
+            this.renderTable.Controls.Add(this.configCamControls, 0, 0);
+            this.renderTable.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.renderTable.Location = new System.Drawing.Point(3, 28);
+            this.renderTable.Name = "tableLayoutPanel3";
+            this.renderTable.RowCount = 1;
+            this.renderTable.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
+            this.renderTable.Size = new System.Drawing.Size(539, 250);
+            this.renderTable.TabIndex = 5;
             // 
             // render
             // 
             this.render.BackColor = System.Drawing.Color.Black;
             this.render.Dock = System.Windows.Forms.DockStyle.Fill;
             this.render.Location = new System.Drawing.Point(203, 3);
-            this.render.Name = "render";
+            this.render.Name = "render_SETUP_AT_RUNTIME_SEE_CODE";
             this.render.Size = new System.Drawing.Size(333, 244);
             this.render.TabIndex = 2;
             this.render.Paint += new System.Windows.Forms.PaintEventHandler(this.render_Paint);
@@ -463,9 +463,11 @@
             this.drawRange.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
             this.drawRange.Items.AddRange(new object[] {
             "Only this draw",
+            "Show previous instances",
+            "Show all instances",
             "Show whole pass"});
             this.drawRange.Name = "drawRange";
-            this.drawRange.Size = new System.Drawing.Size(121, 25);
+            this.drawRange.Size = new System.Drawing.Size(140, 25);
             this.drawRange.SelectedIndexChanged += new System.EventHandler(this.drawRange_SelectedIndexChanged);
             // 
             // toolStripSeparator4
@@ -628,7 +630,7 @@
             this.vsInBufferView.AllowUserToDeleteRows = false;
             this.vsInBufferView.AllowUserToResizeRows = false;
             this.vsInBufferView.AutoSizeRowsMode = System.Windows.Forms.DataGridViewAutoSizeRowsMode.DisplayedCells;
-            this.vsInBufferView.BackgroundColor = System.Drawing.Color.White;
+            this.vsInBufferView.BackgroundColor = System.Drawing.SystemColors.Window;
             dataGridViewCellStyle1.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
             dataGridViewCellStyle1.BackColor = System.Drawing.SystemColors.Window;
             dataGridViewCellStyle1.Font = new System.Drawing.Font("Consolas", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
@@ -676,7 +678,7 @@
             this.vsOutBufferView.AllowUserToDeleteRows = false;
             this.vsOutBufferView.AllowUserToResizeRows = false;
             this.vsOutBufferView.AutoSizeRowsMode = System.Windows.Forms.DataGridViewAutoSizeRowsMode.DisplayedCells;
-            this.vsOutBufferView.BackgroundColor = System.Drawing.Color.White;
+            this.vsOutBufferView.BackgroundColor = System.Drawing.SystemColors.Window;
             dataGridViewCellStyle2.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
             dataGridViewCellStyle2.BackColor = System.Drawing.SystemColors.Window;
             dataGridViewCellStyle2.Font = new System.Drawing.Font("Consolas", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
@@ -973,7 +975,7 @@
             this.gsOutBufferView.AllowUserToDeleteRows = false;
             this.gsOutBufferView.AllowUserToResizeRows = false;
             this.gsOutBufferView.AutoSizeRowsMode = System.Windows.Forms.DataGridViewAutoSizeRowsMode.DisplayedCells;
-            this.gsOutBufferView.BackgroundColor = System.Drawing.Color.White;
+            this.gsOutBufferView.BackgroundColor = System.Drawing.SystemColors.Window;
             dataGridViewCellStyle3.Alignment = System.Windows.Forms.DataGridViewContentAlignment.MiddleLeft;
             dataGridViewCellStyle3.BackColor = System.Drawing.SystemColors.Window;
             dataGridViewCellStyle3.Font = new System.Drawing.Font("Consolas", 9F, System.Drawing.FontStyle.Regular, System.Drawing.GraphicsUnit.Point, ((byte)(0)));
@@ -1064,7 +1066,7 @@
             this.Load += new System.EventHandler(this.BufferViewer_Load);
             this.previewTable.ResumeLayout(false);
             this.previewTable.PerformLayout();
-            this.tableLayoutPanel3.ResumeLayout(false);
+            this.renderTable.ResumeLayout(false);
             this.configCamControls.ResumeLayout(false);
             this.tableLayoutPanel2.ResumeLayout(false);
             this.tableLayoutPanel2.PerformLayout();
@@ -1125,7 +1127,7 @@
         private System.Windows.Forms.ToolStripSeparator instSep;
         private System.Windows.Forms.ToolStripLabel instLabel;
         private System.Windows.Forms.ToolStripTextBox instanceIdxToolitem;
-        private System.Windows.Forms.TableLayoutPanel tableLayoutPanel3;
+        private System.Windows.Forms.TableLayoutPanel renderTable;
         private System.Windows.Forms.GroupBox configCamControls;
         private System.Windows.Forms.TableLayoutPanel tableLayoutPanel2;
         private System.Windows.Forms.TextBox nearGuess;

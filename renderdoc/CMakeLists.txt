@@ -8,35 +8,55 @@ set(RDOC_INCLUDES
 set(RDOC_LIBRARIES)
 
 # get git commit hash
-execute_process(COMMAND sh ${CMAKE_SOURCE_DIR}/calc_hash.sh
-    OUTPUT_VARIABLE GIT_COMMIT_HASH)
+get_git_hash(GIT_COMMIT_HASH)
 string(STRIP ${GIT_COMMIT_HASH} GIT_COMMIT_HASH)
 list(APPEND RDOC_DEFINITIONS
     PRIVATE -DGIT_COMMIT_HASH="${GIT_COMMIT_HASH}")
 
-if(UNIX)
+if(ANDROID)
+    list(APPEND RDOC_LIBRARIES
+        PRIVATE m
+        PRIVATE dl
+        PRIVATE log
+        PRIVATE android
+        PRIVATE ${CMAKE_THREAD_LIBS_INIT})
+elseif(APPLE)
+    list(APPEND RDOC_LIBRARIES
+        PRIVATE m
+        PRIVATE dl
+        PRIVATE log
+        PRIVATE ${CMAKE_THREAD_LIBS_INIT})
+elseif(UNIX)
     find_package(PkgConfig REQUIRED)
     find_package(Threads REQUIRED)
-    find_package(X11 REQUIRED)
-
-    # This should be fixed and moved to FindXCB.cmake
-    pkg_check_modules(PC_XCB REQUIRED xcb xcb-keysyms)
-    set(XCB_INCLUDE_DIRS)
-    set(XCB_LIBRARIES xcb xcb-keysyms)
-
-    list(APPEND RDOC_DEFINITIONS
-        PRIVATE -DLINUX)
-
-    list(APPEND RDOC_INCLUDES
-        PRIVATE ${X11_X11_INCLUDE_PATH}
-        PRIVATE ${XCB_INCLUDE_DIRS})
 
     list(APPEND RDOC_LIBRARIES
         PRIVATE m
         PRIVATE dl
-        PRIVATE ${CMAKE_THREAD_LIBS_INIT}
-        PRIVATE ${X11_X11_LIB}
-        PRIVATE ${XCB_LIBRARIES})
+        PRIVATE ${CMAKE_THREAD_LIBS_INIT})
+
+    if(ENABLE_XLIB)
+        find_package(X11 REQUIRED)
+
+        list(APPEND RDOC_INCLUDES
+            PRIVATE ${X11_X11_INCLUDE_PATH})
+
+        list(APPEND RDOC_LIBRARIES
+            PRIVATE ${X11_X11_LIB})
+    endif()
+
+    if(ENABLE_XCB)
+        # This should be fixed and moved to FindXCB.cmake
+        pkg_check_modules(PC_XCB REQUIRED xcb xcb-keysyms)
+        set(XCB_INCLUDE_DIRS)
+        set(XCB_LIBRARIES xcb xcb-keysyms)
+
+        list(APPEND RDOC_INCLUDES
+            PRIVATE ${XCB_INCLUDE_DIRS})
+
+        list(APPEND RDOC_LIBRARIES
+            PRIVATE ${XCB_LIBRARIES})
+    endif()
 endif()
 
 set(sources
@@ -62,20 +82,22 @@ set(sources
     common/timing.h
     common/wrapped_pool.h
     core/core.cpp
+    core/image_viewer.cpp
     core/core.h
     core/crash_handler.h
-    core/remote_access.cpp
-    core/remote_replay.cpp
+    core/target_control.cpp
+    core/remote_server.cpp
     core/replay_proxy.cpp
     core/replay_proxy.h
     core/resource_manager.cpp
     core/resource_manager.h
     core/socket_helpers.h
-    data/glsl/debuguniforms.h
-    data/glsl/texsample.h
     data/hlsl/debugcbuffers.h
-    data/spv/debuguniforms.h
-    data/spv/texsample.h
+    data/glsl/debuguniforms.h
+    data/glsl/vk_texsample.h
+    data/glsl/gl_texsample.h
+    data/glsl_shaders.cpp
+    data/glsl_shaders.h
     data/version.h
     hooks/hooks.cpp
     hooks/hooks.h
@@ -117,25 +139,67 @@ set(sources
     3rdparty/tinyexr/tinyexr.cpp
     3rdparty/tinyexr/tinyexr.h)
 
-if(UNIX)
+if(ANDROID)
     list(APPEND sources
         data/embedded_files.h
-        os/linux/linux_callstack.cpp
-        os/linux/linux_hook.cpp
-        os/linux/linux_hook.h
-        os/linux/linux_network.cpp
-        os/linux/linux_process.cpp
-        os/linux/linux_stringio.cpp
-        os/linux/linux_threading.cpp
-        os/linux/linux_specific.h)
-    # linux_libentry must be the last so that library_loaded is called after
+        os/posix/android/android_stringio.cpp
+        os/posix/android/android_callstack.cpp
+        os/posix/android/android_process.cpp
+        os/posix/android/android_threading.cpp
+        os/posix/posix_hook.cpp
+        os/posix/posix_hook.h
+        os/posix/posix_network.cpp
+        os/posix/posix_process.cpp
+        os/posix/posix_stringio.cpp
+        os/posix/posix_threading.cpp
+        os/posix/posix_specific.h)
+    # posix_libentry must be the last so that library_loaded is called after
     # static objects are constructed.
-    list(APPEND sources os/linux/linux_libentry.cpp)
+    list(APPEND sources os/posix/posix_libentry.cpp)
+elseif(APPLE)
+    list(APPEND sources
+        data/embedded_files.h
+        os/posix/apple/apple_stringio.cpp
+        os/posix/apple/apple_callstack.cpp
+        os/posix/apple/apple_process.cpp
+        os/posix/apple/apple_threading.cpp
+        os/posix/posix_hook.cpp
+        os/posix/posix_hook.h
+        os/posix/posix_network.cpp
+        os/posix/posix_process.cpp
+        os/posix/posix_stringio.cpp
+        os/posix/posix_threading.cpp
+        os/posix/posix_specific.h)
+    # posix_libentry must be the last so that library_loaded is called after
+    # static objects are constructed.
+    list(APPEND sources os/posix/posix_libentry.cpp)
+elseif(UNIX)
+    list(APPEND sources
+        data/embedded_files.h
+        os/posix/linux/linux_stringio.cpp
+        os/posix/linux/linux_callstack.cpp
+        os/posix/linux/linux_process.cpp
+        os/posix/linux/linux_threading.cpp
+        os/posix/posix_hook.cpp
+        os/posix/posix_hook.h
+        os/posix/posix_network.cpp
+        os/posix/posix_process.cpp
+        os/posix/posix_stringio.cpp
+        os/posix/posix_threading.cpp
+        os/posix/posix_specific.h)
+    # posix_libentry must be the last so that library_loaded is called after
+    # static objects are constructed.
+    list(APPEND sources os/posix/posix_libentry.cpp)
 endif()
 
-if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR APPLE)
     set_source_files_properties(3rdparty/tinyexr/tinyexr.cpp
         PROPERTIES COMPILE_FLAGS "-Wno-extra -Wno-unused-function")
+
+    # Need to add -Wno-unknown-warning-option since some clang versions don't have
+    # -Wno-shift-negative-value available
+    set_source_files_properties(3rdparty/jpeg-compressor/jpgd.cpp
+        PROPERTIES COMPILE_FLAGS "-Wno-unknown-warning-option -Wno-shift-negative-value")
 endif()
 
 add_library(rdoc OBJECT ${sources})
@@ -143,74 +207,62 @@ target_compile_definitions(rdoc ${RDOC_DEFINITIONS})
 target_include_directories(rdoc ${RDOC_INCLUDES})
 
 set(data
-    data/glsl/arraymscopy.comp
-    data/glsl/blit.frag
     data/glsl/blit.vert
     data/glsl/checkerboard.frag
     data/glsl/debuguniforms.h
-    data/glsl/generic.frag
-    data/glsl/generic.vert
+    data/glsl/fixedcol.frag
     data/glsl/histogram.comp
     data/glsl/mesh.comp
     data/glsl/mesh.frag
     data/glsl/mesh.geom
     data/glsl/mesh.vert
+    data/glsl/minmaxresult.comp
+    data/glsl/minmaxtile.comp
     data/glsl/outline.frag
-    data/glsl/quadoverdraw.frag
+    data/glsl/quadresolve.frag
+    data/glsl/quadwrite.frag
     data/glsl/texdisplay.frag
-    data/glsl/texsample.h
+    data/glsl/gl_texsample.h
+    data/glsl/vk_texsample.h
     data/glsl/text.frag
     data/glsl/text.vert
-    data/spv/blit.vert
-    data/spv/checkerboard.frag
-    data/spv/debuguniforms.h
-    data/spv/fixedcol.frag
-    data/spv/histogram.comp
-    data/spv/mesh.frag
-    data/spv/mesh.geom
-    data/spv/mesh.vert
-    data/spv/minmaxresult.comp
-    data/spv/minmaxtile.comp
-    data/spv/outline.frag
-    data/spv/quadresolve.frag
-    data/spv/quadwrite.frag
-    data/spv/texdisplay.frag
-    data/spv/texsample.h
-    data/spv/text.frag
-    data/spv/text.vert
-    data/sourcecodepro.ttf)
+    data/glsl/array2ms.comp
+    data/glsl/ms2array.comp
+    data/sourcecodepro.ttf
+    driver/vulkan/renderdoc.json)
 
 set(data_objects)
 
 if(UNIX)
-    # this is fragile...
-    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-        set(bfdarch "i386")
-        set(bfdtarget "elf64-x86-64")
-    elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "i686")
-        set(bfdarch "i386")
-        set(bfdtarget "elf32-i386")
+    # If we're cross-compiling, include-bin will get built for the target and we
+    # then can't execute it. Instead, we force calling c++ (which we can safely
+    # assume is present) directly to build the binary
+
+    if(CMAKE_CROSSCOMPILING)
+        set(HOST_NATIVE_CPP_COMPILER c++ CACHE STRING "Command to run to compile a .cpp into an executable. Default is just c++")
+
+        add_custom_command(OUTPUT ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/include-bin
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+            COMMAND ${HOST_NATIVE_CPP_COMPILER} 3rdparty/include-bin/main.cpp -o ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/include-bin
+            DEPENDS 3rdparty/include-bin/main.cpp)
     else()
-        message(FATAL_ERROR "Unknown target architecture")
+        add_executable(include-bin 3rdparty/include-bin/main.cpp)
     endif()
 
-    set(data_command ${CMAKE_OBJCOPY} -I binary -O ${bfdtarget} -B ${bfdarch})
-
     foreach(res ${data})
-        # strip "data/"
-        string(SUBSTRING ${res} 5 -1 in)
-        set(working_dir ${CMAKE_CURRENT_SOURCE_DIR}/data)
+        set(in ${res})
+        set(working_dir ${CMAKE_CURRENT_SOURCE_DIR})
+        set(out_src ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_FILES_DIRECTORY}/data.src/${in}.c)
+        get_filename_component(out_src_dir ${out_src} DIRECTORY)
 
-        set(out ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_FILES_DIRECTORY}/data.obj/${in}.o)
-        get_filename_component(out_dir ${out} DIRECTORY)
-
-        add_custom_command(OUTPUT ${out}
-            COMMAND ${CMAKE_COMMAND} -E make_directory ${out_dir}
-            COMMAND ${data_command} ${in} ${out}
+        add_custom_command(OUTPUT ${out_src}
             WORKING_DIRECTORY ${working_dir}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${out_src_dir}
+            COMMAND ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/include-bin ${in} ${out_src}
+            DEPENDS ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/include-bin
             DEPENDS ${res})
 
-        list(APPEND data_objects ${out})
+        list(APPEND data_objects ${out_src})
     endforeach()
 endif()
 
@@ -240,3 +292,5 @@ add_library(renderdoc SHARED ${renderdoc_objects})
 target_compile_definitions(renderdoc ${RDOC_DEFINITIONS})
 target_include_directories(renderdoc ${RDOC_INCLUDES})
 target_link_libraries(renderdoc ${RDOC_LIBRARIES})
+
+install (TARGETS renderdoc DESTINATION lib)

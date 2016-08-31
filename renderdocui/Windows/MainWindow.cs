@@ -74,9 +74,6 @@ namespace renderdocui.Windows
 
         private List<LiveCapture> m_LiveCaptures = new List<LiveCapture>();
 
-        private renderdocplugin.ReplayManagerPlugin m_ReplayHost = null;
-        private string m_RemoteReplay = "";
-
         private string InformationalVersion
         {
             get
@@ -140,6 +137,9 @@ namespace renderdocui.Windows
         {
             InitializeComponent();
 
+            if (SystemInformation.HighContrast)
+                dockPanel.Skin = Helpers.MakeHighContrastDockPanelSkin();
+
             Icon = global::renderdocui.Properties.Resources.icon;
 
             renderdocplugin.PluginHelpers.GetPlugins();
@@ -167,6 +167,9 @@ namespace renderdocui.Windows
 
             m_Core.AddLogViewer(this);
             m_Core.AddLogProgressListener(this);
+
+            m_MessageTick = new System.Threading.Timer(MessageCheck, this as object, 500, 500);
+            m_RemoteProbe = new System.Threading.Timer(RemoteProbe, this as object, 7500, 7500);
         }
 
         private void MainWindow_Load(object sender, EventArgs e)
@@ -174,6 +177,13 @@ namespace renderdocui.Windows
             bool loaded = LoadLayout(0);
 
             CheckUpdates();
+
+            Thread remoteStatusThread = Helpers.NewThread(new ThreadStart(() =>
+            {
+                for (int i = 0; i < m_Core.Config.RemoteHosts.Count; i++)
+                    m_Core.Config.RemoteHosts[i].CheckStatus();
+            }));
+            remoteStatusThread.Start();
 
             sendErrorReportToolStripMenuItem.Enabled = OfficialVersion || BetaVersion;
 
@@ -185,7 +195,7 @@ namespace renderdocui.Windows
 
                 m_Core.GetPipelineStateViewer().Show(dockPanel);
 
-                var bv = new BufferViewer(m_Core, true);
+                var bv = m_Core.GetMeshViewer();
                 bv.InitFromPersistString("");
                 bv.Show(dockPanel);
 
@@ -255,23 +265,47 @@ namespace renderdocui.Windows
 
         public void OnLogfileClosed()
         {
+            contextChooser.Enabled = true;
+
             statusText.Text = "";
             statusIcon.Image = null;
             statusProgress.Visible = false;
 
-            m_MessageTick.Dispose();
-            m_MessageTick = null;
-
             resolveSymbolsToolStripMenuItem.Enabled = false;
             resolveSymbolsToolStripMenuItem.Text = "Resolve Symbols";
 
-            if (m_ReplayHost != null)
-                m_ReplayHost.CloseReplay();
-
-            m_ReplayHost = null;
-            m_RemoteReplay = "";
-
             SetTitle();
+
+            // if the remote sever disconnected during log replay, resort back to a 'disconnected' state
+            if (m_Core.Renderer.Remote != null && !m_Core.Renderer.Remote.ServerRunning)
+            {
+                statusText.Text = "Remote server disconnected. To attempt to reconnect please select it again.";
+                contextChooser.Text = "Replay Context: Local";
+                m_Core.Renderer.DisconnectFromRemoteServer();
+            }
+        }
+
+        private static void RemoteProbe(object m)
+        {
+            if (!(m is MainWindow)) return;
+
+            var me = (MainWindow)m;
+
+            if (!me.Created || me.IsDisposed)
+                return;
+
+            // perform a probe of known remote hosts to see if they're running or not
+            if (!me.m_Core.LogLoading && !me.m_Core.LogLoaded)
+            {
+                foreach (var host in me.m_Core.Config.RemoteHosts.ToArray())
+                {
+                    // don't mess with a host we're connected to - this is handled anyway
+                    if (host.Connected)
+                        continue;
+
+                    host.CheckStatus();
+                }
+            }
         }
 
         private static void MessageCheck(object m)
@@ -286,8 +320,33 @@ namespace renderdocui.Windows
                 {
                     DebugMessage[] msgs = r.GetDebugMessages();
 
+                    bool disconnected = false;
+
+                    if(me.m_Core.Renderer.Remote != null)
+                    {
+                        bool prev = me.m_Core.Renderer.Remote.ServerRunning;
+
+                        me.m_Core.Renderer.PingRemote();
+
+                        if(prev != me.m_Core.Renderer.Remote.ServerRunning)
+                            disconnected = true;
+                    }
+
                     me.BeginInvoke(new Action(() =>
                     {
+                        // if we just got disconnected while replaying a log, alert the user.
+                        if (disconnected)
+                        {
+                            MessageBox.Show("Remote server disconnected during replaying of this capture.\n" +
+                                "The replay will now be non-functional. To restore you will have to close the capture, allow " +
+                                "RenderDoc to reconnect and load the capture again",
+                                "Remote server disconnected",
+                                MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        }
+
+                        if (me.m_Core.Renderer.Remote != null && !me.m_Core.Renderer.Remote.ServerRunning)
+                            me.contextChooser.Image = global::renderdocui.Properties.Resources.cross;
+
                         if (msgs.Length > 0)
                         {
                             me.m_Core.AddMessages(msgs);
@@ -307,12 +366,33 @@ namespace renderdocui.Windows
                     }));
                 });
             }
+            else if(!me.m_Core.LogLoaded && !me.m_Core.LogLoading)
+            {
+                if (me.m_Core.Renderer.Remote != null)
+                    me.m_Core.Renderer.PingRemote();
 
-            if (me == null) return;
-            if (me.m_MessageTick != null) me.m_MessageTick.Change(500, System.Threading.Timeout.Infinite);
+                if(!me.Created || me.IsDisposed)
+                    return;
+
+                me.BeginInvoke(new Action(() =>
+                {
+                    if (!me.Created || me.IsDisposed)
+                        return;
+
+                    if (me.m_Core.Renderer.Remote != null && !me.m_Core.Renderer.Remote.ServerRunning)
+                    {
+                        me.contextChooser.Image = global::renderdocui.Properties.Resources.cross;
+                        me.contextChooser.Text = "Replay Context: Local";
+                        me.statusText.Text = "Remote server disconnected. To attempt to reconnect please select it again.";
+
+                        me.m_Core.Renderer.DisconnectFromRemoteServer();
+                    }
+                }));
+            }
         }
 
         private System.Threading.Timer m_MessageTick = null;
+        private System.Threading.Timer m_RemoteProbe = null;
         private bool m_MessageAlternate = false;
 
         private bool LogHasErrors
@@ -346,9 +426,10 @@ namespace renderdocui.Windows
 
         public void OnLogfileLoaded()
         {
-            LogHasErrors = (m_Core.DebugMessages.Count > 0);
+            // don't allow changing context while log is open
+            contextChooser.Enabled = false;
 
-            m_MessageTick = new System.Threading.Timer(MessageCheck, this as object, 500, System.Threading.Timeout.Infinite);
+            LogHasErrors = (m_Core.DebugMessages.Count > 0);
 
             statusProgress.Visible = false;
 
@@ -446,7 +527,7 @@ namespace renderdocui.Windows
             }
             else if (IsPersist(persistString, typeof(BufferViewer).ToString()))
             {
-                var ret = new BufferViewer(m_Core, true);
+                var ret = m_Core.GetMeshViewer();
                 ret.InitFromPersistString(persistString);
                 return ret;
             }
@@ -519,6 +600,15 @@ namespace renderdocui.Windows
                     // file is invalid
                     return false;
                 }
+                catch (Exception)
+                {
+                    MessageBox.Show("Something went seriously wrong trying to load the window layout.\n" +
+                        "Trying to recover now, but you might have to delete the layout file in %APPDATA%/renderdoc.\n",
+                        "Error loading window layout",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+
+                    return false;
+                }
                 return true;
             }
             
@@ -576,10 +666,11 @@ namespace renderdocui.Windows
                 prefix = Path.GetFileName(filename);
                 if (m_Core.APIProps.degraded)
                     prefix += " !DEGRADED PERFORMANCE!";
-                if (m_RemoteReplay.Length > 0)
-                    prefix += String.Format(" (Remote replay on {0})", m_RemoteReplay);
                 prefix += " - ";
             }
+
+            if (m_Core != null && m_Core.Renderer.Remote != null)
+                prefix += String.Format("Remote: {0} - ", m_Core.Renderer.Remote.Hostname);
 
             Text = prefix + "RenderDoc ";
             if(OfficialVersion)
@@ -588,6 +679,9 @@ namespace renderdocui.Windows
                 Text += String.Format("{0}-beta - {1}", VersionString, GitCommitHash);
             else
                 Text += String.Format("Unofficial release ({0} - {1})", VersionString, GitCommitHash);
+
+            if (IsVersionMismatched())
+                Text += " - !! VERSION MISMATCH DETECTED !!";
         }
 
         private void SetTitle()
@@ -599,164 +693,155 @@ namespace renderdocui.Windows
 
         #region Capture & Log Loading
 
-        private void LoadLogAsync(string filename, bool temporary)
+        public void LoadLogfile(string filename, bool temporary, bool local)
         {
-            if (m_Core.LogLoading) return;
-
-            string driver = "";
-            bool support = StaticExports.SupportLocalReplay(filename, out driver);
-
-            Thread thread = null;
-
-            if (!m_Core.Config.ReplayHosts.ContainsKey(driver) && driver.Trim().Length > 0)
-                m_Core.Config.ReplayHosts.Add(driver, "");
-
-            // if driver is empty something went wrong loading the log, let it be handled as usual
-            // below. Otherwise prompt to replay remotely.
-            if (driver.Length > 0 && (!support || m_Core.Config.ReplayHosts[driver].Length > 0))
+            if (PromptCloseLog())
             {
-                string remoteMessage = String.Format("This log was captured with {0}", driver);
+                if (m_Core.LogLoading) return;
 
-                if(!support)
-                    remoteMessage += " and cannot be replayed locally.\n";
-                else
-                    remoteMessage += " and your settings say to replay this remotely.\n";
+                string driver = "";
+                string machineIdent = "";
+                ReplaySupport support = ReplaySupport.Unsupported;
 
-                if (m_Core.Config.ReplayHosts[driver].Length == 0)
-                    remoteMessage += "Do you wish to select a remote host to replay on?\n\n" +
-                                  "You can set up a default host for this driver on the next screen.";
-                else
-                    remoteMessage += String.Format("Would you like to launch replay on remote host {0}?\n\n" +
-                                                    "You can change this default via Tools -> Manage Replay Devices.", m_Core.Config.ReplayHosts[driver]);
+                bool remoteReplay = !local || (m_Core.Renderer.Remote != null && m_Core.Renderer.Remote.Connected);
 
-                DialogResult res = MessageBox.Show(remoteMessage, "Launch remote replay?", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Exclamation);
-
-                if (res == DialogResult.Yes)
+                if (local)
                 {
-                    if (m_Core.Config.ReplayHosts[driver].Length == 0)
-                    {
-                        (new Dialogs.ReplayHostManager(m_Core, this)).ShowDialog();
+                    support = StaticExports.SupportLocalReplay(filename, out driver, out machineIdent);
 
-                        if (m_Core.Config.ReplayHosts[driver].Length == 0)
+                    // if the return value suggests remote replay, and it's not already selected, AND the user hasn't
+                    // previously chosen to always replay locally without being prompted, ask if they'd prefer to
+                    // switch to a remote context for replaying.
+                    if (support == ReplaySupport.SuggestRemote && !remoteReplay && !m_Core.Config.AlwaysReplayLocally)
+                    {
+                        var dialog = new Dialogs.SuggestRemoteDialog(driver, machineIdent);
+
+                        FillRemotesToolStrip(dialog.RemoteItems, false);
+
+                        dialog.ShowDialog();
+
+                        if (dialog.Result == Dialogs.SuggestRemoteDialog.SuggestRemoteResult.Cancel)
+                        {
                             return;
-                    }
-
-                    m_RemoteReplay = m_Core.Config.ReplayHosts[driver];
-
-                    var plugins = renderdocplugin.PluginHelpers.GetPlugins();
-
-                    // search plugins for to find manager for this driver and launch replay
-                    foreach (var plugin in plugins)
-                    {
-                        var replayman = renderdocplugin.PluginHelpers.GetPluginInterface<renderdocplugin.ReplayManagerPlugin>(plugin);
-
-                        if (replayman != null && replayman.GetTargetType() == driver)
+                        }
+                        else if (dialog.Result == Dialogs.SuggestRemoteDialog.SuggestRemoteResult.Remote)
                         {
-                            var targets = replayman.GetOnlineTargets();
+                            // we only get back here from the dialog once the context switch has begun,
+                            // so contextChooser will have been disabled.
+                            // Check once to see if it's enabled before even popping up the dialog in case
+                            // it has finished already. Otherwise pop up a waiting dialog until it completes
+                            // one way or another, then process the result.
 
-                            if (targets.Contains(m_RemoteReplay))
+                            if (!contextChooser.Enabled)
                             {
-                                replayman.RunReplay(m_RemoteReplay);
+                                ProgressPopup modal = new ProgressPopup((ModalCloseCallback)delegate
+                                {
+                                    return contextChooser.Enabled;
+                                }, false);
+                                modal.SetModalText("Please Wait - Checking remote connection...");
 
-                                // save replay connection so we can close replay
-                                m_ReplayHost = replayman;
-                                break;
+                                modal.ShowDialog();
                             }
-                        }
-                    }
 
-                    thread = Helpers.NewThread(new ThreadStart(() =>
-                    {
-                        string[] drivers = new string[0];
-                        try
-                        {
-                            var dummy = StaticExports.CreateRemoteReplayConnection(m_RemoteReplay);
-                            drivers = dummy.RemoteSupportedReplays();
-                            dummy.Shutdown();
-                        }
-                        catch (ApplicationException ex)
-                        {
-                            string errmsg = "Unknown error message";
-                            if (ex.Data.Contains("status"))
-                                errmsg = ((ReplayCreateStatus)ex.Data["status"]).Str();
+                            remoteReplay = (m_Core.Renderer.Remote != null && m_Core.Renderer.Remote.Connected);
 
-                            MessageBox.Show(String.Format("Failed to fetch supported drivers on host {0}: {1}.\n\nCheck diagnostic log in Help menu for more details.", m_RemoteReplay, errmsg),
-                                            "Error getting driver list", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                        }
+                            if (!remoteReplay)
+                            {
+                                string remoteMessage = "Failed to make a connection to the remote server.\n\n";
 
-                        // no drivers means we didn't connect
-                        if (drivers.Length == 0)
-                        {
+                                remoteMessage += "More information may be available in the status bar.";
+
+                                MessageBox.Show(remoteMessage, "Couldn't connect to remote server", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+                                return;
+                            }
                         }
                         else
                         {
-                            bool found = false;
-                            foreach (var d in drivers)
-                                if (d == driver)
-                                    found = true;
-
-                            if (!found)
+                            // nothing to do - we just continue replaying locally
+                            // however we need to check if the user selected 'always replay locally' and
+                            // set that bit as sticky in the config
+                            if (dialog.AlwaysReplayLocally)
                             {
-                                MessageBox.Show(String.Format("Remote host {0} doesn't support {1}.", m_RemoteReplay, driver),
-                                                "Unsupported remote replay", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                            }
-                            else
-                            {
-                                string[] proxies = new string[0];
-                                try
-                                {
-                                    var dummy = StaticExports.CreateRemoteReplayConnection("-");
-                                    proxies = dummy.LocalProxies();
-                                    dummy.Shutdown();
-                                }
-                                catch (ApplicationException ex)
-                                {
-                                    string errmsg = "Unknown error message";
-                                    if (ex.Data.Contains("status"))
-                                        errmsg = ((ReplayCreateStatus)ex.Data["status"]).Str();
+                                m_Core.Config.AlwaysReplayLocally = true;
 
-                                    MessageBox.Show(String.Format("Failed to fetch local proxy drivers: {0}.\n\nCheck diagnostic log in Help menu for more details.", errmsg),
-                                                    "Error getting driver list", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                                }
-                                if (proxies.Length > 0)
-                                {
-                                    m_Core.Config.LocalProxy = Helpers.Clamp(m_Core.Config.LocalProxy, 0, proxies.Length - 1);
-
-                                    m_Core.LoadLogfile(m_Core.Config.LocalProxy, m_RemoteReplay, filename, temporary);
-                                    if (m_Core.LogLoaded)
-                                        return;
-                                }
+                                m_Core.Config.Serialize(Core.ConfigFilename);
                             }
                         }
+                    }
 
-                        // clean up.
-                        if (m_ReplayHost != null)
-                            m_ReplayHost.CloseReplay();
-                        m_RemoteReplay = "";
+                    if (remoteReplay)
+                    {
+                        support = ReplaySupport.Unsupported;
 
-                        BeginInvoke(new Action(() =>
+                        string[] remoteDrivers = m_Core.Renderer.GetRemoteSupport();
+
+                        for (int i = 0; i < remoteDrivers.Length; i++)
                         {
-                            statusText.Text = "";
-                            statusIcon.Image = null;
-                            statusProgress.Visible = false;
-                        }));
-                    }));
+                            if (driver == remoteDrivers[i])
+                                support = ReplaySupport.Supported;
+                        }
+                    }
+                }
+
+                Thread thread = null;
+
+                string origFilename = filename;
+
+                // if driver is empty something went wrong loading the log, let it be handled as usual
+                // below. Otherwise indicate that support is missing.
+                if (driver.Length > 0 && support == ReplaySupport.Unsupported)
+                {
+                    if (remoteReplay)
+                    {
+                        string remoteMessage = String.Format("This log was captured with {0} and cannot be replayed on {1}.\n\n", driver, m_Core.Renderer.Remote.Hostname);
+
+                        remoteMessage += "Try selecting a different remote context in the status bar.";
+
+                        MessageBox.Show(remoteMessage, "Unsupported logfile type", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+                        return;
+                    }
+                    else
+                    {
+                        string remoteMessage = String.Format("This log was captured with {0} and cannot be replayed locally.\n\n", driver);
+
+                        remoteMessage += "Try selecting a remote context in the status bar.";
+
+                        MessageBox.Show(remoteMessage, "Unsupported logfile type", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+                        return;
+                    }
                 }
                 else
                 {
-                    return;
+                    if (remoteReplay && local)
+                    {
+                        try
+                        {
+                            filename = m_Core.Renderer.CopyCaptureToRemote(filename, this);
+
+                            // deliberately leave local as true so that we keep referring to the locally saved log
+
+                            // some error
+                            if (filename == "")
+                                throw new ApplicationException();
+                        }
+                        catch (Exception)
+                        {
+                            MessageBox.Show("Couldn't copy " + filename + " to remote host for replaying", "Error copying to remote",
+                                                            MessageBoxButtons.OK, MessageBoxIcon.Error);
+                            return;
+                        }
+                    }
+
+                    thread = Helpers.NewThread(new ThreadStart(() => m_Core.LoadLogfile(filename, origFilename, temporary, local)));
                 }
-            }
-            else
-            {
-                thread = Helpers.NewThread(new ThreadStart(() => m_Core.LoadLogfile(filename, temporary)));
-            }
-            
-            thread.Start();
 
-            m_Core.Config.LastLogPath = Path.GetDirectoryName(filename);
+                thread.Start();
 
-            statusText.Text = "Loading " + filename + "...";
+                if(!remoteReplay)
+                    m_Core.Config.LastLogPath = Path.GetDirectoryName(filename);
+
+                statusText.Text = "Loading " + origFilename + "...";
+            }
         }
 
         public void PopulateRecentFiles()
@@ -827,18 +912,15 @@ namespace renderdocui.Windows
             m_LiveCaptures.Remove(live);
         }
 
-        public void LoadLogfile(string fn, bool temporary)
-        {
-            if (PromptCloseLog())
-                LoadLogAsync(fn, temporary);
-        }
-
-        private void OpenCaptureConfigFile(String filename)
+        private void OpenCaptureConfigFile(String filename, bool exe)
         {
             if (m_Core.CaptureDialog == null)
                 m_Core.CaptureDialog = new Dialogs.CaptureDialog(m_Core, OnCaptureTrigger, OnInjectTrigger);
 
-            m_Core.CaptureDialog.LoadSettings(filename);
+            if(exe)
+                m_Core.CaptureDialog.SetExecutableFilename(filename);
+            else
+                m_Core.CaptureDialog.LoadSettings(filename);
             m_Core.CaptureDialog.Show(dockPanel);
 
             // workaround for Show() not doing this
@@ -855,16 +937,20 @@ namespace renderdocui.Windows
         {
             if (Path.GetExtension(filename) == ".rdc")
             {
-                LoadLogfile(filename, false);
+                LoadLogfile(filename, false, true);
             }
             else if (Path.GetExtension(filename) == ".cap")
             {
-                OpenCaptureConfigFile(filename);
+                OpenCaptureConfigFile(filename, false);
+            }
+            else if (Path.GetExtension(filename) == ".exe")
+            {
+                OpenCaptureConfigFile(filename, true);
             }
             else
             {
                 // not a recognised filetype, see if we can load it anyway
-                LoadLogfile(filename, false);
+                LoadLogfile(filename, false, true);
             }
         }
 
@@ -885,14 +971,14 @@ namespace renderdocui.Windows
             return "";
         }
 
-        private LiveCapture OnCaptureTrigger(string exe, string workingDir, string cmdLine, CaptureOptions opts)
+        private LiveCapture OnCaptureTrigger(string exe, string workingDir, string cmdLine, EnvironmentModification[] env, CaptureOptions opts)
         {
             if (!PromptCloseLog())
                 return null;
 
             string logfile = m_Core.TempLogFilename(Path.GetFileNameWithoutExtension(exe));
 
-            UInt32 ret = StaticExports.ExecuteAndInject(exe, workingDir, cmdLine, logfile, opts);
+            UInt32 ret = m_Core.Renderer.ExecuteAndInject(exe, workingDir, cmdLine, env, logfile, opts);
 
             if (ret == 0)
             {
@@ -901,7 +987,7 @@ namespace renderdocui.Windows
                 return null;
             }
 
-            var live = new LiveCapture(m_Core, "", ret, this);
+            var live = new LiveCapture(m_Core, m_Core.Renderer.Remote == null ? "" : m_Core.Renderer.Remote.Hostname, ret, this);
             ShowLiveCapture(live);
             return live;
         }
@@ -947,7 +1033,7 @@ namespace renderdocui.Windows
 
         private void attachToInstanceToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            (new Dialogs.RemoteHostSelect(m_Core, this)).ShowDialog();
+            (new Dialogs.RemoteManager(m_Core, this)).ShowDialog();
         }
 
         private void injectIntoProcessToolStripMenuItem_Click(object sender, EventArgs e)
@@ -981,6 +1067,184 @@ namespace renderdocui.Windows
             if (res == DialogResult.OK)
             {
                 LoadFromFilename(openDialog.FileName);
+            }
+        }
+
+        private void FillRemotesToolStrip(ToolStripItemCollection strip, bool includeLocalhost)
+        {
+            ToolStripItem[] items = new ToolStripItem[m_Core.Config.RemoteHosts.Count];
+
+            int idx = 0;
+
+            for (int i = 0; i < m_Core.Config.RemoteHosts.Count; i++)
+            {
+                RemoteHost host = m_Core.Config.RemoteHosts[i];
+
+                // add localhost at the end
+                if (host.Hostname == "localhost")
+                    continue;
+
+                ToolStripItem item = new ToolStripMenuItem();
+
+                item.Image = host.ServerRunning && !host.VersionMismatch
+                    ? global::renderdocui.Properties.Resources.tick
+                    : global::renderdocui.Properties.Resources.cross;
+                if (host.Connected)
+                    item.Text = String.Format("{0} (Connected)", host.Hostname);
+                else if (host.ServerRunning && host.VersionMismatch)
+                    item.Text = String.Format("{0} (Bad Version)", host.Hostname);
+                else if (host.ServerRunning && host.Busy)
+                    item.Text = String.Format("{0} (Busy)", host.Hostname);
+                else if (host.ServerRunning)
+                    item.Text = String.Format("{0} (Online)", host.Hostname);
+                else
+                    item.Text = String.Format("{0} (Offline)", host.Hostname);
+                item.Click += new EventHandler(switchContext);
+                item.Tag = host;
+
+                // don't allow switching to the connected host
+                if (host.Connected)
+                    item.Enabled = false;
+
+                items[idx++] = item;
+            }
+
+            if(includeLocalhost && idx < items.Length)
+                items[idx] = localContext;
+
+            strip.Clear();
+            foreach(ToolStripItem item in items)
+                if(item != null)
+                    strip.Add(item);
+        }
+
+        private void contextChooser_DropDownOpening(object sender, EventArgs e)
+        {
+            FillRemotesToolStrip(contextChooser.DropDownItems, true);
+        }
+
+        private void switchContext(object sender, EventArgs e)
+        {
+            ToolStripItem item = sender as ToolStripItem;
+
+            if(item == null)
+                return;
+
+            RemoteHost host = item.Tag as RemoteHost;
+
+            foreach (var live in m_LiveCaptures)
+            {
+                // allow live captures to this host to stay open, that way
+                // we can connect to a live capture, then switch into that
+                // context
+                if (live.Hostname == host.Hostname)
+                    continue;
+
+                if (live.CheckAllowClose() == false)
+                    return;
+            }
+
+            if (!PromptCloseLog())
+                return;
+
+            foreach (var live in m_LiveCaptures.ToArray())
+            {
+                // allow live captures to this host to stay open, that way
+                // we can connect to a live capture, then switch into that
+                // context
+                if (live.Hostname == host.Hostname)
+                    continue;
+
+                live.CleanItems();
+                live.Close();
+            }
+
+            m_Core.Renderer.DisconnectFromRemoteServer();
+
+            if (host == null)
+            {
+                contextChooser.Image = global::renderdocui.Properties.Resources.house;
+                contextChooser.Text = "Replay Context: Local";
+
+                injectIntoProcessToolStripMenuItem.Enabled = true;
+
+                statusText.Text = "";
+
+                SetTitle();
+            }
+            else
+            {
+                contextChooser.Text = "Replay Context: " + host.Hostname;
+                contextChooser.Image = host.ServerRunning
+                    ? global::renderdocui.Properties.Resources.connect
+                    : global::renderdocui.Properties.Resources.disconnect;
+
+                // disable until checking is done
+                contextChooser.Enabled = false;
+
+                injectIntoProcessToolStripMenuItem.Enabled = false;
+
+                SetTitle();
+
+                statusText.Text = "Checking remote server status...";
+
+                Thread th = Helpers.NewThread(new ThreadStart(() =>
+                {
+                    // see if the server is up
+                    host.CheckStatus();
+
+                    if (!host.ServerRunning && host.RunCommand != "")
+                    {
+                        this.BeginInvoke(new Action(() => { statusText.Text = "Running remote server command..."; }));
+
+                        host.Launch();
+
+                        // check if it's running now
+                        host.CheckStatus();
+                    }
+
+                    if (host.ServerRunning && !host.Busy)
+                    {
+                        m_Core.Renderer.ConnectToRemoteServer(host);
+                    }
+
+                    this.BeginInvoke(new Action(() =>
+                    {
+                        contextChooser.Image = (host.ServerRunning && !host.Busy)
+                            ? global::renderdocui.Properties.Resources.connect
+                            : global::renderdocui.Properties.Resources.disconnect;
+
+                        if (m_Core.Renderer.InitException != null)
+                        {
+                            contextChooser.Image = global::renderdocui.Properties.Resources.cross;
+                            contextChooser.Text = "Replay Context: Local";
+                            statusText.Text = "Connection failed: " + m_Core.Renderer.InitException.Status.Str();
+                        }
+                        else if (host.VersionMismatch)
+                        {
+                            statusText.Text = "Remote server is not running RenderDoc " + VersionString;
+                        }
+                        else if (host.Busy)
+                        {
+                            statusText.Text = "Remote server in use elsewhere";
+                        }
+                        else if (host.ServerRunning)
+                        {
+                            statusText.Text = "Remote server ready";
+                        }
+                        else
+                        {
+                            if(host.RunCommand != "")
+                                statusText.Text = "Remote server not running or failed to start";
+                            else
+                                statusText.Text = "Remote server not running - no start command configured";
+                        }
+
+                        contextChooser.Enabled = true;
+                    }));
+                }));
+
+                th.Start();
             }
         }
 
@@ -1018,8 +1282,56 @@ namespace renderdocui.Windows
 
         private delegate void UpdateResultMethod(UpdateResult res);
 
+        private bool IsVersionMismatched()
+        {
+            try
+            {
+                return "v" + StaticExports.GetVersionString() != VersionString;
+            }
+            catch (System.Exception)
+            {
+                // probably StaticExports.GetVersionString is missing, which means an old
+                // version is running
+                return true;
+            }
+        }
+
+        private bool HandleMismatchedVersions()
+        {
+            if (IsVersionMismatched())
+            {
+                if (!OfficialVersion && !BetaVersion)
+                {
+                    MessageBox.Show("You are running an unofficial build with mismatched core and UI versions.\n" +
+                        "Double check where you got your build from and do a sanity check!",
+                        "Unofficial build - mismatched versions", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                else
+                {
+                    DialogResult mb = MessageBox.Show("RenderDoc has detected mismatched versions between its internal module and UI.\n" +
+                        "This is likely caused by a buggy update in the past which partially updated your install. Likely because a " +
+                        "program was running with renderdoc while the update happened.\n" +
+                        "You should reinstall RenderDoc immediately as this configuration is almost guaranteed to crash.\n\n" +
+                        "Would you like to open the downloads page?",
+                        "Mismatched versions", MessageBoxButtons.YesNo, MessageBoxIcon.Exclamation);
+
+                    if (mb == DialogResult.Yes)
+                        Process.Start("https://renderdoc.org/builds");
+
+                    SetUpdateAvailable();
+                }
+                return true;
+            }
+
+            return false;
+        }
+
         private void CheckUpdates(bool forceCheck = false, UpdateResultMethod callback = null)
         {
+            bool mismatch = HandleMismatchedVersions();
+            if (mismatch)
+                return;
+
             if (!forceCheck && !m_Core.Config.CheckUpdate_AllowChecks)
             {
                 updateToolStripMenuItem.Text = "Update checks disabled";
@@ -1070,7 +1382,7 @@ namespace renderdocui.Windows
             var updateThread = Helpers.NewThread(new ThreadStart(() =>
             {
                 // spawn thread to check update
-                WebRequest g = HttpWebRequest.Create(String.Format("http://renderdoc.org/getupdateurl/{0}/{1}", IntPtr.Size == 4 ? "32" : "64", versionCheck));
+                WebRequest g = HttpWebRequest.Create(String.Format("https://renderdoc.org/getupdateurl/{0}/{1}?rtfnotes=1", IntPtr.Size == 4 ? "32" : "64", versionCheck));
 
                 UpdateResult result = UpdateResult.Disabled;
 
@@ -1181,17 +1493,26 @@ namespace renderdocui.Windows
 
         private void updateToolStripMenuItem_Click(object sender, EventArgs e)
         {
+            bool mismatch = HandleMismatchedVersions();
+            if (mismatch)
+                return;
+
             SetUpdateAvailable();
             UpdatePopup();
         }
 
         private bool PromptCloseLog()
         {
+            if (!m_Core.LogLoaded)
+                return true;
+
             string deletepath = "";
+            bool loglocal = false;
 
             if (OwnTemporaryLog)
             {
                 string temppath = m_Core.LogFileName;
+                loglocal = m_Core.IsLogLocal;
 
                 DialogResult res = DialogResult.No;
 
@@ -1225,7 +1546,7 @@ namespace renderdocui.Windows
             try
             {
                 if (deletepath.Length > 0)
-                    File.Delete(deletepath);
+                    m_Core.Renderer.DeleteCapture(deletepath, loglocal);
             }
             catch (System.Exception)
             {
@@ -1237,11 +1558,19 @@ namespace renderdocui.Windows
 
         private bool PromptSaveLog()
         {
+            try
+            {
+                saveDialog.InitialDirectory = m_Core.Config.DefaultCaptureSaveDirectory;
+            }
+            catch (Exception)
+            {
+            }
+
             DialogResult res = saveDialog.ShowDialog();
 
             if (res == DialogResult.OK)
             {
-                if (!File.Exists(m_Core.LogFileName))
+                if (m_Core.IsLogLocal && !File.Exists(m_Core.LogFileName))
                 {
                     MessageBox.Show("Logfile " + m_Core.LogFileName + " couldn't be found, cannot save.", "File not found",
                                                     MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -1250,9 +1579,17 @@ namespace renderdocui.Windows
 
                 try
                 {
-                    // we copy the (possibly) temp log to the desired path, but the log item remains referring to the original path.
-                    // This ensures that if the user deletes the saved path we can still open or re-save it.
-                    File.Copy(m_Core.LogFileName, saveDialog.FileName, true);
+                    if (m_Core.IsLogLocal)
+                    {
+                        // we copy the (possibly) temp log to the desired path, but the log item remains referring to the original path.
+                        // This ensures that if the user deletes the saved path we can still open or re-save it.
+                        File.Copy(m_Core.LogFileName, saveDialog.FileName, true);
+                    }
+                    else
+                    {
+                        m_Core.Renderer.CopyCaptureFromRemote(m_Core.LogFileName, saveDialog.FileName, this);
+                    }
+
                     m_Core.Config.AddRecentFile(m_Core.Config.RecentLogFiles, saveDialog.FileName, 10);
                     PopulateRecentFiles();
                     SetTitle(saveDialog.FileName);
@@ -1360,7 +1697,7 @@ namespace renderdocui.Windows
 
             if(File.Exists(filename))
             {
-                LoadLogfile(filename, false);
+                LoadLogfile(filename, false, true);
             }
             else
             {
@@ -1385,7 +1722,7 @@ namespace renderdocui.Windows
 
             if (File.Exists(filename))
             {
-                OpenCaptureConfigFile(filename);
+                OpenCaptureConfigFile(filename, false);
             }
             else
             {
@@ -1431,26 +1768,9 @@ namespace renderdocui.Windows
             StaticExports.TriggerExceptionHandler(IntPtr.Zero, false);
         }
 
-        private void manageReplayDevicesToolStripMenuItem_Click(object sender, EventArgs e)
+        private void manageRemote_Click(object sender, EventArgs e)
         {
-            (new Dialogs.ReplayHostManager(m_Core, this)).ShowDialog();
-        }
-
-        private void launchReplayHostToolStripMenuItem_Click(object sender, EventArgs e)
-        {
-            bool killReplay = false;
-
-            Thread thread = Helpers.NewThread(new ThreadStart(() =>
-            {
-                StaticExports.SpawnReplayHost(ref killReplay);
-            }));
-
-            thread.Start();
-
-            MessageBox.Show("Remote Replay is now running. Click OK to close.", "Remote replay",
-                                               MessageBoxButtons.OK, MessageBoxIcon.Information);
-
-            killReplay = true;
+            (new Dialogs.RemoteManager(m_Core, this)).ShowDialog();
         }
 
         private void viewDocsToolStripMenuItem_Click(object sender, EventArgs e)
@@ -1515,7 +1835,7 @@ namespace renderdocui.Windows
 
         private void meshOutputToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            BufferViewer b = new BufferViewer(m_Core, true);
+            BufferViewer b = m_Core.GetMeshViewer();
 
             b.InitFromPersistString("");
 
@@ -1549,7 +1869,7 @@ namespace renderdocui.Windows
         {
             m_Core.Renderer.BeginInvoke((ReplayRenderer r) => { r.InitResolver(); });
 
-            ModalPopup modal = new ModalPopup(SymbolResolveCallback, false);
+            ProgressPopup modal = new ProgressPopup(SymbolResolveCallback, false);
             modal.SetModalText("Please Wait - Resolving Symbols.");
 
             modal.ShowDialog();

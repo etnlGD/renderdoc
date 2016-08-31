@@ -137,7 +137,7 @@ namespace renderdoc
                 public UInt32 NumElements;
 
                 // BufferEx
-                public UInt32 Flags;
+                public D3D11BufferViewFlags Flags;
 
                 // Texture
                 public UInt32 HighestMip;
@@ -156,6 +156,11 @@ namespace renderdoc
             public class Sampler
             {
                 public ResourceId Samp;
+
+                [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
+                public string SamplerName;
+                public bool customSamplerName;
+
                 [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
                 public string AddressU, AddressV, AddressW;
                 [CustomMarshalAs(CustomUnmanagedType.FixedArray, FixedLength = 4)]
@@ -251,6 +256,7 @@ namespace renderdoc
                 public bool MultisampleEnable;
                 public bool AntialiasedLineEnable;
                 public UInt32 ForcedSampleCount;
+                public bool ConservativeRasterization;
             };
             [CustomMarshalAs(CustomUnmanagedType.CustomClass)]
             public RasterizerState m_State;

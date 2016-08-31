@@ -236,9 +236,9 @@ namespace renderdoc
 
                 if (compType == FormatComponentType.Float)
                     ret += "float";
-                else if (compType == FormatComponentType.UInt)
+                else if (compType == FormatComponentType.UInt || compType == FormatComponentType.UScaled)
                     ret += "uint";
-                else if (compType == FormatComponentType.SInt)
+                else if (compType == FormatComponentType.SInt || compType == FormatComponentType.SScaled)
                     ret += "int";
                 else if (compType == FormatComponentType.UNorm)
                     ret += "unorm float";
@@ -325,6 +325,8 @@ namespace renderdoc
         [CustomMarshalAs(CustomUnmanagedType.CustomClass)]
         public RegSpan reg;
 
+        public UInt64 defaultValue;
+
         [CustomMarshalAs(CustomUnmanagedType.CustomClass)]
         public ShaderVariableType type;
     };
@@ -340,6 +342,7 @@ namespace renderdoc
 
         public bool bufferBacked;
         public Int32 bindPoint;
+        public UInt32 byteSize;
     };
 
     [StructLayout(LayoutKind.Sequential)]
@@ -386,21 +389,7 @@ namespace renderdoc
             {
                 get
                 {
-                    try
-                    {
-                        return System.IO.Path.GetFileName(filename_);
-                    }
-                    catch (ArgumentException)
-                    {
-                        // invalid path or similar, just try to go from last \ or / onwards
-
-                        string ret = filename_;
-                        int idx = ret.LastIndexOfAny(new char[] { '/', '\\' });
-                        if (idx > 0)
-                            ret = ret.Substring(idx + 1);
-
-                        return ret;
-                    }
+                    return renderdocui.Code.Helpers.SafeGetFileName(filename_);
                 }
                 set
                 {
@@ -423,6 +412,9 @@ namespace renderdoc
 
         [CustomMarshalAs(CustomUnmanagedType.UTF8TemplatedString)]
         public string Disassembly;
+
+        [CustomMarshalAs(CustomUnmanagedType.TemplatedArray)]
+        public byte[] RawBytes;
 
         [CustomMarshalAs(CustomUnmanagedType.FixedArray, FixedLength = 3)]
         public UInt32[] DispatchThreadsDimension;

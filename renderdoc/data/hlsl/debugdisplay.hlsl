@@ -57,6 +57,14 @@ v2f RENDERDOC_DebugVS(uint vertID : SV_VertexID)
 	return OUT;
 }
 
+float ConvertSRGBToLinear(float srgb)
+{
+	if (srgb <= 0.04045f)
+		return srgb / 12.92f;
+	else
+		return pow(saturate(srgb) + 0.055f / 1.055f, 2.4f);
+}
+
 // main texture display shader, used for the texture viewer. It samples the right resource
 // for the type and applies things like the range check and channel masking.
 // It also does a couple of overlays that we can get 'free' like NaN/inf checks
@@ -169,7 +177,7 @@ float4 RENDERDOC_TexDisplayPS(v2f IN) : SV_Target0
 
 	if(OutputDisplayFormat & TEXDISPLAY_GAMMA_CURVE)
 	{
-		col.rgb = pow(saturate(col.rgb), 2.2f);
+		col.rgb = float3(ConvertSRGBToLinear(col.r), ConvertSRGBToLinear(col.g), ConvertSRGBToLinear(col.b));
 	}
 	
 	return col;
@@ -303,10 +311,10 @@ float4 RENDERDOC_CheckerboardPS(float4 IN : SV_Position) : SV_Target0
 		(ab.x > 64 && ab.y > 64)
 		)
 	{
-		return float4(sqrt(WireframeColour.rgb), 1);
+		return float4(WireframeColour.rgb*WireframeColour.rgb, 1);
 	}
 
-	return float4(sqrt(Channels.rgb), 1);
+	return float4(Channels.rgb*Channels.rgb, 1);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////

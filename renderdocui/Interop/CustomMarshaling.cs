@@ -403,7 +403,8 @@ namespace renderdoc
         public static string PtrToStringUTF8(IntPtr elems, int count)
         {
             byte[] buffer = new byte[count];
-            Marshal.Copy(elems, buffer, 0, buffer.Length);
+            if (count > 0)
+                Marshal.Copy(elems, buffer, 0, buffer.Length);
             return System.Text.Encoding.UTF8.GetString(buffer);
         }
 
@@ -473,9 +474,6 @@ namespace renderdoc
 
                     IntPtr fieldPtr = isUnion ? sourcePtr : OffsetPtr(structureType, fields, fieldIdx, sourcePtr);
 
-                    var arrayType = NonArrayType(field.FieldType);
-                    int sizeInBytes = SizeOf(arrayType);
-
                     // no custom attribute, so just use the regular Marshal code
                     var cma = GetCustomAttr(structureType, fields, fieldIdx);
                     if (cma == null)
@@ -544,6 +542,9 @@ namespace renderdoc
                                     }
                                     else
                                     {
+                                        var arrayType = NonArrayType(field.FieldType);
+                                        int sizeInBytes = SizeOf(arrayType);
+
                                         Array val = Array.CreateInstance(arrayType, cma.FixedLength);
 
                                         for (int i = 0; i < val.Length; i++)
@@ -577,6 +578,9 @@ namespace renderdoc
                                     }
                                     else
                                     {
+                                        var arrayType = NonArrayType(field.FieldType);
+                                        int sizeInBytes = SizeOf(arrayType);
+
                                         if (field.FieldType.IsArray && arrayType == typeof(byte))
                                         {
                                             byte[] val = new byte[arr.count];

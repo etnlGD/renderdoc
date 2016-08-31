@@ -34,13 +34,14 @@ namespace renderdocui.Code
     public class BoundResource
     {
         public BoundResource()
-        { Id = ResourceId.Null; HighestMip = -1; FirstSlice = -1; }
+        { Id = ResourceId.Null; HighestMip = -1; FirstSlice = -1; typeHint = FormatComponentType.None; }
         public BoundResource(ResourceId id)
-        { Id = id; HighestMip = -1; FirstSlice = -1; }
+        { Id = id; HighestMip = -1; FirstSlice = -1; typeHint = FormatComponentType.None; }
 
         public ResourceId Id;
         public int HighestMip;
         public int FirstSlice;
+        public FormatComponentType typeHint;
     };
 
     public struct BoundVBuffer
@@ -86,7 +87,7 @@ namespace renderdocui.Code
             m_Vulkan = vk;
         }
 
-        public APIPipelineStateType DefaultType = APIPipelineStateType.D3D11;
+        public GraphicsAPI DefaultType = GraphicsAPI.D3D11;
 
         private bool LogLoaded
         {
@@ -100,7 +101,7 @@ namespace renderdocui.Code
         {
             get
             {
-                return LogLoaded && m_APIProps.pipelineType == APIPipelineStateType.D3D11 && m_D3D11 != null;
+                return LogLoaded && m_APIProps.pipelineType == GraphicsAPI.D3D11 && m_D3D11 != null;
             }
         }
 
@@ -108,7 +109,7 @@ namespace renderdocui.Code
         {
             get
             {
-                return LogLoaded && m_APIProps.pipelineType == APIPipelineStateType.OpenGL && m_GL != null;
+                return LogLoaded && m_APIProps.pipelineType == GraphicsAPI.OpenGL && m_GL != null;
             }
         }
 
@@ -116,7 +117,7 @@ namespace renderdocui.Code
         {
             get
             {
-                return LogLoaded && m_APIProps.pipelineType == APIPipelineStateType.Vulkan && m_Vulkan != null;
+                return LogLoaded && m_APIProps.pipelineType == GraphicsAPI.Vulkan && m_Vulkan != null;
             }
         }
 
@@ -146,13 +147,15 @@ namespace renderdocui.Code
         {
             get
             {
-                if (LogLoaded)
-                {
-                    if (IsLogVK)
-                        return true;
-                }
+                return LogLoaded && IsLogVK;
+            }
+        }
 
-                return false;
+        public bool SupportsBarriers
+        {
+            get
+            {
+                return LogLoaded && IsLogVK;
             }
         }
 
@@ -174,9 +177,20 @@ namespace renderdocui.Code
             }
         }
 
+        public string GetImageLayout(ResourceId id)
+        {
+            if (LogLoaded)
+            {
+                if (IsLogVK && m_Vulkan.Images.ContainsKey(id))
+                    return m_Vulkan.Images[id].layouts[0].name;
+            }
+
+            return "Unknown";
+        }
+
         public string Abbrev(ShaderStageType stage)
         {
-            if (IsLogD3D11 || (!LogLoaded && DefaultType == APIPipelineStateType.D3D11))
+            if (IsLogD3D11 || (!LogLoaded && DefaultType == GraphicsAPI.D3D11))
             {
                 switch (stage)
                 {
@@ -188,8 +202,8 @@ namespace renderdocui.Code
                     case ShaderStageType.Compute: return "CS";
                 }
             }
-            else if (IsLogGL || (!LogLoaded && DefaultType == APIPipelineStateType.OpenGL) ||
-                     IsLogVK || (!LogLoaded && DefaultType == APIPipelineStateType.Vulkan))
+            else if (IsLogGL || (!LogLoaded && DefaultType == GraphicsAPI.OpenGL) ||
+                     IsLogVK || (!LogLoaded && DefaultType == GraphicsAPI.Vulkan))
             {
                 switch (stage)
                 {
@@ -207,8 +221,8 @@ namespace renderdocui.Code
 
         public string OutputAbbrev()
         {
-            if (IsLogGL || (!LogLoaded && DefaultType == APIPipelineStateType.OpenGL) ||
-                IsLogVK || (!LogLoaded && DefaultType == APIPipelineStateType.Vulkan))
+            if (IsLogGL || (!LogLoaded && DefaultType == GraphicsAPI.OpenGL) ||
+                IsLogVK || (!LogLoaded && DefaultType == GraphicsAPI.Vulkan))
             {
                 return "FB";
             }
@@ -685,6 +699,10 @@ namespace renderdocui.Code
                                         ret[a].GenericValue[c] = attrs[i].GenericValue.u[c];
                                     else if (compType == FormatComponentType.SInt)
                                         ret[a].GenericValue[c] = attrs[i].GenericValue.i[c];
+                                    else if (compType == FormatComponentType.UScaled)
+                                        ret[a].GenericValue[c] = (float)attrs[i].GenericValue.u[c];
+                                    else if (compType == FormatComponentType.SScaled)
+                                        ret[a].GenericValue[c] = (float)attrs[i].GenericValue.i[c];
                                 }
 
                                 ret[a].PerInstance = false;
@@ -894,6 +912,7 @@ namespace renderdocui.Code
                         val.Id = s.SRVs[i].Resource;
                         val.HighestMip = (int)s.SRVs[i].HighestMip;
                         val.FirstSlice = (int)s.SRVs[i].FirstArraySlice;
+                        val.typeHint = s.SRVs[i].Format.compType;
 
                         ret.Add(key, new BoundResource[] { val });
                     }
@@ -910,6 +929,7 @@ namespace renderdocui.Code
                         val.Id = m_GL.Textures[i].Resource;
                         val.HighestMip = (int)m_GL.Textures[i].HighestMip;
                         val.FirstSlice = (int)m_GL.Textures[i].FirstSlice;
+                        val.typeHint = FormatComponentType.None;
 
                         ret.Add(key, new BoundResource[] { val });
                     }
@@ -925,9 +945,9 @@ namespace renderdocui.Code
 
                     ShaderStageBits mask = (ShaderStageBits)(1 << (int)stage);
 
-                    for (int set = 0; set < m_Vulkan.graphics.DescSets.Length; set++)
+                    for (int set = 0; set < descsets.Length; set++)
                     {
-                        var descset = m_Vulkan.graphics.DescSets[set];
+                        var descset = descsets[set];
                         for (int slot = 0; slot < descset.bindings.Length; slot++)
                         {
                             var bind = descset.bindings[slot];
@@ -946,6 +966,7 @@ namespace renderdocui.Code
                                     val[i].Id = bind.binds[i].res;
                                     val[i].HighestMip = (int)bind.binds[i].baseMip;
                                     val[i].FirstSlice = (int)bind.binds[i].baseLayer;
+                                    val[i].typeHint = bind.binds[i].viewfmt.compType;
                                 }
 
                                 ret.Add(key, val);
@@ -978,6 +999,7 @@ namespace renderdocui.Code
                             val.Id = m_D3D11.m_CS.UAVs[i].Resource;
                             val.HighestMip = (int)m_D3D11.m_CS.UAVs[i].HighestMip;
                             val.FirstSlice = (int)m_D3D11.m_CS.UAVs[i].FirstArraySlice;
+                            val.typeHint = m_D3D11.m_CS.UAVs[i].Format.compType;
 
                             ret.Add(key, new BoundResource[] { val });
                         }
@@ -992,6 +1014,7 @@ namespace renderdocui.Code
                             val.Id = m_D3D11.m_OM.UAVs[i].Resource;
                             val.HighestMip = (int)m_D3D11.m_OM.UAVs[i].HighestMip;
                             val.FirstSlice = (int)m_D3D11.m_OM.UAVs[i].FirstArraySlice;
+                            val.typeHint = FormatComponentType.None;
 
                             ret.Add(key, new BoundResource[] { val });
                         }
@@ -1009,6 +1032,7 @@ namespace renderdocui.Code
                         val.Id = m_GL.Images[i].Resource;
                         val.HighestMip = (int)m_GL.Images[i].Level;
                         val.FirstSlice = (int)m_GL.Images[i].Layer;
+                        val.typeHint = m_GL.Images[i].Format.compType;
 
                         ret.Add(key, new BoundResource[] { val });
                     }
@@ -1044,6 +1068,7 @@ namespace renderdocui.Code
                                     val[i].Id = bind.binds[i].res;
                                     val[i].HighestMip = (int)bind.binds[i].baseMip;
                                     val[i].FirstSlice = (int)bind.binds[i].baseLayer;
+                                    val[i].typeHint = bind.binds[i].viewfmt.compType;
                                 }
 
                                 ret.Add(key, val);
@@ -1068,6 +1093,7 @@ namespace renderdocui.Code
                     ret.Id = m_D3D11.m_OM.DepthTarget.Resource;
                     ret.HighestMip = (int)m_D3D11.m_OM.DepthTarget.HighestMip;
                     ret.FirstSlice = (int)m_D3D11.m_OM.DepthTarget.FirstArraySlice;
+                    ret.typeHint = m_D3D11.m_OM.DepthTarget.Format.compType;
                     return ret;
                 }
                 else if (IsLogGL)
@@ -1076,6 +1102,7 @@ namespace renderdocui.Code
                     ret.Id = m_GL.m_FB.m_DrawFBO.Depth.Obj;
                     ret.HighestMip = (int)m_GL.m_FB.m_DrawFBO.Depth.Mip;
                     ret.FirstSlice = (int)m_GL.m_FB.m_DrawFBO.Depth.Layer;
+                    ret.typeHint = FormatComponentType.None;
                     return ret;
                 }
                 else if (IsLogVK)
@@ -1088,7 +1115,8 @@ namespace renderdocui.Code
                         var ret = new BoundResource();
                         ret.Id = fb.attachments[rp.depthstencilAttachment].img;
                         ret.HighestMip = (int)fb.attachments[rp.depthstencilAttachment].baseMip;
-                        ret.FirstSlice = (int)fb.attachments[rp.depthstencilAttachment].baseArray;
+                        ret.FirstSlice = (int)fb.attachments[rp.depthstencilAttachment].baseLayer;
+                        ret.typeHint = fb.attachments[rp.depthstencilAttachment].viewfmt.compType;
                         return ret;
                     }
 
@@ -1112,6 +1140,7 @@ namespace renderdocui.Code
                         ret[i].Id = m_D3D11.m_OM.RenderTargets[i].Resource;
                         ret[i].HighestMip = (int)m_D3D11.m_OM.RenderTargets[i].HighestMip;
                         ret[i].FirstSlice = (int)m_D3D11.m_OM.RenderTargets[i].FirstArraySlice;
+                        ret[i].typeHint = m_D3D11.m_OM.RenderTargets[i].Format.compType;
                     }
 
                     return ret;
@@ -1130,6 +1159,7 @@ namespace renderdocui.Code
                             ret[i].Id = m_GL.m_FB.m_DrawFBO.Color[db].Obj;
                             ret[i].HighestMip = (int)m_GL.m_FB.m_DrawFBO.Color[db].Mip;
                             ret[i].FirstSlice = (int)m_GL.m_FB.m_DrawFBO.Color[db].Layer;
+                            ret[i].typeHint = FormatComponentType.None;
                         }
                     }
 
@@ -1149,7 +1179,8 @@ namespace renderdocui.Code
                         {
                             ret[i].Id = fb.attachments[rp.colorAttachments[i]].img;
                             ret[i].HighestMip = (int)fb.attachments[rp.colorAttachments[i]].baseMip;
-                            ret[i].FirstSlice = (int)fb.attachments[rp.colorAttachments[i]].baseArray;
+                            ret[i].FirstSlice = (int)fb.attachments[rp.colorAttachments[i]].baseLayer;
+                            ret[i].typeHint = fb.attachments[rp.colorAttachments[i]].viewfmt.compType;
                         }
                     }
 
