@@ -53,6 +53,10 @@ public:
   bool SetPixelContextLocation(uint32_t x, uint32_t y);
   void DisablePixelContext();
 
+  bool GetMinMax(PixelValue *minval, PixelValue *maxval);
+  bool GetHistogram(float minval, float maxval, bool channels[4],
+                    rdctype::array<uint32_t> *histogram);
+
   ResourceId GetCustomShaderTexID() { return m_CustomShaderResourceId; }
   bool PickPixel(ResourceId texID, bool customShader, uint32_t x, uint32_t y, uint32_t sliceFace,
                  uint32_t mip, uint32_t sample, PixelValue *val);
@@ -63,7 +67,6 @@ private:
   virtual ~ReplayOutput();
 
   void SetFrameEvent(int eventID);
-  void SetContextFilter(ResourceId id, uint32_t firstDefEv, uint32_t lastDefEv);
 
   void RefreshOverlay();
 
@@ -100,8 +103,6 @@ private:
   OutputPair m_PixelContext;
 
   uint32_t m_EventID;
-  uint32_t m_FirstDeferredEvent;
-  uint32_t m_LastDeferredEvent;
   OutputConfig m_Config;
 
   vector<uint32_t> passEvents;
@@ -134,12 +135,12 @@ public:
   bool HasCallstacks();
   bool InitResolver();
 
-  bool SetContextFilter(ResourceId id, uint32_t firstDefEv, uint32_t lastDefEv);
   bool SetFrameEvent(uint32_t eventID, bool force);
 
   void FetchPipelineState();
 
   bool GetD3D11PipelineState(D3D11PipelineState *state);
+  bool GetD3D12PipelineState(D3D12PipelineState *state);
   bool GetGLPipelineState(GLPipelineState *state);
   bool GetVulkanPipelineState(VulkanPipelineState *state);
 
@@ -175,12 +176,6 @@ public:
 
   bool GetPostVSData(uint32_t instID, MeshDataStage stage, MeshFormat *data);
 
-  bool GetMinMax(ResourceId tex, uint32_t sliceFace, uint32_t mip, uint32_t sample,
-                 FormatComponentType typeHint, PixelValue *minval, PixelValue *maxval);
-  bool GetHistogram(ResourceId tex, uint32_t sliceFace, uint32_t mip, uint32_t sample,
-                    FormatComponentType typeHint, float minval, float maxval, bool channels[4],
-                    rdctype::array<uint32_t> *histogram);
-
   bool GetUsage(ResourceId id, rdctype::array<EventUsage> *usage);
 
   bool GetBufferData(ResourceId buff, uint64_t offset, uint64_t len, rdctype::array<byte> *data);
@@ -202,7 +197,7 @@ public:
 private:
   ReplayCreateStatus PostCreateInit(IReplayDriver *device);
 
-  FetchDrawcall *GetDrawcallByEID(uint32_t eventID, uint32_t defEventID);
+  FetchDrawcall *GetDrawcallByEID(uint32_t eventID);
 
   IReplayDriver *GetDevice() { return m_pDevice; }
   struct FrameRecord
@@ -215,11 +210,9 @@ private:
   vector<FetchDrawcall *> m_Drawcalls;
 
   uint32_t m_EventID;
-  ResourceId m_DeferredCtx;
-  uint32_t m_FirstDeferredEvent;
-  uint32_t m_LastDeferredEvent;
 
   D3D11PipelineState m_D3D11PipelineState;
+  D3D12PipelineState m_D3D12PipelineState;
   GLPipelineState m_GLPipelineState;
   VulkanPipelineState m_VulkanPipelineState;
 

@@ -75,7 +75,7 @@ uint64_t GLReplay::MakeOutputWindow(WindowingSystem system, void *data, bool dep
 
   if(system == eWindowingSystem_Xlib)
   {
-#if defined(RENDERDOC_WINDOWING_XLIB)
+#if ENABLED(RDOC_XLIB)
     XlibWindowData *xlib = (XlibWindowData *)data;
 
     dpy = xlib->display;
@@ -152,7 +152,11 @@ uint64_t GLReplay::MakeOutputWindow(WindowingSystem system, void *data, bool dep
   attribs[i++] = GLX_CONTEXT_MINOR_VERSION_ARB;
   attribs[i++] = 3;
   attribs[i++] = GLX_CONTEXT_FLAGS_ARB;
+#if ENABLED(RDOC_DEVEL)
   attribs[i++] = GLX_CONTEXT_DEBUG_BIT_ARB;
+#else
+  attribs[i++] = 0;
+#endif
   attribs[i++] = GLX_CONTEXT_PROFILE_MASK_ARB;
   attribs[i++] = GLX_CONTEXT_CORE_PROFILE_BIT_ARB;
 
@@ -302,7 +306,11 @@ ReplayCreateStatus GL_CreateReplayDevice(const char *logfile, IReplayDriver **dr
   attribs[i++] = GLX_CONTEXT_MINOR_VERSION_ARB;
   attribs[i++] = 3;
   attribs[i++] = GLX_CONTEXT_FLAGS_ARB;
+#if ENABLED(RDOC_DEVEL)
   attribs[i++] = GLX_CONTEXT_DEBUG_BIT_ARB;
+#else
+  attribs[i++] = 0;
+#endif
   attribs[i++] = GLX_CONTEXT_PROFILE_MASK_ARB;
   attribs[i++] = GLX_CONTEXT_CORE_PROFILE_BIT_ARB;
 
@@ -424,6 +432,12 @@ ReplayCreateStatus GL_CreateReplayDevice(const char *logfile, IReplayDriver **dr
 
   WrappedOpenGL *gl = new WrappedOpenGL(logfile, GetRealGLFunctions());
   gl->Initialise(initParams);
+
+  if(gl->GetSerialiser()->HasError())
+  {
+    delete gl;
+    return eReplayCreate_FileIOFailed;
+  }
 
   RDCLOG("Created device.");
   GLReplay *replay = gl->GetReplay();

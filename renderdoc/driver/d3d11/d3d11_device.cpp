@@ -191,6 +191,13 @@ const char *D3D11ChunkNames[] = {
     "ID3D11Device3::CreateShaderResourceView1",
     "ID3D11Device3::CreateRenderTargetView1",
     "ID3D11Device3::CreateUnorderedAccessView1",
+
+    "IDXGISwapChain::Present",
+
+    "ID3D11DeviceContext::ExecuteCommandList",
+    "ID3D11DeviceContext::FinishCommandList",
+
+    "ID3D11DeviceContext1::SwapDeviceContextState",
 };
 
 WRAPPED_POOL_INST(WrappedID3D11Device);
@@ -227,6 +234,12 @@ const uint32_t D3D11InitParams::D3D11_OLD_VERSIONS[D3D11InitParams::D3D11_NUM_SU
     // from 0x8 to 0x9, we added the view creation details to clear calls in the device
     // record so that we can still perform the clear even if the view wasn't referenced.
     0x000008,
+    // from 0x9 to 0xA, we refactored deferred context handling - it's flattened on
+    // capture now. So on replay if deferred contexts are present, we go through a
+    // flattening stpe.
+    0x000009,
+    // from 0xA to 0xB, we added the SwapDeviceContextState from ID3D11DeviceContext1
+    0x00000A,
 };
 
 ReplayCreateStatus D3D11InitParams::Serialise()
@@ -284,7 +297,7 @@ void WrappedID3D11Device::NewSwapchainBuffer(IUnknown *backbuffer)
 
 void WrappedID3D11Device::SetLogFile(const char *logfile)
 {
-#if defined(RELEASE)
+#if ENABLED(RDOC_RELEASE)
   const bool debugSerialiser = false;
 #else
   const bool debugSerialiser = true;
@@ -327,6 +340,7 @@ WrappedID3D11Device::WrappedID3D11Device(ID3D11Device *realDevice, D3D11InitPara
   m_Alive = true;
 
   m_DummyInfoQueue.m_pDevice = this;
+  m_DummyD3D10Multithread.m_pDevice = this;
   m_DummyDebug.m_pDevice = this;
   m_WrappedDebug.m_pDevice = this;
 
@@ -335,13 +349,11 @@ WrappedID3D11Device::WrappedID3D11Device(ID3D11Device *realDevice, D3D11InitPara
   m_FailedReason = CaptureSucceeded;
   m_Failures = 0;
 
-  m_FrameTimer.Restart();
+  m_ChunkAtomic = 0;
 
   m_AppControlledCapture = false;
 
-  m_TotalTime = m_AvgFrametime = m_MinFrametime = m_MaxFrametime = 0.0;
-
-#if defined(RELEASE)
+#if ENABLED(RDOC_RELEASE)
   const bool debugSerialiser = false;
 #else
   const bool debugSerialiser = true;
@@ -361,6 +373,8 @@ WrappedID3D11Device::WrappedID3D11Device(ID3D11Device *realDevice, D3D11InitPara
   {
     m_State = WRITING_IDLE;
     m_pSerialiser = new Serialiser(NULL, Serialiser::WRITING, debugSerialiser);
+
+    m_pSerialiser->SetDebugText(true);
   }
 
   m_ResourceManager = new D3D11ResourceManager(m_State, m_pSerialiser, this);
@@ -425,8 +439,6 @@ WrappedID3D11Device::WrappedID3D11Device(ID3D11Device *realDevice, D3D11InitPara
   }
 
   m_InitParams = *params;
-
-  SetContextFilter(ResourceId(), 0, 0);
 
   // ATI workaround - these dlls can get unloaded and cause a crash.
 
@@ -523,6 +535,18 @@ void WrappedID3D11Device::CheckForDeath()
   }
 }
 
+ULONG STDMETHODCALLTYPE DummyID3D10Multithread::AddRef()
+{
+  m_pDevice->AddRef();
+  return 1;
+}
+
+ULONG STDMETHODCALLTYPE DummyID3D10Multithread::Release()
+{
+  m_pDevice->Release();
+  return 1;
+}
+
 ULONG STDMETHODCALLTYPE DummyID3D11InfoQueue::AddRef()
 {
   m_pDevice->AddRef();
@@ -599,6 +623,10 @@ HRESULT WrappedID3D11Device::QueryInterface(REFIID riid, void **ppvObject)
   static const GUID IRenderDoc_uuid = {
       0xa7aa6116, 0x9c8d, 0x4bba, {0x90, 0x83, 0xb4, 0xd8, 0x16, 0xb7, 0x1b, 0x78}};
 
+  // UUID for returning unwrapped ID3D11InfoQueue {3FC4E618-3F70-452A-8B8F-A73ACCB58E3D}
+  static const GUID unwrappedID3D11InfoQueue__uuid = {
+      0x3fc4e618, 0x3f70, 0x452a, {0x8b, 0x8f, 0xa7, 0x3a, 0xcc, 0xb5, 0x8e, 0x3d}};
+
   HRESULT hr = S_OK;
 
   if(riid == __uuidof(IUnknown))
@@ -614,7 +642,7 @@ HRESULT WrappedID3D11Device::QueryInterface(REFIID riid, void **ppvObject)
     if(SUCCEEDED(hr))
     {
       IDXGIDevice *real = (IDXGIDevice *)(*ppvObject);
-      *ppvObject = (IDXGIDevice *)(new WrappedIDXGIDevice(real, this));
+      *ppvObject = (IDXGIDevice *)(new WrappedIDXGIDevice4(real, this));
       return S_OK;
     }
     else
@@ -630,7 +658,7 @@ HRESULT WrappedID3D11Device::QueryInterface(REFIID riid, void **ppvObject)
     if(SUCCEEDED(hr))
     {
       IDXGIDevice1 *real = (IDXGIDevice1 *)(*ppvObject);
-      *ppvObject = (IDXGIDevice1 *)(new WrappedIDXGIDevice1(real, this));
+      *ppvObject = (IDXGIDevice1 *)(new WrappedIDXGIDevice4(real, this));
       return S_OK;
     }
     else
@@ -646,7 +674,7 @@ HRESULT WrappedID3D11Device::QueryInterface(REFIID riid, void **ppvObject)
     if(SUCCEEDED(hr))
     {
       IDXGIDevice2 *real = (IDXGIDevice2 *)(*ppvObject);
-      *ppvObject = (IDXGIDevice2 *)(new WrappedIDXGIDevice2(real, this));
+      *ppvObject = (IDXGIDevice2 *)(new WrappedIDXGIDevice4(real, this));
       return S_OK;
     }
     else
@@ -662,7 +690,7 @@ HRESULT WrappedID3D11Device::QueryInterface(REFIID riid, void **ppvObject)
     if(SUCCEEDED(hr))
     {
       IDXGIDevice3 *real = (IDXGIDevice3 *)(*ppvObject);
-      *ppvObject = (IDXGIDevice3 *)(new WrappedIDXGIDevice3(real, this));
+      *ppvObject = (IDXGIDevice3 *)(new WrappedIDXGIDevice4(real, this));
       return S_OK;
     }
     else
@@ -743,6 +771,15 @@ HRESULT WrappedID3D11Device::QueryInterface(REFIID riid, void **ppvObject)
       return E_NOINTERFACE;
     }
   }
+  else if(riid == __uuidof(ID3D10Multithread))
+  {
+    RDCWARN(
+        "Returning a dummy ID3D10Multithread that does nothing. This ID3D10Multithread will not "
+        "work!");
+    *ppvObject = (ID3D10Multithread *)&m_DummyD3D10Multithread;
+    m_DummyD3D10Multithread.AddRef();
+    return S_OK;
+  }
   else if(riid == ID3D11ShaderTraceFactory_uuid)
   {
     RDCWARN("Trying to get ID3D11ShaderTraceFactory. Not supported at this time.");
@@ -752,10 +789,36 @@ HRESULT WrappedID3D11Device::QueryInterface(REFIID riid, void **ppvObject)
   else if(riid == __uuidof(ID3D11InfoQueue))
   {
     RDCWARN(
-        "Returning a dummy ID3D11InfoQueue that does nothing. This ID3D11InfoQueue will not work!");
+        "Returning a dummy ID3D11InfoQueue that does nothing. RenderDoc takes control of the debug "
+        "layer.");
+    RDCWARN(
+        "If you want direct access, enable API validation and query for %s. This will return the "
+        "real ID3D11InfoQueue - be careful as it is unwrapped so you should not call "
+        "QueryInterface on it.",
+        ToStr::Get(unwrappedID3D11InfoQueue__uuid).c_str());
     *ppvObject = (ID3D11InfoQueue *)&m_DummyInfoQueue;
     m_DummyInfoQueue.AddRef();
     return S_OK;
+  }
+  else if(riid == unwrappedID3D11InfoQueue__uuid)
+  {
+    if(m_pInfoQueue)
+    {
+      *ppvObject = m_pInfoQueue;
+      m_pInfoQueue->AddRef();
+      return S_OK;
+    }
+    else
+    {
+      if(!RenderDoc::Inst().GetCaptureOptions().APIValidation)
+      {
+        RDCWARN("API Validation is not enabled, RenderDoc disabled the debug layer.");
+        RDCWARN(
+            "Enable this either in the capture options, or using the RenderDoc API before device "
+            "creation.");
+      }
+      return E_NOINTERFACE;
+    }
   }
   else if(riid == __uuidof(ID3D11Debug))
   {
@@ -832,6 +895,12 @@ void WrappedID3D11Device::AddDebugMessage(DebugMessageCategory c, DebugMessageSe
     msg.category = c;
     msg.severity = sv;
     msg.description = d;
+
+    // at runtime we are finding any warnings for the event *after* the current
+    // event ID, as that's the one we just replayed
+    if(src == eDbgSource_RuntimeWarning)
+      msg.eventID++;
+
     m_DebugMessages.push_back(msg);
   }
 }
@@ -1017,8 +1086,6 @@ void WrappedID3D11Device::Serialise_CaptureScope(uint64_t offset)
     m_FrameRecord.frameInfo.fileOffset = offset;
     m_FrameRecord.frameInfo.firstEvent = m_pImmediateContext->GetEventID();
     m_FrameRecord.frameInfo.frameNumber = FrameNumber;
-    m_FrameRecord.frameInfo.immContextId =
-        GetResourceManager()->GetOriginalID(m_pImmediateContext->GetResourceID());
 
     FetchFrameStatistics &stats = m_FrameRecord.frameInfo.stats;
     RDCEraseEl(stats);
@@ -1124,10 +1191,9 @@ void WrappedID3D11Device::ReadLogInitialisation()
       break;
   }
 
-  SetupDrawcallPointers(&m_Drawcalls, m_FrameRecord.frameInfo.immContextId,
-                        m_FrameRecord.drawcallList, NULL, NULL);
+  SetupDrawcallPointers(&m_Drawcalls, m_FrameRecord.drawcallList, NULL, NULL);
 
-#if !defined(RELEASE)
+#if ENABLED(RDOC_DEVEL)
   for(auto it = chunkInfos.begin(); it != chunkInfos.end(); ++it)
   {
     double dcount = double(it->second.count);
@@ -1141,7 +1207,8 @@ void WrappedID3D11Device::ReadLogInitialisation()
   }
 #endif
 
-  m_FrameRecord.frameInfo.fileSize = m_pSerialiser->GetSize();
+  m_FrameRecord.frameInfo.uncompressedFileSize = m_pSerialiser->GetSize();
+  m_FrameRecord.frameInfo.compressedFileSize = m_pSerialiser->GetFileSize();
   m_FrameRecord.frameInfo.persistentSize = m_pSerialiser->GetSize() - frameOffset;
   m_FrameRecord.frameInfo.initDataSize = chunkInfos[(D3D11ChunkType)INITIAL_CONTENTS].totalsize;
 
@@ -1453,8 +1520,16 @@ bool WrappedID3D11Device::Serialise_InitialState(ResourceId resid, ID3D11DeviceC
 
         if(stage != NULL)
         {
-          D3D11_MAPPED_SUBRESOURCE mapped;
-          HRESULT hr = m_pImmediateContext->GetReal()->Map(stage, 0, D3D11_MAP_READ, 0, &mapped);
+          D3D11_MAPPED_SUBRESOURCE mapped = {};
+          HRESULT hr = E_INVALIDARG;
+
+          if(stage)
+            hr = m_pImmediateContext->GetReal()->Map(stage, 0, D3D11_MAP_READ, 0, &mapped);
+          else
+            RDCERR(
+                "Didn't have stage resource for %llu when serialising initial state! "
+                "Dirty tracking is incorrect",
+                Id);
 
           if(FAILED(hr))
           {
@@ -1498,8 +1573,16 @@ bool WrappedID3D11Device::Serialise_InitialState(ResourceId resid, ID3D11DeviceC
 
       ID3D11Buffer *stage = (ID3D11Buffer *)m_ResourceManager->GetInitialContents(Id).resource;
 
-      D3D11_MAPPED_SUBRESOURCE mapped;
-      HRESULT hr = m_pImmediateContext->GetReal()->Map(stage, 0, D3D11_MAP_READ, 0, &mapped);
+      D3D11_MAPPED_SUBRESOURCE mapped = {};
+      HRESULT hr = E_INVALIDARG;
+
+      if(stage)
+        hr = m_pImmediateContext->GetReal()->Map(stage, 0, D3D11_MAP_READ, 0, &mapped);
+      else
+        RDCERR(
+            "Didn't have stage resource for %llu when serialising initial state! "
+            "Dirty tracking is incorrect",
+            Id);
 
       if(FAILED(hr))
       {
@@ -1563,9 +1646,16 @@ bool WrappedID3D11Device::Serialise_InitialState(ResourceId resid, ID3D11DeviceC
 
         if(m_State >= WRITING)
         {
-          D3D11_MAPPED_SUBRESOURCE mapped;
+          D3D11_MAPPED_SUBRESOURCE mapped = {};
+          HRESULT hr = E_INVALIDARG;
 
-          HRESULT hr = m_pImmediateContext->GetReal()->Map(stage, sub, D3D11_MAP_READ, 0, &mapped);
+          if(stage)
+            hr = m_pImmediateContext->GetReal()->Map(stage, sub, D3D11_MAP_READ, 0, &mapped);
+          else
+            RDCERR(
+                "Didn't have stage resource for %llu when serialising initial state! "
+                "Dirty tracking is incorrect",
+                Id);
 
           size_t dstPitch = GetByteSize(desc.Width, 1, 1, desc.Format, mip);
 
@@ -1709,9 +1799,16 @@ bool WrappedID3D11Device::Serialise_InitialState(ResourceId resid, ID3D11DeviceC
 
         if(m_State >= WRITING)
         {
-          D3D11_MAPPED_SUBRESOURCE mapped;
+          D3D11_MAPPED_SUBRESOURCE mapped = {};
+          HRESULT hr = E_INVALIDARG;
 
-          HRESULT hr = m_pImmediateContext->GetReal()->Map(stage, sub, D3D11_MAP_READ, 0, &mapped);
+          if(stage)
+            hr = m_pImmediateContext->GetReal()->Map(stage, sub, D3D11_MAP_READ, 0, &mapped);
+          else
+            RDCERR(
+                "Didn't have stage resource for %llu when serialising initial state! "
+                "Dirty tracking is incorrect",
+                Id);
 
           size_t dstPitch = GetByteSize(desc.Width, 1, 1, desc.Format, mip);
           size_t len = GetByteSize(desc.Width, desc.Height, 1, desc.Format, mip);
@@ -1738,7 +1835,8 @@ bool WrappedID3D11Device::Serialise_InitialState(ResourceId resid, ID3D11DeviceC
 
           m_pSerialiser->SerialiseBuffer("", inmemBuffer, len);
 
-          m_pImmediateContext->GetReal()->Unmap(stage, sub);
+          if(SUCCEEDED(hr))
+            m_pImmediateContext->GetReal()->Unmap(stage, sub);
         }
         else
         {
@@ -1878,9 +1976,16 @@ bool WrappedID3D11Device::Serialise_InitialState(ResourceId resid, ID3D11DeviceC
 
         if(m_State >= WRITING)
         {
-          D3D11_MAPPED_SUBRESOURCE mapped;
+          D3D11_MAPPED_SUBRESOURCE mapped = {};
+          HRESULT hr = E_INVALIDARG;
 
-          HRESULT hr = m_pImmediateContext->GetReal()->Map(stage, sub, D3D11_MAP_READ, 0, &mapped);
+          if(stage)
+            hr = m_pImmediateContext->GetReal()->Map(stage, sub, D3D11_MAP_READ, 0, &mapped);
+          else
+            RDCERR(
+                "Didn't have stage resource for %llu when serialising initial state! "
+                "Dirty tracking is incorrect",
+                Id);
 
           size_t dstPitch = GetByteSize(desc.Width, 1, 1, desc.Format, mip);
           size_t dstSlicePitch = GetByteSize(desc.Width, desc.Height, 1, desc.Format, mip);
@@ -1918,7 +2023,8 @@ bool WrappedID3D11Device::Serialise_InitialState(ResourceId resid, ID3D11DeviceC
           size_t len = dstSlicePitch * desc.Depth;
           m_pSerialiser->SerialiseBuffer("", inmemBuffer, len);
 
-          m_pImmediateContext->GetReal()->Unmap(stage, 0);
+          if(SUCCEEDED(hr))
+            m_pImmediateContext->GetReal()->Unmap(stage, sub);
         }
         else
         {
@@ -2031,7 +2137,7 @@ void WrappedID3D11Device::Create_InitialState(ResourceId id, ID3D11DeviceChild *
         m_pImmediateContext->GetReal()->CopyStructureCount(
             stage, 0, UNWRAP(WrappedID3D11UnorderedAccessView1, uav));
 
-        D3D11_MAPPED_SUBRESOURCE mapped;
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
         hr = m_pImmediateContext->GetReal()->Map(stage, 0, D3D11_MAP_READ, 0, &mapped);
 
         uint32_t countData = 0;
@@ -2317,13 +2423,6 @@ void WrappedID3D11Device::Apply_InitialState(ID3D11DeviceChild *live,
   }
 }
 
-void WrappedID3D11Device::SetContextFilter(ResourceId id, uint32_t firstDefEv, uint32_t lastDefEv)
-{
-  m_ReplayDefCtx = id;
-  m_FirstDefEv = firstDefEv;
-  m_LastDefEv = lastDefEv;
-}
-
 void WrappedID3D11Device::ReplayLog(uint32_t startEventID, uint32_t endEventID,
                                     ReplayLogType replayType)
 {
@@ -2355,55 +2454,29 @@ void WrappedID3D11Device::ReplayLog(uint32_t startEventID, uint32_t endEventID,
 
   m_State = EXECUTING;
 
-  if(m_ReplayDefCtx == ResourceId())
-  {
-    if(replayType == eReplay_Full)
-      m_pImmediateContext->ReplayLog(EXECUTING, startEventID, endEventID, partial);
-    else if(replayType == eReplay_WithoutDraw)
-      m_pImmediateContext->ReplayLog(EXECUTING, startEventID, RDCMAX(1U, endEventID) - 1, partial);
-    else if(replayType == eReplay_OnlyDraw)
-      m_pImmediateContext->ReplayLog(EXECUTING, endEventID, endEventID, partial);
-    else
-      RDCFATAL("Unexpected replay type");
-  }
+  if(replayType == eReplay_Full)
+    m_pImmediateContext->ReplayLog(EXECUTING, startEventID, endEventID, partial);
+  else if(replayType == eReplay_WithoutDraw)
+    m_pImmediateContext->ReplayLog(EXECUTING, startEventID, RDCMAX(1U, endEventID) - 1, partial);
+  else if(replayType == eReplay_OnlyDraw)
+    m_pImmediateContext->ReplayLog(EXECUTING, endEventID, endEventID, partial);
   else
-  {
-    if(replayType == eReplay_Full || replayType == eReplay_WithoutDraw)
-    {
-      m_pImmediateContext->ReplayLog(EXECUTING, startEventID, endEventID, partial);
-    }
-
-    m_pSerialiser->SetOffset(offs);
-
-    header = (D3D11ChunkType)m_pSerialiser->PushContext(NULL, NULL, 1, false);
-    m_pSerialiser->SkipCurrentChunk();
-    m_pSerialiser->PopContext(header);
-
-    m_pImmediateContext->ReplayFakeContext(m_ReplayDefCtx);
-
-    if(replayType == eReplay_Full)
-    {
-      m_pImmediateContext->ClearState();
-
-      m_pImmediateContext->ReplayLog(EXECUTING, m_FirstDefEv, m_LastDefEv, true);
-    }
-    else if(replayType == eReplay_WithoutDraw && m_LastDefEv - 1 >= m_FirstDefEv)
-    {
-      m_pImmediateContext->ClearState();
-
-      m_pImmediateContext->ReplayLog(EXECUTING, m_FirstDefEv, RDCMAX(m_LastDefEv, 1U) - 1, true);
-    }
-    else if(replayType == eReplay_OnlyDraw)
-    {
-      m_pImmediateContext->ReplayLog(EXECUTING, m_LastDefEv, m_LastDefEv, true);
-    }
-
-    m_pImmediateContext->ReplayFakeContext(ResourceId());
-  }
+    RDCFATAL("Unexpected replay type");
 }
 
-void WrappedID3D11Device::ReleaseSwapchainResources(WrappedIDXGISwapChain3 *swap)
+void WrappedID3D11Device::ReleaseSwapchainResources(WrappedIDXGISwapChain4 *swap, UINT QueueCount,
+                                                    IUnknown *const *ppPresentQueue,
+                                                    IUnknown **unwrappedQueues)
 {
+  RDCASSERT(ppPresentQueue == NULL);
+
+  if(ppPresentQueue)
+  {
+    RDCERR("D3D11 doesn't support present queues - passing through unmodified");
+    for(UINT i = 0; i < QueueCount; i++)
+      unwrappedQueues[i] = ppPresentQueue[i];
+  }
+
   for(int i = 0; i < swap->GetNumBackbuffers(); i++)
   {
     WrappedID3D11Texture2D1 *wrapped11 = (WrappedID3D11Texture2D1 *)swap->GetBackbuffers()[i];
@@ -2414,6 +2487,15 @@ void WrappedID3D11Device::ReleaseSwapchainResources(WrappedIDXGISwapChain3 *swap
       GetImmediateContext()->GetCurrentPipelineState()->UnbindIUnknownForWrite(range);
       GetImmediateContext()->GetCurrentPipelineState()->UnbindIUnknownForRead(range, false, false);
 
+      {
+        SCOPED_LOCK(WrappedID3DDeviceContextState::m_Lock);
+        for(size_t s = 0; s < WrappedID3DDeviceContextState::m_List.size(); s++)
+        {
+          WrappedID3DDeviceContextState::m_List[s]->state->UnbindIUnknownForWrite(range);
+          WrappedID3DDeviceContextState::m_List[s]->state->UnbindIUnknownForRead(range, false, false);
+        }
+      }
+
       wrapped11->ViewRelease();
     }
 
@@ -2422,8 +2504,7 @@ void WrappedID3D11Device::ReleaseSwapchainResources(WrappedIDXGISwapChain3 *swap
 
   if(swap)
   {
-    DXGI_SWAP_CHAIN_DESC desc;
-    swap->GetDesc(&desc);
+    DXGI_SWAP_CHAIN_DESC desc = swap->GetDescWithHWND();
 
     Keyboard::RemoveInputWindow(desc.OutputWindow);
 
@@ -2438,7 +2519,7 @@ void WrappedID3D11Device::ReleaseSwapchainResources(WrappedIDXGISwapChain3 *swap
   }
 }
 
-bool WrappedID3D11Device::Serialise_WrapSwapchainBuffer(WrappedIDXGISwapChain3 *swap,
+bool WrappedID3D11Device::Serialise_WrapSwapchainBuffer(WrappedIDXGISwapChain4 *swap,
                                                         DXGI_SWAP_CHAIN_DESC *swapDesc, UINT buffer,
                                                         IUnknown *realSurface)
 {
@@ -2447,6 +2528,8 @@ bool WrappedID3D11Device::Serialise_WrapSwapchainBuffer(WrappedIDXGISwapChain3 *
   SERIALISE_ELEMENT(DXGI_FORMAT, swapFormat, swapDesc->BufferDesc.Format);
   SERIALISE_ELEMENT(uint32_t, BuffNum, buffer);
   SERIALISE_ELEMENT(ResourceId, pTexture, GetIDForResource(pTex));
+
+  m_BBID = pTexture;
 
   if(m_State >= WRITING)
   {
@@ -2492,7 +2575,7 @@ bool WrappedID3D11Device::Serialise_WrapSwapchainBuffer(WrappedIDXGISwapChain3 *
   return true;
 }
 
-IUnknown *WrappedID3D11Device::WrapSwapchainBuffer(WrappedIDXGISwapChain3 *swap,
+IUnknown *WrappedID3D11Device::WrapSwapchainBuffer(WrappedIDXGISwapChain4 *swap,
                                                    DXGI_SWAP_CHAIN_DESC *swapDesc, UINT buffer,
                                                    IUnknown *realSurface)
 {
@@ -2554,8 +2637,7 @@ IUnknown *WrappedID3D11Device::WrapSwapchainBuffer(WrappedIDXGISwapChain3 *swap,
 
   if(swap)
   {
-    DXGI_SWAP_CHAIN_DESC sdesc;
-    swap->GetDesc(&sdesc);
+    DXGI_SWAP_CHAIN_DESC sdesc = swap->GetDescWithHWND();
 
     Keyboard::AddInputWindow(sdesc.OutputWindow);
 
@@ -2653,14 +2735,13 @@ bool WrappedID3D11Device::EndFrameCapture(void *dev, void *wnd)
 
   CaptureFailReason reason;
 
-  WrappedIDXGISwapChain3 *swap = NULL;
+  WrappedIDXGISwapChain4 *swap = NULL;
 
   if(wnd)
   {
     for(auto it = m_SwapChains.begin(); it != m_SwapChains.end(); ++it)
     {
-      DXGI_SWAP_CHAIN_DESC swapDesc;
-      it->first->GetDesc(&swapDesc);
+      DXGI_SWAP_CHAIN_DESC swapDesc = it->first->GetDescWithHWND();
 
       if(swapDesc.OutputWindow == wnd)
       {
@@ -2703,7 +2784,7 @@ bool WrappedID3D11Device::EndFrameCapture(void *dev, void *wnd)
       }
     }
 
-    const uint32_t maxSize = 1024;
+    const uint32_t maxSize = 2048;
 
     byte *thpixels = NULL;
     uint32_t thwidth = 0;
@@ -2885,8 +2966,7 @@ bool WrappedID3D11Device::EndFrameCapture(void *dev, void *wnd)
       jpgbuf = new byte[len];
 
       jpge::params p;
-
-      p.m_quality = 40;
+      p.m_quality = 80;
 
       bool success = jpge::compress_image_to_jpeg_file_in_memory(jpgbuf, len, thwidth, thheight, 3,
                                                                  thpixels, p);
@@ -2915,6 +2995,8 @@ bool WrappedID3D11Device::EndFrameCapture(void *dev, void *wnd)
     }
 
     RDCDEBUG("Inserting Resource Serialisers");
+
+    LockForChunkFlushing();
 
     GetResourceManager()->InsertReferencedChunks(m_pFileSerialiser);
 
@@ -2951,9 +3033,11 @@ bool WrappedID3D11Device::EndFrameCapture(void *dev, void *wnd)
 
     m_pFileSerialiser->FlushToDisk();
 
+    UnlockForChunkFlushing();
+
     SAFE_DELETE(m_pFileSerialiser);
 
-    RenderDoc::Inst().SuccessfullyWrittenLog();
+    RenderDoc::Inst().SuccessfullyWrittenLog(m_FrameCounter);
 
     m_State = WRITING_IDLE;
 
@@ -3001,8 +3085,7 @@ bool WrappedID3D11Device::EndFrameCapture(void *dev, void *wnd)
       {
         m_pImmediateContext->GetReal()->OMSetRenderTargets(1, &rtv, NULL);
 
-        DXGI_SWAP_CHAIN_DESC swapDesc = {0};
-        swap->GetDesc(&swapDesc);
+        DXGI_SWAP_CHAIN_DESC swapDesc = swap->GetDescWithHWND();
         GetDebugManager()->SetOutputDimensions(swapDesc.BufferDesc.Width, swapDesc.BufferDesc.Height);
         GetDebugManager()->SetOutputWindow(swapDesc.OutputWindow);
 
@@ -3101,10 +3184,96 @@ bool WrappedID3D11Device::EndFrameCapture(void *dev, void *wnd)
   }
 }
 
-void WrappedID3D11Device::FirstFrame(WrappedIDXGISwapChain3 *swapChain)
+void WrappedID3D11Device::LockForChunkFlushing()
 {
-  DXGI_SWAP_CHAIN_DESC swapdesc;
-  swapChain->GetDesc(&swapdesc);
+  // wait for the value to be 0 (no-one messing with chunks right now) and set to -1
+  // to indicate that we're writing chunks and so no-one should try messing.
+  for(;;)
+  {
+    int32_t val = Atomic::CmpExch32(&m_ChunkAtomic, 0, -1);
+
+    // val was 0, so we replaced it, so we can stop
+    if(val == 0)
+      break;
+
+    // we don't support recursive locking, so negative value is invalid
+    if(val < 0)
+    {
+      RDCERR("Something went wrong! m_ChunkAtomic was %d before!", val);
+
+      // try and recover by just setting to -1 anyway and hope for the best
+      val = -1;
+      break;
+    }
+
+    // spin while val is positive
+  }
+}
+
+void WrappedID3D11Device::UnlockForChunkFlushing()
+{
+  // set value back to 0
+  int32_t val = Atomic::CmpExch32(&m_ChunkAtomic, -1, 0);
+
+  // should only come in here if we successfully grabbed the lock before. We don't
+  // support multiple flushing locks.
+  if(val != -1)
+  {
+    RDCERR("Something went wrong! m_ChunkAtomic was %d before, expected -1", val);
+
+    // try and recover by just setting to 0 anyway and hope for the best
+    val = 0;
+  }
+}
+
+void WrappedID3D11Device::LockForChunkRemoval()
+{
+  // wait for value to be non-negative (indicating that we're not using the chunks)
+  // and then increment it. Spin until we have incremented it.
+  for(;;)
+  {
+    int32_t prev = m_ChunkAtomic;
+
+    // spin while val is negative
+    if(prev < 0)
+      continue;
+
+    // try to increment the value
+    int32_t val = Atomic::CmpExch32(&m_ChunkAtomic, prev, prev + 1);
+
+    // val was prev. That means we incremented it so we can stop
+    if(val == prev)
+      break;
+  }
+}
+
+void WrappedID3D11Device::UnlockForChunkRemoval()
+{
+  // spin until we've decremented the value
+  for(;;)
+  {
+    int32_t prev = m_ChunkAtomic;
+
+    // val should always be positive because we locked it. Bail out if not
+    if(prev <= 0)
+    {
+      RDCERR("Something went wrong! m_ChunkAtomic was %d before, expected positive", prev);
+      // do nothing, hope it all goes OK
+      break;
+    }
+
+    // try to decrement the value
+    int32_t val = Atomic::CmpExch32(&m_ChunkAtomic, prev, prev - 1);
+
+    // val was prev. That means we decremented it so we can stop
+    if(val == prev)
+      break;
+  }
+}
+
+void WrappedID3D11Device::FirstFrame(WrappedIDXGISwapChain4 *swapChain)
+{
+  DXGI_SWAP_CHAIN_DESC swapdesc = swapChain->GetDescWithHWND();
 
   // if we have to capture the first frame, begin capturing immediately
   if(m_State == WRITING_IDLE && RenderDoc::Inst().ShouldTriggerCapture(0))
@@ -3115,7 +3284,7 @@ void WrappedID3D11Device::FirstFrame(WrappedIDXGISwapChain3 *swapChain)
   }
 }
 
-HRESULT WrappedID3D11Device::Present(WrappedIDXGISwapChain3 *swap, UINT SyncInterval, UINT Flags)
+HRESULT WrappedID3D11Device::Present(WrappedIDXGISwapChain4 *swap, UINT SyncInterval, UINT Flags)
 {
   if((Flags & DXGI_PRESENT_TEST) != 0)
     return S_OK;
@@ -3131,40 +3300,12 @@ HRESULT WrappedID3D11Device::Present(WrappedIDXGISwapChain3 *swap, UINT SyncInte
 
   m_pImmediateContext->BeginFrame();
 
-  DXGI_SWAP_CHAIN_DESC swapdesc;
-  swap->GetDesc(&swapdesc);
+  DXGI_SWAP_CHAIN_DESC swapdesc = swap->GetDescWithHWND();
   bool activeWindow = RenderDoc::Inst().IsActiveWindow((ID3D11Device *)this, swapdesc.OutputWindow);
 
   if(m_State == WRITING_IDLE)
   {
     D3D11RenderState old = *m_pImmediateContext->GetCurrentPipelineState();
-
-    m_FrameTimes.push_back(m_FrameTimer.GetMilliseconds());
-    m_TotalTime += m_FrameTimes.back();
-    m_FrameTimer.Restart();
-
-    // update every second
-    if(m_TotalTime > 1000.0)
-    {
-      m_MinFrametime = 10000.0;
-      m_MaxFrametime = 0.0;
-      m_AvgFrametime = 0.0;
-
-      m_TotalTime = 0.0;
-
-      for(size_t i = 0; i < m_FrameTimes.size(); i++)
-      {
-        m_AvgFrametime += m_FrameTimes[i];
-        if(m_FrameTimes[i] < m_MinFrametime)
-          m_MinFrametime = m_FrameTimes[i];
-        if(m_FrameTimes[i] > m_MaxFrametime)
-          m_MaxFrametime = m_FrameTimes[i];
-      }
-
-      m_AvgFrametime /= double(m_FrameTimes.size());
-
-      m_FrameTimes.clear();
-    }
 
     uint32_t overlay = RenderDoc::Inst().GetOverlayBits();
 
@@ -3179,114 +3320,25 @@ HRESULT WrappedID3D11Device::Present(WrappedIDXGISwapChain3 *swap, UINT SyncInte
       GetDebugManager()->SetOutputDimensions(swapDesc.BufferDesc.Width, swapDesc.BufferDesc.Height);
       GetDebugManager()->SetOutputWindow(swapDesc.OutputWindow);
 
-      if(activeWindow)
+      int flags = activeWindow ? RenderDoc::eOverlay_ActiveWindow : 0;
+      string overlayText = RenderDoc::Inst().GetOverlayText(RDC_D3D11, m_FrameCounter, flags);
+
+      if(activeWindow && m_FailedFrame > 0)
       {
-        vector<RENDERDOC_InputButton> keys = RenderDoc::Inst().GetCaptureKeys();
-
-        string overlayText = "D3D11. ";
-
-        if(Keyboard::PlatformHasKeyInput())
+        const char *reasonString = "Unknown reason";
+        switch(m_FailedReason)
         {
-          for(size_t i = 0; i < keys.size(); i++)
-          {
-            if(i > 0)
-              overlayText += ", ";
-
-            overlayText += ToStr::Get(keys[i]);
-          }
-
-          if(!keys.empty())
-            overlayText += " to capture.";
-        }
-        else
-        {
-          if(RenderDoc::Inst().IsTargetControlConnected())
-            overlayText += "Connected by " + RenderDoc::Inst().GetTargetControlUsername() + ".";
-          else
-            overlayText += "No remote access connection.";
+          case CaptureFailed_UncappedCmdlist: reasonString = "Uncapped command list"; break;
+          case CaptureFailed_UncappedUnmap: reasonString = "Uncapped Map()/Unmap()"; break;
+          default: break;
         }
 
-        if(overlay & eRENDERDOC_Overlay_FrameNumber)
-        {
-          overlayText += StringFormat::Fmt(" Frame: %d.", m_FrameCounter);
-        }
-        if(overlay & eRENDERDOC_Overlay_FrameRate)
-        {
-          overlayText += StringFormat::Fmt(" %.2lf ms (%.2lf .. %.2lf) (%.0lf FPS)", m_AvgFrametime,
-                                           m_MinFrametime, m_MaxFrametime,
-                                           // max with 0.01ms so that we don't divide by zero
-                                           1000.0f / RDCMAX(0.01, m_AvgFrametime));
-        }
-
-        float y = 0.0f;
-
-        if(!overlayText.empty())
-        {
-          GetDebugManager()->RenderText(0.0f, y, overlayText.c_str());
-          y += 1.0f;
-        }
-
-        if(overlay & eRENDERDOC_Overlay_CaptureList)
-        {
-          GetDebugManager()->RenderText(0.0f, y, "%d Captures saved.\n",
-                                        (uint32_t)m_CapturedFrames.size());
-          y += 1.0f;
-
-          uint64_t now = Timing::GetUnixTimestamp();
-          for(size_t i = 0; i < m_CapturedFrames.size(); i++)
-          {
-            if(now - m_CapturedFrames[i].captureTime < 20)
-            {
-              GetDebugManager()->RenderText(0.0f, y, "Captured frame %d.\n",
-                                            m_CapturedFrames[i].frameNumber);
-              y += 1.0f;
-            }
-          }
-        }
-
-        if(m_FailedFrame > 0)
-        {
-          const char *reasonString = "Unknown reason";
-          switch(m_FailedReason)
-          {
-            case CaptureFailed_UncappedCmdlist: reasonString = "Uncapped command list"; break;
-            case CaptureFailed_UncappedUnmap: reasonString = "Uncapped Map()/Unmap()"; break;
-            default: break;
-          }
-
-          GetDebugManager()->RenderText(0.0f, y, "Failed capture at frame %d:\n", m_FailedFrame);
-          y += 1.0f;
-          GetDebugManager()->RenderText(0.0f, y, "    %s\n", reasonString);
-          y += 1.0f;
-        }
-
-#if !defined(RELEASE)
-        GetDebugManager()->RenderText(0.0f, y, "%llu chunks - %.2f MB", Chunk::NumLiveChunks(),
-                                      float(Chunk::TotalMem()) / 1024.0f / 1024.0f);
-        y += 1.0f;
-#endif
+        overlayText += StringFormat::Fmt("Failed capture at frame %d:\n", m_FailedFrame);
+        overlayText += StringFormat::Fmt("    %s\n", reasonString);
       }
-      else
-      {
-        vector<RENDERDOC_InputButton> keys = RenderDoc::Inst().GetFocusKeys();
 
-        string str = "D3D11. Inactive swapchain.";
-
-        for(size_t i = 0; i < keys.size(); i++)
-        {
-          if(i == 0)
-            str += " ";
-          else
-            str += ", ";
-
-          str += ToStr::Get(keys[i]);
-        }
-
-        if(!keys.empty())
-          str += " to cycle between swapchains";
-
-        GetDebugManager()->RenderText(0.0f, 0.0f, str.c_str());
-      }
+      if(!overlayText.empty())
+        GetDebugManager()->RenderText(0.0f, 0.0f, overlayText.c_str());
 
       old.ApplyState(m_pImmediateContext);
     }
@@ -3299,7 +3351,11 @@ HRESULT WrappedID3D11Device::Present(WrappedIDXGISwapChain3 *swap, UINT SyncInte
 
   // kill any current capture that isn't application defined
   if(m_State == WRITING_CAPFRAME && !m_AppControlledCapture)
+  {
+    m_pImmediateContext->Present(SyncInterval, Flags);
+
     RenderDoc::Inst().EndFrameCapture((ID3D11Device *)this, swapdesc.OutputWindow);
+  }
 
   if(RenderDoc::Inst().ShouldTriggerCapture(m_FrameCounter) && m_State == WRITING_IDLE)
   {
@@ -3439,6 +3495,8 @@ void WrappedID3D11Device::SetResourceName(ID3D11DeviceChild *res, const char *na
 
       Serialise_SetResourceName(res, name);
 
+      LockForChunkRemoval();
+
       // don't serialise many SetResourceName chunks to the
       // object record, but we can't afford to drop any.
       record->LockChunks();
@@ -3456,6 +3514,8 @@ void WrappedID3D11Device::SetResourceName(ID3D11DeviceChild *res, const char *na
         break;
       }
       record->UnlockChunks();
+
+      UnlockForChunkRemoval();
 
       record->AddChunk(scope.Get());
     }
@@ -3555,6 +3615,9 @@ void WrappedID3D11Device::ReleaseResource(ID3D11DeviceChild *res)
   // since their creation won't be in the log either.
   if(type == Resource_Counter || type == Resource_Query ||
      (type == Resource_CommandList && !cmdList->IsCaptured()))
+    serialiseRelease = false;
+
+  if(type == Resource_DeviceState)
     serialiseRelease = false;
 
   if(type == Resource_CommandList && !cmdList->IsCaptured())

@@ -93,11 +93,6 @@ namespace renderdocui.Windows
             {
                 foreach (var ev in draw.events)
                 {
-                    // hack until I have a proper interface. Skip events associated with this draw that
-                    // come from another context (means they will just be completely omitted/invisible).
-                    if (ev.context != draw.context)
-                        continue;
-
                     string[] lines = ev.eventDesc.Split(new string[] { "\r\n", "\n" }, StringSplitOptions.None);
 
                     TreelistView.Node root = new TreelistView.Node(new object[] { ev.eventID, lines[0] });
@@ -154,30 +149,6 @@ namespace renderdocui.Windows
                 return;
             }
 
-            /*
-            String commonRoot = calls[0];
-
-            for (int i = 1; i < calls.Length - m_Core.Config.CallstackLevelSkip; i++)
-            {
-                int len = Math.Min(commonRoot.Length, calls[i].Length);
-
-                int commonLen = 0;
-                for (;commonLen < len; commonLen++)
-                {
-                    if (commonRoot[commonLen] != calls[i][commonLen])
-                        break;
-                }
-
-                if (commonLen == 0)
-                {
-                    commonRoot = "";
-                    break;
-                }
-
-                commonRoot = commonRoot.Substring(0, commonLen);
-            }
-            */
-
             callstack.Items.Clear();
 
             if (calls.Length == 1 && calls[0].Length == 0)
@@ -186,15 +157,12 @@ namespace renderdocui.Windows
             }
             else
             {
-                for (int i = 0; i < calls.Length - m_Core.Config.CallstackLevelSkip; i++)
-                {
-                    //callstack.Items.Add(calls[i].Substring(commonRoot.Length));
+                for (int i = 0; i < calls.Length; i++)
                     callstack.Items.Add(calls[i]);
-                }
             }
         }
 
-        private void treeView1_AfterSelect(object sender, TreeViewEventArgs e)
+        private void apiEvents_AfterSelect(object sender, TreeViewEventArgs e)
         {
             if (IsDisposed || apiEvents.IsDisposed)
                 return;
@@ -231,55 +199,14 @@ namespace renderdocui.Windows
             panelSplitter.Collapsed = true;
         }
 
-        private void UpdateSettings()
-        {
-            bool changed = false;
-
-            if (int.TryParse(callSkip.Text, out m_Core.Config.CallstackLevelSkip))
-            {
-                if (m_Core.Config.CallstackLevelSkip < 0)
-                    m_Core.Config.CallstackLevelSkip = 0;
-                callSkip.Text = m_Core.Config.CallstackLevelSkip.ToString();
-                changed = true;
-            }
-
-            if (changed)
-                FillCallstack();
-        }
-
-        private void callstack_MouseUp(object sender, MouseEventArgs e)
-        {
-            if (e.Button == MouseButtons.Right)
-                contextMenu.Show(callstack.PointToScreen(e.Location));
-
-            if (e.Button == MouseButtons.Left && contextMenu.Visible)
-                UpdateSettings();
-        }
-
-        private void callSkip_KeyPress(object sender, KeyPressEventArgs e)
-        {
-            if (e.KeyChar == '\r' || e.KeyChar == '\n')
-            {
-                UpdateSettings();
-                e.Handled = true;
-            }
-        }
-
-        private void dirSkip_KeyPress(object sender, KeyPressEventArgs e)
-        {
-            if (e.KeyChar == '\r' || e.KeyChar == '\n')
-            {
-                UpdateSettings();
-                e.Handled = true;
-            }
-        }
-
         private void apiEvents_KeyDown(object sender, KeyEventArgs e)
         {
             if (!m_Core.LogLoaded) return;
 
             if (e.KeyCode == Keys.C && e.Control)
             {
+                apiEvents.SortNodesSelection();
+
                 string text = "";
                 foreach (var n in apiEvents.NodesSelection)
                 {

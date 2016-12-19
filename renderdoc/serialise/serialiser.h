@@ -102,7 +102,7 @@ public:
   uint32_t GetChunkType() { return m_ChunkType; }
   bool IsAligned() { return m_AlignedData; }
   bool IsTemporary() { return m_Temporary; }
-#if !defined(RELEASE)
+#if ENABLED(RDOC_DEVEL)
   static uint64_t NumLiveChunks() { return m_LiveChunks; }
   static uint64_t TotalMem() { return m_TotalMem; }
 #else
@@ -113,7 +113,10 @@ public:
   // grab current contents of the serialiser into this chunk
   Chunk(Serialiser *ser, uint32_t chunkType, bool temp);
 
+  Chunk *Duplicate();
+
 private:
+  Chunk() {}
   // no copy semantics
   Chunk(const Chunk &);
   Chunk &operator=(const Chunk &);
@@ -129,7 +132,7 @@ private:
   byte *m_Data;
   string m_DebugStr;
 
-#if !defined(RELEASE)
+#if ENABLED(RDOC_DEVEL)
   static int64_t m_LiveChunks, m_MaxChunks, m_TotalMem;
 #endif
 };
@@ -196,7 +199,7 @@ public:
   // Init and error handling
 
   Serialiser(size_t length, const byte *memoryBuf, bool fileheader);
-  Serialiser(const char *path, Mode mode, bool debugMode = false);
+  Serialiser(const char *path, Mode mode, bool debugMode, uint64_t sizeHint = 128 * 1024);
   ~Serialiser();
 
   bool HasError() { return m_HasError; }
@@ -228,6 +231,14 @@ public:
       return m_BufferSize;
 
     return m_BufferHead - m_Buffer;
+  }
+
+  uint64_t GetFileSize()
+  {
+    if(m_Mode == READING)
+      return m_FileSize;
+
+    return 0;
   }
 
   byte *GetRawPtr(size_t offs) const { return m_Buffer + offs; }
@@ -592,7 +603,12 @@ private:
     }
 
     char *data = (char *)ReadBytes(sizeof(T));
+#if defined(_M_ARM) || defined(__arm__)
+    // Fetches on ARM have to be aligned according to the type size.
+    memcpy(&f, data, sizeof(T));
+#else
     f = *((T *)data);
+#endif
   }
 
   // no copies
@@ -671,6 +687,8 @@ private:
   // where does our in-memory window point to in the data stream. ie. m_pBuffer[0] is
   // m_ReadOffset into the frame capture section
   uint64_t m_ReadOffset;
+
+  uint64_t m_FileSize;
 
   // how big is the current in-memory window
   size_t m_CurrentBufferSize;

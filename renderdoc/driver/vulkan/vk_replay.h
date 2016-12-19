@@ -30,20 +30,20 @@
 #include "vk_common.h"
 #include "vk_info.h"
 
-#if defined(RENDERDOC_PLATFORM_WIN32)
+#if ENABLED(RDOC_WIN32)
 
 #include <windows.h>
 #define WINDOW_HANDLE_DECL HWND wnd;
 #define WINDOW_HANDLE_INIT wnd = NULL;
 
-#elif defined(RENDERDOC_PLATFORM_ANDROID)
+#elif ENABLED(RDOC_ANDROID)
 
 #define WINDOW_HANDLE_DECL ANativeWindow *wnd;
 #define WINDOW_HANDLE_INIT wnd = NULL;
 
-#elif defined(RENDERDOC_PLATFORM_LINUX)
+#elif ENABLED(RDOC_LINUX)
 
-#if defined(RENDERDOC_WINDOWING_XLIB)
+#if ENABLED(RDOC_XLIB)
 
 #define WINDOW_HANDLE_XLIB \
   struct                   \
@@ -61,7 +61,7 @@
 
 #endif
 
-#if defined(RENDERDOC_WINDOWING_XCB)
+#if ENABLED(RDOC_XCB)
 
 #define WINDOW_HANDLE_XCB         \
   struct                          \
@@ -87,6 +87,11 @@
   RDCEraseEl(xlib);        \
   RDCEraseEl(xcb);
 
+#elif ENABLED(RDOC_APPLE)
+
+#define WINDOW_HANDLE_DECL void *wnd;
+#define WINDOW_HANDLE_INIT wnd = NULL;
+
 #else
 
 #error "Unknown platform"
@@ -107,9 +112,9 @@ using std::map;
     msgprinted = true;                                   \
   } while((void)0, 0)
 
-#define MSAA_MESH_VIEW 1
+#define MSAA_MESH_VIEW OPTION_ON
 
-#if MSAA_MESH_VIEW
+#if ENABLED(MSAA_MESH_VIEW)
 #define VULKAN_MESH_VIEW_SAMPLES VK_SAMPLE_COUNT_4_BIT
 #else
 #define VULKAN_MESH_VIEW_SAMPLES VK_SAMPLE_COUNT_1_BIT
@@ -146,12 +151,12 @@ public:
 
   void SavePipelineState();
   D3D11PipelineState GetD3D11PipelineState() { return D3D11PipelineState(); }
+  D3D12PipelineState GetD3D12PipelineState() { return D3D12PipelineState(); }
   GLPipelineState GetGLPipelineState() { return GLPipelineState(); }
   VulkanPipelineState GetVulkanPipelineState() { return m_VulkanPipelineState; }
   void FreeTargetResource(ResourceId id);
 
   void ReadLogInitialisation();
-  void SetContextFilter(ResourceId id, uint32_t firstDefEv, uint32_t lastDefEv);
   void ReplayLog(uint32_t endEventID, ReplayLogType replayType);
 
   vector<uint32_t> GetPassEvents(uint32_t eventID);
@@ -186,9 +191,8 @@ public:
   MeshFormat GetPostVSBuffers(uint32_t eventID, uint32_t instID, MeshDataStage stage);
 
   void GetBufferData(ResourceId buff, uint64_t offset, uint64_t len, vector<byte> &retData);
-  byte *GetTextureData(ResourceId tex, uint32_t arrayIdx, uint32_t mip, bool forDiskSave,
-                       FormatComponentType typeHint, bool resolve, bool forceRGBA8unorm,
-                       float blackPoint, float whitePoint, size_t &dataSize);
+  byte *GetTextureData(ResourceId tex, uint32_t arrayIdx, uint32_t mip,
+                       const GetTextureDataParams &params, size_t &dataSize);
 
   void ReplaceResource(ResourceId from, ResourceId to);
   void RemoveReplacement(ResourceId id);
@@ -231,6 +235,7 @@ public:
   ResourceId CreateProxyTexture(const FetchTexture &templateTex);
   void SetProxyTextureData(ResourceId texid, uint32_t arrayIdx, uint32_t mip, byte *data,
                            size_t dataSize);
+  bool IsTextureSupported(const ResourceFormat &format);
 
   ResourceId CreateProxyBuffer(const FetchBuffer &templateBuf);
   void SetProxyBufferData(ResourceId bufid, byte *data, size_t dataSize);
@@ -245,10 +250,13 @@ public:
 
   // called before any VkDevice is created, to init any counters
   static void PreDeviceInitCounters();
-  // called after any VkDevice is destroyed, to do corresponding shutdown of counters
-  static void PostDeviceShutdownCounters();
   // called after the VkDevice is created, to init any counters
   void PostDeviceInitCounters();
+
+  // called after any VkDevice is destroyed, to do corresponding shutdown of counters
+  static void PostDeviceShutdownCounters();
+  // called before the VkDevice is destroyed, to shutdown any counters
+  void PreDeviceShutdownCounters();
 
 private:
   struct OutputWindow
@@ -331,16 +339,20 @@ private:
 
   WrappedVulkan *m_pDriver;
 
-  bool RenderTextureInternal(TextureDisplay cfg, VkRenderPassBeginInfo rpbegin, bool f32render);
+  enum TexDisplayFlags
+  {
+    eTexDisplay_F32Render = 0x1,
+    eTexDisplay_BlendAlpha = 0x2,
+    eTexDisplay_MipShift = 0x4,
+  };
+
+  bool RenderTextureInternal(TextureDisplay cfg, VkRenderPassBeginInfo rpbegin, int flags);
 
   void CreateTexImageView(VkImageAspectFlags aspectFlags, VkImage liveIm,
                           VulkanCreationInfo::Image &iminfo);
 
   void FillCBufferVariables(rdctype::array<ShaderConstant>, vector<ShaderVariable> &outvars,
                             const vector<byte> &data, size_t baseOffset);
-
-  // called before the VkDevice is destroyed, to shutdown any counters
-  void PreDeviceShutdownCounters();
 
   VulkanDebugManager *GetDebugManager();
   VulkanResourceManager *GetResourceManager();

@@ -46,6 +46,9 @@ D3D12RenderState::D3D12RenderState()
 
   topo = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
 
+  stencilRef = 0;
+  RDCEraseEl(blendFactor);
+
   RDCEraseEl(ibuffer);
   vbuffers.clear();
 }
@@ -69,6 +72,8 @@ D3D12RenderState &D3D12RenderState::operator=(const D3D12RenderState &o)
   compute.sigelems = o.compute.sigelems;
 
   topo = o.topo;
+  stencilRef = o.stencilRef;
+  memcpy(blendFactor, o.blendFactor, sizeof(blendFactor));
 
   ibuffer = o.ibuffer;
   vbuffers = o.vbuffers;
@@ -76,7 +81,55 @@ D3D12RenderState &D3D12RenderState::operator=(const D3D12RenderState &o)
   return *this;
 }
 
-void D3D12RenderState::ApplyState(ID3D12GraphicsCommandList *cmd)
+vector<ResourceId> D3D12RenderState::GetRTVIDs() const
+{
+  vector<ResourceId> ret;
+
+  if(rtSingle)
+  {
+    if(!rts.empty())
+    {
+      const D3D12Descriptor *descs = DescriptorFromPortableHandle(GetResourceManager(), rts[0]);
+
+      for(UINT i = 0; i < rts.size(); i++)
+      {
+        RDCASSERT(descs[i].GetType() == D3D12Descriptor::TypeRTV);
+        ret.push_back(GetResID(descs[i].nonsamp.resource));
+      }
+    }
+  }
+  else
+  {
+    for(UINT i = 0; i < rts.size(); i++)
+    {
+      WrappedID3D12DescriptorHeap *heap =
+          GetResourceManager()->GetLiveAs<WrappedID3D12DescriptorHeap>(rts[0].heap);
+
+      const D3D12Descriptor &desc = heap->GetDescriptors()[rts[i].index];
+
+      RDCASSERT(desc.GetType() == D3D12Descriptor::TypeRTV);
+      ret.push_back(GetResID(desc.nonsamp.resource));
+    }
+  }
+
+  return ret;
+}
+
+ResourceId D3D12RenderState::GetDSVID() const
+{
+  if(dsv.heap != ResourceId())
+  {
+    const D3D12Descriptor *desc = DescriptorFromPortableHandle(GetResourceManager(), dsv);
+
+    RDCASSERT(desc->GetType() == D3D12Descriptor::TypeDSV);
+
+    return GetResID(desc->nonsamp.resource);
+  }
+
+  return ResourceId();
+}
+
+void D3D12RenderState::ApplyState(ID3D12GraphicsCommandList *cmd) const
 {
   if(pipe != ResourceId())
     cmd->SetPipelineState(GetResourceManager()->GetCurrentAs<ID3D12PipelineState>(pipe));
@@ -89,6 +142,9 @@ void D3D12RenderState::ApplyState(ID3D12GraphicsCommandList *cmd)
 
   if(topo != D3D_PRIMITIVE_TOPOLOGY_UNDEFINED)
     cmd->IASetPrimitiveTopology(topo);
+
+  cmd->OMSetStencilRef(stencilRef);
+  cmd->OMSetBlendFactor(blendFactor);
 
   if(ibuffer.buf != ResourceId())
   {
@@ -151,8 +207,7 @@ void D3D12RenderState::ApplyState(ID3D12GraphicsCommandList *cmd)
     cmd->SetGraphicsRootSignature(
         GetResourceManager()->GetCurrentAs<ID3D12RootSignature>(graphics.rootsig));
 
-    for(size_t i = 0; i < graphics.sigelems.size(); i++)
-      graphics.sigelems[i].SetToCommandList(GetResourceManager(), cmd, (UINT)i);
+    ApplyGraphicsRootElements(cmd);
   }
 
   if(compute.rootsig != ResourceId())
@@ -160,7 +215,44 @@ void D3D12RenderState::ApplyState(ID3D12GraphicsCommandList *cmd)
     cmd->SetComputeRootSignature(
         GetResourceManager()->GetCurrentAs<ID3D12RootSignature>(compute.rootsig));
 
-    for(size_t i = 0; i < compute.sigelems.size(); i++)
-      compute.sigelems[i].SetToCommandList(GetResourceManager(), cmd, (UINT)i);
+    ApplyComputeRootElements(cmd);
+  }
+}
+
+void D3D12RenderState::ApplyComputeRootElements(ID3D12GraphicsCommandList *cmd) const
+{
+  for(size_t i = 0; i < compute.sigelems.size(); i++)
+  {
+    // just don't set tables that aren't in the descriptor heaps, since it's invalid and can crash
+    // and is probably just from stale bindings that aren't going to be used
+    if(compute.sigelems[i].type != eRootTable ||
+       std::find(heaps.begin(), heaps.end(), compute.sigelems[i].id) != heaps.end())
+    {
+      compute.sigelems[i].SetToCompute(GetResourceManager(), cmd, (UINT)i);
+    }
+    else
+    {
+      RDCDEBUG("Skipping setting possibly stale compute root table referring to heap %llu",
+               compute.sigelems[i].id);
+    }
+  }
+}
+
+void D3D12RenderState::ApplyGraphicsRootElements(ID3D12GraphicsCommandList *cmd) const
+{
+  for(size_t i = 0; i < graphics.sigelems.size(); i++)
+  {
+    // just don't set tables that aren't in the descriptor heaps, since it's invalid and can crash
+    // and is probably just from stale bindings that aren't going to be used
+    if(graphics.sigelems[i].type != eRootTable ||
+       std::find(heaps.begin(), heaps.end(), graphics.sigelems[i].id) != heaps.end())
+    {
+      graphics.sigelems[i].SetToGraphics(GetResourceManager(), cmd, (UINT)i);
+    }
+    else
+    {
+      RDCDEBUG("Skipping setting possibly stale graphics root table referring to heap %llu",
+               graphics.sigelems[i].id);
+    }
   }
 }

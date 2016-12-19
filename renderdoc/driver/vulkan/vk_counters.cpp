@@ -74,14 +74,14 @@ void VulkanReplay::DescribeCounter(uint32_t counterID, CounterDescription &desc)
     desc.units = eUnits_Absolute;
   }
 }
-struct GPUTimerCallback : public VulkanDrawcallCallback
+struct VulkanGPUTimerCallback : public VulkanDrawcallCallback
 {
-  GPUTimerCallback(WrappedVulkan *vk, VulkanReplay *rp, VkQueryPool qp)
+  VulkanGPUTimerCallback(WrappedVulkan *vk, VulkanReplay *rp, VkQueryPool qp)
       : m_pDriver(vk), m_pReplay(rp), m_QueryPool(qp)
   {
     m_pDriver->SetDrawcallCB(this);
   }
-  ~GPUTimerCallback() { m_pDriver->SetDrawcallCB(NULL); }
+  ~VulkanGPUTimerCallback() { m_pDriver->SetDrawcallCB(NULL); }
   void PreDraw(uint32_t eid, VkCommandBuffer cmd)
   {
     ObjDisp(cmd)->CmdWriteTimestamp(Unwrap(cmd), VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, m_QueryPool,
@@ -90,8 +90,8 @@ struct GPUTimerCallback : public VulkanDrawcallCallback
 
   bool PostDraw(uint32_t eid, VkCommandBuffer cmd)
   {
-    ObjDisp(cmd)->CmdWriteTimestamp(Unwrap(cmd), VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                    m_QueryPool, (uint32_t)(m_Results.size() * 2 + 1));
+    ObjDisp(cmd)->CmdWriteTimestamp(Unwrap(cmd), VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, m_QueryPool,
+                                    (uint32_t)(m_Results.size() * 2 + 1));
     m_Results.push_back(eid);
     return false;
   }
@@ -101,6 +101,12 @@ struct GPUTimerCallback : public VulkanDrawcallCallback
   void PreDispatch(uint32_t eid, VkCommandBuffer cmd) { PreDraw(eid, cmd); }
   bool PostDispatch(uint32_t eid, VkCommandBuffer cmd) { return PostDraw(eid, cmd); }
   void PostRedispatch(uint32_t eid, VkCommandBuffer cmd) { PostRedraw(eid, cmd); }
+  void PreMisc(uint32_t eid, DrawcallFlags flags, VkCommandBuffer cmd) { PreDraw(eid, cmd); }
+  bool PostMisc(uint32_t eid, DrawcallFlags flags, VkCommandBuffer cmd)
+  {
+    return PostDraw(eid, cmd);
+  }
+  void PostRemisc(uint32_t eid, DrawcallFlags flags, VkCommandBuffer cmd) { PostRedraw(eid, cmd); }
   bool RecordAllCmds() { return true; }
   void AliasEvent(uint32_t primary, uint32_t alias)
   {
@@ -144,11 +150,11 @@ vector<CounterResult> VulkanReplay::FetchCounters(const vector<uint32_t> &counte
   vkr = ObjDisp(dev)->EndCommandBuffer(Unwrap(cmd));
   RDCASSERTEQUAL(vkr, VK_SUCCESS);
 
-#if defined(SINGLE_FLUSH_VALIDATE)
+#if ENABLED(SINGLE_FLUSH_VALIDATE)
   m_pDriver->SubmitCmds();
 #endif
 
-  GPUTimerCallback cb(m_pDriver, this, pool);
+  VulkanGPUTimerCallback cb(m_pDriver, this, pool);
 
   // replay the events to perform all the queries
   m_pDriver->ReplayLog(0, maxEID, eReplay_Full);

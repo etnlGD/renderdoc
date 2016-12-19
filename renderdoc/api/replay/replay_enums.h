@@ -90,6 +90,7 @@ enum ShaderResourceType
 enum ShaderBindType
 {
   eBindType_Unknown = 0,
+  eBindType_ConstantBuffer,
   eBindType_Sampler,
   eBindType_ImageSampler,
   eBindType_ReadOnlyImage,
@@ -167,6 +168,8 @@ enum TextureDisplayOverlay
   eTexOverlay_ClearBeforeDraw,
   eTexOverlay_QuadOverdrawPass,
   eTexOverlay_QuadOverdrawDraw,
+  eTexOverlay_TriangleSizePass,
+  eTexOverlay_TriangleSizeDraw,
 };
 
 enum FileType
@@ -178,6 +181,7 @@ enum FileType
   eFileType_TGA,
   eFileType_HDR,
   eFileType_EXR,
+  eFileType_Count,
 };
 
 enum AlphaMapping
@@ -185,6 +189,8 @@ enum AlphaMapping
   eAlphaMap_Discard,
   eAlphaMap_BlendToColour,
   eAlphaMap_BlendToCheckerboard,
+  eAlphaMap_Preserve,
+  eAlphaMap_Count,
 };
 
 enum SpecialFormat
@@ -224,9 +230,15 @@ enum QualityHint
 enum GraphicsAPI
 {
   eGraphicsAPI_D3D11,
+  eGraphicsAPI_D3D12,
   eGraphicsAPI_OpenGL,
   eGraphicsAPI_Vulkan,
 };
+
+inline bool IsD3D(GraphicsAPI api)
+{
+  return api == eGraphicsAPI_D3D11 || api == eGraphicsAPI_D3D12;
+}
 
 enum PrimitiveTopology
 {
@@ -318,6 +330,7 @@ enum ShaderStageType
 
 enum ShaderStageBits
 {
+  eStageBits_None = 0,
   eStageBits_Vertex = 1 << eShaderStage_Vertex,
   eStageBits_Hull = 1 << eShaderStage_Hull,
   eStageBits_Tess_Control = 1 << eShaderStage_Tess_Control,
@@ -327,6 +340,9 @@ enum ShaderStageBits
   eStageBits_Pixel = 1 << eShaderStage_Pixel,
   eStageBits_Fragment = 1 << eShaderStage_Fragment,
   eStageBits_Compute = 1 << eShaderStage_Compute,
+  eStageBits_All = eStageBits_Vertex | eStageBits_Hull | eStageBits_Domain | eStageBits_Geometry |
+                   eStageBits_Pixel |
+                   eStageBits_Compute,
 };
 
 enum DebugMessageCategory
@@ -381,6 +397,8 @@ enum ResourceUsage
   eUsage_PS_Constants,
   eUsage_CS_Constants,
 
+  eUsage_All_Constants,
+
   eUsage_SO,
 
   eUsage_VS_Resource,
@@ -390,6 +408,8 @@ enum ResourceUsage
   eUsage_PS_Resource,
   eUsage_CS_Resource,
 
+  eUsage_All_Resource,
+
   eUsage_VS_RWResource,
   eUsage_HS_RWResource,
   eUsage_DS_RWResource,
@@ -397,9 +417,13 @@ enum ResourceUsage
   eUsage_PS_RWResource,
   eUsage_CS_RWResource,
 
+  eUsage_All_RWResource,
+
   eUsage_InputTarget,
   eUsage_ColourTarget,
   eUsage_DepthStencilTarget,
+
+  eUsage_Indirect,
 
   eUsage_Clear,
 
@@ -471,10 +495,18 @@ enum GPUCounters
   eCounter_FirstGeneric = 1,
   eCounter_EventGPUDuration = eCounter_FirstGeneric,
   eCounter_InputVerticesRead,
-  eCounter_VSInvocations,
-  eCounter_PSInvocations,
+  eCounter_IAPrimitives,
+  eCounter_GSPrimitives,
+  eCounter_RasterizerInvocations,
   eCounter_RasterizedPrimitives,
   eCounter_SamplesWritten,
+  eCounter_VSInvocations,
+  eCounter_HSInvocations,
+  eCounter_DSInvocations,
+  eCounter_TESInvocations = eCounter_DSInvocations,
+  eCounter_GSInvocations,
+  eCounter_PSInvocations,
+  eCounter_CSInvocations,
 
   // IHV specific counters can be set above this point
   // with ranges reserved for each IHV
@@ -545,4 +577,16 @@ enum EnvironmentSeparator
   eEnvSep_SemiColon,
   eEnvSep_Colon,
   eEnvSep_None,
+};
+
+// matches enum in common.h
+enum LogMessageType
+{
+  eLogType_First = -1,
+  eLogType_Debug,
+  eLogType_Comment,
+  eLogType_Warning,
+  eLogType_Error,
+  eLogType_Fatal,
+  eLogType_NumTypes,
 };

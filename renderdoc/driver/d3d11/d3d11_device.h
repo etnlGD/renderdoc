@@ -62,10 +62,10 @@ struct D3D11InitParams : public RDCInitParams
   UINT NumFeatureLevels;
   D3D_FEATURE_LEVEL FeatureLevels[16];
 
-  static const uint32_t D3D11_SERIALISE_VERSION = 0x0000009;
+  static const uint32_t D3D11_SERIALISE_VERSION = 0x000000B;
 
   // backwards compatibility for old logs described at the declaration of this array
-  static const uint32_t D3D11_NUM_SUPPORTED_OLD_VERSIONS = 5;
+  static const uint32_t D3D11_NUM_SUPPORTED_OLD_VERSIONS = 7;
   static const uint32_t D3D11_OLD_VERSIONS[D3D11_NUM_SUPPORTED_OLD_VERSIONS];
 
   // version number internal to d3d11 stream
@@ -74,6 +74,47 @@ struct D3D11InitParams : public RDCInitParams
 
 class WrappedID3D11Device;
 class WrappedShader;
+
+// declare this here as we don't want to pull in the whole D3D10 headers
+MIDL_INTERFACE("9B7E4E00-342C-4106-A19F-4F2704F689F0")
+ID3D10Multithread : public IUnknown
+{
+public:
+  virtual void STDMETHODCALLTYPE Enter(void) = 0;
+
+  virtual void STDMETHODCALLTYPE Leave(void) = 0;
+
+  virtual BOOL STDMETHODCALLTYPE SetMultithreadProtected(
+      /* [annotation] */
+      _In_ BOOL bMTProtect) = 0;
+
+  virtual BOOL STDMETHODCALLTYPE GetMultithreadProtected(void) = 0;
+};
+
+struct DummyID3D10Multithread : public ID3D10Multithread
+{
+  WrappedID3D11Device *m_pDevice;
+
+  DummyID3D10Multithread() : m_pDevice(NULL) {}
+  //////////////////////////////
+  // implement IUnknown
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppvObject) { return E_NOINTERFACE; }
+  ULONG STDMETHODCALLTYPE AddRef();
+  ULONG STDMETHODCALLTYPE Release();
+
+  //////////////////////////////
+  // implement ID3D10Multithread
+  virtual void STDMETHODCALLTYPE Enter(void) { return; }
+  virtual void STDMETHODCALLTYPE Leave(void) { return; }
+  virtual BOOL STDMETHODCALLTYPE SetMultithreadProtected(
+      /* [annotation] */
+      _In_ BOOL bMTProtect)
+  {
+    return TRUE;
+  }
+
+  virtual BOOL STDMETHODCALLTYPE GetMultithreadProtected(void) { return TRUE; }
+};
 
 // We can pass through all calls to ID3D11Debug without intercepting, this
 // struct isonly here so that we can intercept QueryInterface calls to return
@@ -280,6 +321,7 @@ private:
 
   D3D11Replay m_Replay;
 
+  DummyID3D10Multithread m_DummyD3D10Multithread;
   DummyID3D11InfoQueue m_DummyInfoQueue;
   DummyID3D11Debug m_DummyDebug;
   WrappedID3D11Debug m_WrappedDebug;
@@ -289,12 +331,16 @@ private:
   RefCounter m_SoftRefCounter;
   bool m_Alive;
 
+  int32_t m_ChunkAtomic;
+
   D3D11DebugManager *m_DebugManager;
   D3D11ResourceManager *m_ResourceManager;
 
   vector<string> m_ShaderSearchPaths;
 
   D3D11InitParams m_InitParams;
+
+  ResourceId m_BBID;
 
   ID3D11Device *m_pDevice;
   ID3D11Device1 *m_pDevice1;
@@ -336,22 +382,14 @@ private:
   map<ID3D11InputLayout *, vector<D3D11_INPUT_ELEMENT_DESC> > m_LayoutDescs;
   map<ID3D11InputLayout *, WrappedShader *> m_LayoutShaders;
 
-  ResourceId m_ReplayDefCtx;
-  uint32_t m_FirstDefEv;
-  uint32_t m_LastDefEv;
-
   static WrappedID3D11Device *m_pCurrentWrappedDevice;
 
-  map<WrappedIDXGISwapChain3 *, ID3D11RenderTargetView *> m_SwapChains;
+  map<WrappedIDXGISwapChain4 *, ID3D11RenderTargetView *> m_SwapChains;
 
   uint32_t m_FrameCounter;
   uint32_t m_FailedFrame;
   CaptureFailReason m_FailedReason;
   uint32_t m_Failures;
-
-  PerformanceTimer m_FrameTimer;
-  vector<double> m_FrameTimes;
-  double m_TotalTime, m_AvgFrametime, m_MinFrametime, m_MaxFrametime;
 
   vector<DebugMessage> m_DebugMessages;
 
@@ -394,7 +432,12 @@ public:
   FetchFrameStatistics &GetFrameStats() { return m_FrameRecord.frameInfo.stats; }
   const FetchDrawcall *GetDrawcall(uint32_t eventID);
 
-  void FirstFrame(WrappedIDXGISwapChain3 *swapChain);
+  void LockForChunkFlushing();
+  void UnlockForChunkFlushing();
+  void LockForChunkRemoval();
+  void UnlockForChunkRemoval();
+
+  void FirstFrame(WrappedIDXGISwapChain4 *swapChain);
 
   vector<DebugMessage> GetDebugMessages();
   void AddDebugMessage(DebugMessage msg);
@@ -413,8 +456,32 @@ public:
   // interface for DXGI
   virtual IUnknown *GetRealIUnknown() { return GetReal(); }
   virtual IID GetBackbufferUUID() { return __uuidof(ID3D11Texture2D); }
-  virtual IID GetDeviceUUID() { return __uuidof(ID3D11Device); }
-  virtual IUnknown *GetDeviceInterface() { return (ID3D11Device *)this; }
+  virtual bool IsDeviceUUID(REFIID iid)
+  {
+    if(iid == __uuidof(ID3D11Device) || iid == __uuidof(ID3D11Device1) ||
+       iid == __uuidof(ID3D11Device2) || iid == __uuidof(ID3D11Device3) ||
+       iid == __uuidof(ID3D11Device4))
+      return true;
+
+    return false;
+  }
+  virtual IUnknown *GetDeviceInterface(REFIID iid)
+  {
+    if(iid == __uuidof(ID3D11Device))
+      return (ID3D11Device *)this;
+    else if(iid == __uuidof(ID3D11Device1))
+      return (ID3D11Device1 *)this;
+    else if(iid == __uuidof(ID3D11Device2))
+      return (ID3D11Device2 *)this;
+    else if(iid == __uuidof(ID3D11Device3))
+      return (ID3D11Device3 *)this;
+    else if(iid == __uuidof(ID3D11Device4))
+      return (ID3D11Device4 *)this;
+
+    RDCERR("Requested unknown device interface %s", ToStr::Get(iid).c_str());
+
+    return NULL;
+  }
   ////////////////////////////////////////////////////////////////
   // log replaying
 
@@ -425,7 +492,6 @@ public:
 
   void ReadLogInitialisation();
   void ProcessChunk(uint64_t offset, D3D11ChunkType context);
-  void SetContextFilter(ResourceId id, uint32_t firstDefEv, uint32_t lastDefEv);
   void ReplayLog(uint32_t startEventID, uint32_t endEventID, ReplayLogType replayType);
 
   ////////////////////////////////////////////////////////////////
@@ -451,15 +517,17 @@ public:
                                                  ID3D11ClassInstance *inst));
 
   // Swap Chain
-  IMPLEMENT_FUNCTION_SERIALISED(IUnknown *, WrapSwapchainBuffer(WrappedIDXGISwapChain3 *swap,
+  IMPLEMENT_FUNCTION_SERIALISED(IUnknown *, WrapSwapchainBuffer(WrappedIDXGISwapChain4 *swap,
                                                                 DXGI_SWAP_CHAIN_DESC *desc,
                                                                 UINT buffer, IUnknown *realSurface));
-  HRESULT Present(WrappedIDXGISwapChain3 *swap, UINT SyncInterval, UINT Flags);
+  HRESULT Present(WrappedIDXGISwapChain4 *swap, UINT SyncInterval, UINT Flags);
 
   void NewSwapchainBuffer(IUnknown *backbuffer);
 
-  void ReleaseSwapchainResources(WrappedIDXGISwapChain3 *swap);
+  void ReleaseSwapchainResources(WrappedIDXGISwapChain4 *swap, UINT QueueCount,
+                                 IUnknown *const *ppPresentQueue, IUnknown **unwrappedQueues);
 
+  ResourceId GetBackbufferResourceID() { return m_BBID; }
   void InternalRef() { InterlockedIncrement(&m_InternalRefcount); }
   void InternalRelease() { InterlockedDecrement(&m_InternalRefcount); }
   void SoftRef() { m_SoftRefCounter.AddRef(); }

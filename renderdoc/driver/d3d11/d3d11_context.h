@@ -147,7 +147,7 @@ size_t BucketForRecordPow2(size_t value)
   return index;
 }
 
-class WrappedID3D11DeviceContext : public RefCounter, public ID3D11DeviceContext2
+class WrappedID3D11DeviceContext : public RefCounter, public ID3D11DeviceContext3
 {
 private:
   friend class WrappedID3D11DeviceContext;
@@ -168,6 +168,8 @@ private:
       return subresource < o.subresource;
     }
   };
+
+  set<ResourceId> m_DeferredDirty;
 
   set<ResourceId> m_HighTrafficResources;
   map<MappedResource, MapIntercept> m_OpenMaps;
@@ -194,7 +196,6 @@ private:
 
   bool m_NeedUpdateSubWorkaround;
 
-  set<D3D11ResourceRecord *> m_DeferredRecords;
   map<ResourceId, int> m_MapResourceRecordAllocs;
 
   set<ResourceId> m_MissingTracks;
@@ -202,16 +203,21 @@ private:
   ResourceId m_ResourceID;
   D3D11ResourceRecord *m_ContextRecord;
 
+  bool m_OwnSerialiser;
   Serialiser *m_pSerialiser;
   LogState m_State;
   CaptureFailReason m_FailureReason;
   bool m_SuccessfulCapture;
   bool m_EmptyCommandList;
 
+  bool m_PresentChunk;
+
   ResourceId m_FakeContext;
 
   bool m_DoStateVerify;
   D3D11RenderState *m_CurrentPipelineState;
+
+  D3D11RenderState *m_DeferredSavedState;
 
   vector<FetchAPIEvent> m_CurEvents, m_Events;
   bool m_AddedDrawcall;
@@ -241,6 +247,8 @@ private:
 
   list<DrawcallTreeNode *> m_DrawcallStack;
 
+  void FlattenLog();
+
   const char *GetChunkName(D3D11ChunkType idx);
 
   void Serialise_DebugMessages();
@@ -249,9 +257,8 @@ private:
 
   void AddUsage(const FetchDrawcall &d);
 
-  void AddEvent(D3D11ChunkType type, string description, ResourceId ctx = ResourceId());
+  void AddEvent(string description);
   void AddDrawcall(const FetchDrawcall &d, bool hasEvents);
-  void RefreshDrawcallIDs(DrawcallTreeNode &node);
 
   void RecordIndexBindStats(ID3D11Buffer *Buffer);
   void RecordVertexBindStats(UINT NumBuffers, ID3D11Buffer *Buffers[]);
@@ -299,6 +306,11 @@ public:
   bool Serialise_BeginCaptureFrame(bool applyInitialState);
   void BeginCaptureFrame();
   void EndCaptureFrame();
+
+  void MarkDirtyResource(ResourceId id);
+
+  // insert a fake chunk just to store these parameters
+  void Present(UINT SyncInterval, UINT Flags);
 
   void CleanupCapture();
   void FreeCaptureData();

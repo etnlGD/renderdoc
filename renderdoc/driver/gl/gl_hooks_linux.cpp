@@ -413,7 +413,7 @@ public:
       return false;
 
     if(libName)
-      LinuxHookLibrary("libGL.so", &libHooked);
+      PosixHookLibrary("libGL.so", &libHooked);
 
     bool success = SetupHooks(GL);
 
@@ -429,11 +429,45 @@ public:
   void OptionsUpdated(const char *libName) {}
   static OpenGLHook glhooks;
 
+  // see callsite in glXSwapBuffers for explanation of why this is necessary
+  XID UnwrapGLXWindow(XID id)
+  {
+    // if it's a GLXWindow
+    auto it = m_GLXWindowMap.find(id);
+
+    if(it != m_GLXWindowMap.end())
+    {
+      // return the drawable used at creation time
+      return it->second;
+    }
+
+    // otherwise just use the id as-is
+    return id;
+  }
+
+  void AddGLXWindow(GLXWindow glx, Window win) { m_GLXWindowMap[glx] = win; }
+  void RemoveGLXWindow(GLXWindow glx)
+  {
+    auto it = m_GLXWindowMap.find(glx);
+
+    if(it != m_GLXWindowMap.end())
+      m_GLXWindowMap.erase(it);
+  }
+
   const GLHookSet &GetRealGLFunctions()
   {
     if(!m_PopulatedHooks)
       m_PopulatedHooks = PopulateHooks();
     return GL;
+  }
+
+  void SetupExportedFunctions()
+  {
+    // in the replay application we need to call SetupHooks to ensure that all of our exported
+    // functions like glXCreateContext etc have the 'real' pointers to call into, otherwise even the
+    // replay app will resolve to our hooks first before the real libGL and call in.
+    if(RenderDoc::Inst().IsReplayApp())
+      SetupHooks(GL);
   }
 
   void MakeContextCurrent(GLWindowingData data)
@@ -507,10 +541,12 @@ public:
   PFNGLXCREATECONTEXTATTRIBSARBPROC glXCreateContextAttribsARB_real;
   PFNGLXGETPROCADDRESSPROC glXGetProcAddress_real;
   PFNGLXMAKECURRENTPROC glXMakeCurrent_real;
+  PFNGLXMAKECONTEXTCURRENTPROC glXMakeContextCurrent_real;
   PFNGLXSWAPBUFFERSPROC glXSwapBuffers_real;
   PFNGLXGETCONFIGPROC glXGetConfig_real;
   PFNGLXGETVISUALFROMFBCONFIGPROC glXGetVisualFromFBConfig_real;
-  PFNGLXQUERYEXTENSIONPROC glXQueryExtension_real;
+  PFNGLXCREATEWINDOWPROC glXCreateWindow_real;
+  PFNGLXDESTROYWINDOWPROC glXDestroyWindow_real;
 
   WrappedOpenGL *m_GLDriver;
 
@@ -518,11 +554,47 @@ public:
 
   set<GLXContext> m_Contexts;
 
+  map<XID, XID> m_GLXWindowMap;
+
   bool m_PopulatedHooks;
   bool m_HasHooks;
   bool m_EnabledHooks;
 
-  bool SetupHooks(GLHookSet &GL);
+  bool SetupHooks(GLHookSet &GL)
+  {
+    bool success = true;
+
+    if(glXGetProcAddress_real == NULL)
+      glXGetProcAddress_real =
+          (PFNGLXGETPROCADDRESSPROC)dlsym(libGLdlsymHandle, "glXGetProcAddress");
+    if(glXCreateContext_real == NULL)
+      glXCreateContext_real = (PFNGLXCREATECONTEXTPROC)dlsym(libGLdlsymHandle, "glXCreateContext");
+    if(glXDestroyContext_real == NULL)
+      glXDestroyContext_real =
+          (PFNGLXDESTROYCONTEXTPROC)dlsym(libGLdlsymHandle, "glXDestroyContext");
+    if(glXCreateContextAttribsARB_real == NULL)
+      glXCreateContextAttribsARB_real =
+          (PFNGLXCREATECONTEXTATTRIBSARBPROC)dlsym(libGLdlsymHandle, "glXCreateContextAttribsARB");
+    if(glXMakeCurrent_real == NULL)
+      glXMakeCurrent_real = (PFNGLXMAKECURRENTPROC)dlsym(libGLdlsymHandle, "glXMakeCurrent");
+    if(glXMakeContextCurrent_real == NULL)
+      glXMakeContextCurrent_real =
+          (PFNGLXMAKECONTEXTCURRENTPROC)dlsym(libGLdlsymHandle, "glXMakeContextCurrent");
+    if(glXSwapBuffers_real == NULL)
+      glXSwapBuffers_real = (PFNGLXSWAPBUFFERSPROC)dlsym(libGLdlsymHandle, "glXSwapBuffers");
+    if(glXGetConfig_real == NULL)
+      glXGetConfig_real = (PFNGLXGETCONFIGPROC)dlsym(libGLdlsymHandle, "glXGetConfig");
+    if(glXGetVisualFromFBConfig_real == NULL)
+      glXGetVisualFromFBConfig_real =
+          (PFNGLXGETVISUALFROMFBCONFIGPROC)dlsym(libGLdlsymHandle, "glXGetVisualFromFBConfig");
+    if(glXCreateWindow_real == NULL)
+      glXCreateWindow_real = (PFNGLXCREATEWINDOWPROC)dlsym(libGLdlsymHandle, "glXCreateWindow");
+    if(glXDestroyWindow_real == NULL)
+      glXDestroyWindow_real = (PFNGLXDESTROYWINDOWPROC)dlsym(libGLdlsymHandle, "glXDestroyWindow");
+
+    return success;
+  }
+
   bool PopulateHooks();
 };
 
@@ -827,9 +899,15 @@ DefineGLExtensionHooks();
 
 DefineUnsupportedDummies();
 
+// everything below here needs to have C linkage
+extern "C" {
+
 __attribute__((visibility("default"))) GLXContext glXCreateContext(Display *dpy, XVisualInfo *vis,
                                                                    GLXContext shareList, Bool direct)
 {
+  if(OpenGLHook::glhooks.glXCreateContext_real == NULL)
+    OpenGLHook::glhooks.SetupExportedFunctions();
+
   GLXContext ret = OpenGLHook::glhooks.glXCreateContext_real(dpy, vis, shareList, direct);
 
   // don't continue if context creation failed
@@ -870,6 +948,9 @@ __attribute__((visibility("default"))) GLXContext glXCreateContext(Display *dpy,
 
 __attribute__((visibility("default"))) void glXDestroyContext(Display *dpy, GLXContext ctx)
 {
+  if(OpenGLHook::glhooks.glXDestroyContext_real == NULL)
+    OpenGLHook::glhooks.SetupExportedFunctions();
+
   OpenGLHook::glhooks.GetDriver()->DeleteContext(ctx);
 
   OpenGLHook::glhooks.glXDestroyContext_real(dpy, ctx);
@@ -935,6 +1016,9 @@ __attribute__((visibility("default"))) GLXContext glXCreateContextAttribsARB(
     a += 2;
   }
 
+  if(OpenGLHook::glhooks.glXCreateContextAttribsARB_real == NULL)
+    OpenGLHook::glhooks.SetupExportedFunctions();
+
   GLXContext ret =
       OpenGLHook::glhooks.glXCreateContextAttribsARB_real(dpy, config, shareList, direct, attribs);
 
@@ -981,6 +1065,9 @@ __attribute__((visibility("default"))) GLXContext glXCreateContextAttribsARB(
 __attribute__((visibility("default"))) Bool glXMakeCurrent(Display *dpy, GLXDrawable drawable,
                                                            GLXContext ctx)
 {
+  if(OpenGLHook::glhooks.glXMakeCurrent_real == NULL)
+    OpenGLHook::glhooks.SetupExportedFunctions();
+
   Bool ret = OpenGLHook::glhooks.glXMakeCurrent_real(dpy, drawable, ctx);
 
   if(ctx && OpenGLHook::glhooks.m_Contexts.find(ctx) == OpenGLHook::glhooks.m_Contexts.end())
@@ -1000,12 +1087,50 @@ __attribute__((visibility("default"))) Bool glXMakeCurrent(Display *dpy, GLXDraw
   return ret;
 }
 
+__attribute__((visibility("default"))) Bool glXMakeContextCurrent(Display *dpy, GLXDrawable draw,
+                                                                  GLXDrawable read, GLXContext ctx)
+{
+  if(OpenGLHook::glhooks.glXMakeContextCurrent_real == NULL)
+    OpenGLHook::glhooks.SetupExportedFunctions();
+
+  Bool ret = OpenGLHook::glhooks.glXMakeContextCurrent_real(dpy, draw, read, ctx);
+
+  if(ctx && OpenGLHook::glhooks.m_Contexts.find(ctx) == OpenGLHook::glhooks.m_Contexts.end())
+  {
+    OpenGLHook::glhooks.m_Contexts.insert(ctx);
+
+    OpenGLHook::glhooks.PopulateHooks();
+  }
+
+  GLWindowingData data;
+  data.dpy = dpy;
+  data.wnd = draw;
+  data.ctx = ctx;
+
+  OpenGLHook::glhooks.GetDriver()->ActivateContext(data);
+
+  return ret;
+}
+
 __attribute__((visibility("default"))) void glXSwapBuffers(Display *dpy, GLXDrawable drawable)
 {
+  if(OpenGLHook::glhooks.glXSwapBuffers_real == NULL)
+    OpenGLHook::glhooks.SetupExportedFunctions();
+
+  SCOPED_LOCK(glLock);
+
+  // if we use the GLXDrawable in XGetGeometry and it's a GLXWindow, then we get
+  // a BadDrawable error and things go south. Instead we track GLXWindows created
+  // in glXCreateWindow/glXDestroyWindow and look up the source window it was
+  // created from to use that.
+  // If the drawable didn't come through there, it just passes through unscathed
+  // through this function
+  Drawable d = OpenGLHook::glhooks.UnwrapGLXWindow(drawable);
+
   Window root;
   int x, y;
   unsigned int width, height, border_width, depth;
-  XGetGeometry(dpy, drawable, &root, &x, &y, &width, &height, &border_width, &depth);
+  XGetGeometry(dpy, d, &root, &x, &y, &width, &height, &border_width, &depth);
 
   OpenGLHook::glhooks.GetDriver()->WindowSize((void *)drawable, width, height);
 
@@ -1014,42 +1139,11 @@ __attribute__((visibility("default"))) void glXSwapBuffers(Display *dpy, GLXDraw
   OpenGLHook::glhooks.glXSwapBuffers_real(dpy, drawable);
 }
 
-__attribute__((visibility("default"))) Bool glXQueryExtension(Display *dpy, int *errorBase,
-                                                              int *eventBase)
-{
-  return OpenGLHook::glhooks.glXQueryExtension_real(dpy, errorBase, eventBase);
-}
-
-bool OpenGLHook::SetupHooks(GLHookSet &GL)
-{
-  bool success = true;
-
-  if(glXGetProcAddress_real == NULL)
-    glXGetProcAddress_real = (PFNGLXGETPROCADDRESSPROC)dlsym(libGLdlsymHandle, "glXGetProcAddress");
-  if(glXCreateContext_real == NULL)
-    glXCreateContext_real = (PFNGLXCREATECONTEXTPROC)dlsym(libGLdlsymHandle, "glXCreateContext");
-  if(glXDestroyContext_real == NULL)
-    glXDestroyContext_real = (PFNGLXDESTROYCONTEXTPROC)dlsym(libGLdlsymHandle, "glXDestroyContext");
-  if(glXCreateContextAttribsARB_real == NULL)
-    glXCreateContextAttribsARB_real =
-        (PFNGLXCREATECONTEXTATTRIBSARBPROC)dlsym(libGLdlsymHandle, "glXCreateContextAttribsARB");
-  if(glXMakeCurrent_real == NULL)
-    glXMakeCurrent_real = (PFNGLXMAKECURRENTPROC)dlsym(libGLdlsymHandle, "glXMakeCurrent");
-  if(glXSwapBuffers_real == NULL)
-    glXSwapBuffers_real = (PFNGLXSWAPBUFFERSPROC)dlsym(libGLdlsymHandle, "glXSwapBuffers");
-  if(glXGetConfig_real == NULL)
-    glXGetConfig_real = (PFNGLXGETCONFIGPROC)dlsym(libGLdlsymHandle, "glXGetConfig");
-  if(glXGetVisualFromFBConfig_real == NULL)
-    glXGetVisualFromFBConfig_real =
-        (PFNGLXGETVISUALFROMFBCONFIGPROC)dlsym(libGLdlsymHandle, "glXGetVisualFromFBConfig");
-  if(glXQueryExtension_real == NULL)
-    glXQueryExtension_real = (PFNGLXQUERYEXTENSIONPROC)dlsym(libGLdlsymHandle, "glXQueryExtension");
-
-  return success;
-}
-
 __attribute__((visibility("default"))) __GLXextFuncPtr glXGetProcAddress(const GLubyte *f)
 {
+  if(OpenGLHook::glhooks.glXGetProcAddress_real == NULL)
+    OpenGLHook::glhooks.SetupExportedFunctions();
+
   __GLXextFuncPtr realFunc = OpenGLHook::glhooks.glXGetProcAddress_real(f);
   const char *func = (const char *)f;
 
@@ -1110,9 +1204,36 @@ __attribute__((visibility("default"))) __GLXextFuncPtr glXGetProcAddressARB(cons
   return glXGetProcAddress(f);
 }
 
+__attribute__((visibility("default"))) GLXWindow glXCreateWindow(Display *dpy, GLXFBConfig config,
+                                                                 Window win, const int *attribList)
+{
+  if(OpenGLHook::glhooks.glXCreateWindow_real == NULL)
+    OpenGLHook::glhooks.SetupExportedFunctions();
+
+  GLXWindow ret = OpenGLHook::glhooks.glXCreateWindow_real(dpy, config, win, attribList);
+
+  OpenGLHook::glhooks.AddGLXWindow(ret, win);
+
+  return ret;
+}
+
+__attribute__((visibility("default"))) void glXDestroyWindow(Display *dpy, GLXWindow window)
+{
+  if(OpenGLHook::glhooks.glXDestroyWindow_real == NULL)
+    OpenGLHook::glhooks.SetupExportedFunctions();
+
+  OpenGLHook::glhooks.RemoveGLXWindow(window);
+
+  return OpenGLHook::glhooks.glXDestroyWindow_real(dpy, window);
+}
+
+};    // extern "C"
+
 bool OpenGLHook::PopulateHooks()
 {
   bool success = true;
+
+  SetupHooks(GL);
 
   if(glXGetProcAddress_real == NULL)
     glXGetProcAddress_real = (PFNGLXGETPROCADDRESSPROC)dlsym(libGLdlsymHandle, "glXGetProcAddress");
@@ -1148,6 +1269,11 @@ OpenGLHook OpenGLHook::glhooks;
 const GLHookSet &GetRealGLFunctions()
 {
   return OpenGLHook::glhooks.GetRealGLFunctions();
+}
+
+Threading::CriticalSection &GetGLLock()
+{
+  return glLock;
 }
 
 void MakeContextCurrent(GLWindowingData data)

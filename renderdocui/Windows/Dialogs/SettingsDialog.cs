@@ -61,6 +61,11 @@ namespace renderdocui.Windows.Dialogs
             saveDirectory.Text = m_Core.Config.DefaultCaptureSaveDirectory;
             tempDirectory.Text = m_Core.Config.TemporaryCaptureDirectory;
 
+            externalDisassemblerEnabledCheckbox.Checked = m_Core.Config.ExternalDisassemblerEnabled;
+            externalDisassemblerArgs.Text = m_Core.Config.GetDefaultExternalDisassembler().args;
+            externalDisassemblePath.Text = m_Core.Config.GetDefaultExternalDisassembler().executable;
+            adbPath.Text = m_Core.Config.AdbExecutablePath;
+
             TextureViewer_ResetRange.Checked = m_Core.Config.TextureViewer_ResetRange;
             TextureViewer_PerTexSettings.Checked = m_Core.Config.TextureViewer_PerTexSettings;
             ShaderViewer_FriendlyNaming.Checked = m_Core.Config.ShaderViewer_FriendlyNaming;
@@ -277,7 +282,7 @@ namespace renderdocui.Windows.Dialogs
         {
             try
             {
-                if (Directory.Exists(saveDirectory.Text))
+                if (Directory.Exists(saveDirectory.Text) || saveDirectory.Text == "")
                     m_Core.Config.DefaultCaptureSaveDirectory = saveDirectory.Text;
 
                 m_Core.Config.Serialize(Core.ConfigFilename);
@@ -336,6 +341,78 @@ namespace renderdocui.Windows.Dialogs
 
             if (res == DialogResult.OK)
                 m_Core.Config.SetConfigSetting("shader.debug.searchPaths", String.Join(";", editor.GetItems()));
+        }
+
+        private void browseExtDisasemble_Click(object sender, EventArgs e)
+        {
+            var res = browseExtDisassembleDialog.ShowDialog();
+
+            if (res == DialogResult.Yes || res == DialogResult.OK)
+            {
+                try
+                {
+                    m_Core.Config.GetDefaultExternalDisassembler().executable = browseExtDisassembleDialog.FileName;
+                    externalDisassemblePath.Text = browseExtDisassembleDialog.FileName;
+                }
+                catch (Exception)
+                {
+                }
+            }
+        }
+
+        private void externalDisassemblePath_TextChanged(object sender, EventArgs e)
+        {
+            try
+            {
+                m_Core.Config.GetDefaultExternalDisassembler().executable = externalDisassemblePath.Text;
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        private void textBox1_TextChanged(object sender, EventArgs e)
+        {
+            try
+            {
+                m_Core.Config.GetDefaultExternalDisassembler().args = externalDisassemblerArgs.Text;
+            }
+            catch (Exception)
+            {
+            }
+        }
+
+        private void externalDisassemblerEnabledCheckbox_CheckedChanged(object sender, EventArgs e)
+        {
+            m_Core.Config.ExternalDisassemblerEnabled = externalDisassemblerEnabledCheckbox.Checked;
+        }
+
+        private void browseAdbPath_Click(object sender, EventArgs e)
+        {
+            var res = browseExtDisassembleDialog.ShowDialog();
+
+            if (res == DialogResult.Yes || res == DialogResult.OK)
+            {
+                try
+                {
+                    adbPath.Text = browseExtDisassembleDialog.FileName;
+                    m_Core.Config.AdbExecutablePath = adbPath.Text;
+                }
+                catch (Exception)
+                {
+                }
+            }
+        }
+
+        private void adbPath_TextChanged(object sender, EventArgs e)
+        {
+            try
+            {
+                m_Core.Config.AdbExecutablePath = adbPath.Text;
+            }
+            catch (Exception)
+            {
+            }
         }
     }
 }

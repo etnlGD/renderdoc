@@ -138,10 +138,6 @@ ReplayRenderer::ReplayRenderer()
   m_pDevice = NULL;
 
   m_EventID = 100000;
-
-  m_DeferredCtx = ResourceId();
-  m_FirstDeferredEvent = 0;
-  m_LastDeferredEvent = 0;
 }
 
 ReplayRenderer::~ReplayRenderer()
@@ -164,25 +160,6 @@ ReplayRenderer::~ReplayRenderer()
   if(m_pDevice)
     m_pDevice->Shutdown();
   m_pDevice = NULL;
-}
-
-bool ReplayRenderer::SetContextFilter(ResourceId id, uint32_t firstDefEv, uint32_t lastDefEv)
-{
-  if(m_DeferredCtx == ResourceId() && id == ResourceId())
-    return true;
-
-  m_pDevice->SetContextFilter(id, firstDefEv, lastDefEv);
-
-  m_DeferredCtx = id;
-  m_FirstDeferredEvent = firstDefEv;
-  m_LastDeferredEvent = lastDefEv;
-
-  for(size_t i = 0; i < m_Outputs.size(); i++)
-    m_Outputs[i]->SetContextFilter(id, firstDefEv, lastDefEv);
-
-  SetFrameEvent(m_EventID, true);
-
-  return true;
 }
 
 bool ReplayRenderer::SetFrameEvent(uint32_t eventID, bool force)
@@ -209,6 +186,17 @@ bool ReplayRenderer::GetD3D11PipelineState(D3D11PipelineState *state)
   if(state)
   {
     *state = m_D3D11PipelineState;
+    return true;
+  }
+
+  return false;
+}
+
+bool ReplayRenderer::GetD3D12PipelineState(D3D12PipelineState *state)
+{
+  if(state)
+  {
+    *state = m_D3D12PipelineState;
     return true;
   }
 
@@ -247,14 +235,12 @@ bool ReplayRenderer::GetFrameInfo(FetchFrameInfo *info)
   return true;
 }
 
-FetchDrawcall *ReplayRenderer::GetDrawcallByEID(uint32_t eventID, uint32_t defEventID)
+FetchDrawcall *ReplayRenderer::GetDrawcallByEID(uint32_t eventID)
 {
-  uint32_t ev = defEventID > 0 ? defEventID : eventID;
-
-  if(ev >= m_Drawcalls.size())
+  if(eventID >= m_Drawcalls.size())
     return NULL;
 
-  return m_Drawcalls[ev];
+  return m_Drawcalls[eventID];
 }
 
 bool ReplayRenderer::GetDrawcalls(rdctype::array<FetchDrawcall> *draws)
@@ -396,7 +382,7 @@ bool ReplayRenderer::GetPostVSData(uint32_t instID, MeshDataStage stage, MeshFor
   if(data == NULL)
     return false;
 
-  FetchDrawcall *draw = GetDrawcallByEID(m_EventID, m_LastDeferredEvent);
+  FetchDrawcall *draw = GetDrawcallByEID(m_EventID);
 
   MeshFormat ret;
   RDCEraseEl(ret);
@@ -409,41 +395,6 @@ bool ReplayRenderer::GetPostVSData(uint32_t instID, MeshDataStage stage, MeshFor
   *data = m_pDevice->GetPostVSBuffers(draw->eventID, instID, stage);
 
   return true;
-}
-
-bool ReplayRenderer::GetMinMax(ResourceId tex, uint32_t sliceFace, uint32_t mip, uint32_t sample,
-                               FormatComponentType typeHint, PixelValue *minval, PixelValue *maxval)
-{
-  PixelValue *a = minval;
-  PixelValue *b = maxval;
-
-  PixelValue dummy;
-
-  if(a == NULL)
-    a = &dummy;
-  if(b == NULL)
-    b = &dummy;
-
-  return m_pDevice->GetMinMax(m_pDevice->GetLiveID(tex), sliceFace, mip, sample, typeHint,
-                              &a->value_f[0], &b->value_f[0]);
-}
-
-bool ReplayRenderer::GetHistogram(ResourceId tex, uint32_t sliceFace, uint32_t mip, uint32_t sample,
-                                  FormatComponentType typeHint, float minval, float maxval,
-                                  bool channels[4], rdctype::array<uint32_t> *histogram)
-{
-  if(histogram == NULL)
-    return false;
-
-  vector<uint32_t> hist;
-
-  bool ret = m_pDevice->GetHistogram(m_pDevice->GetLiveID(tex), sliceFace, mip, sample, typeHint,
-                                     minval, maxval, channels, hist);
-
-  if(ret)
-    *histogram = hist;
-
-  return ret;
 }
 
 bool ReplayRenderer::GetBufferData(ResourceId buff, uint64_t offset, uint64_t len,
@@ -483,8 +434,7 @@ bool ReplayRenderer::GetTextureData(ResourceId tex, uint32_t arrayIdx, uint32_t 
   }
 
   size_t sz = 0;
-  byte *bytes = m_pDevice->GetTextureData(liveId, arrayIdx, mip, false, eCompType_None, false,
-                                          false, 0.0f, 0.0f, sz);
+  byte *bytes = m_pDevice->GetTextureData(liveId, arrayIdx, mip, GetTextureDataParams(), sz);
 
   if(sz == 0 || bytes == NULL)
     create_array_uninit(*data, 0);
@@ -673,7 +623,8 @@ bool ReplayRenderer::SaveTexture(const TextureSave &saveData, const char *path)
   // for DDS don't downcast, for non-HDR always downcast if we're not already RGBA8 unorm
   // for HDR&EXR we can convert from most regular types as well as 10.10.10.2 and 11.11.10
   if((sd.destType != eFileType_DDS && sd.destType != eFileType_HDR && sd.destType != eFileType_EXR &&
-      (td.format.compByteWidth != 1 || td.format.compType != eCompType_UNorm || td.format.bgraOrder)) ||
+      (td.format.compByteWidth != 1 || td.format.compCount != 4 ||
+       td.format.compType != eCompType_UNorm || td.format.bgraOrder)) ||
      downcast || (sd.destType != eFileType_DDS && td.format.special &&
                   td.format.specialFormat != eSpecial_R10G10B10A2 &&
                   td.format.specialFormat != eSpecial_R11G11B10))
@@ -743,10 +694,16 @@ bool ReplayRenderer::SaveTexture(const TextureSave &saveData, const char *path)
     {
       uint32_t mip = m + mipOffset;
 
+      GetTextureDataParams params;
+      params.forDiskSave = true;
+      params.typeHint = sd.typeHint;
+      params.resolve = resolveSamples;
+      params.remap = downcast ? eRemap_RGBA8 : eRemap_None;
+      params.blackPoint = sd.comp.blackPoint;
+      params.whitePoint = sd.comp.whitePoint;
+
       size_t datasize = 0;
-      byte *bytes =
-          m_pDevice->GetTextureData(liveid, slice, mip, true, sd.typeHint, resolveSamples, downcast,
-                                    sd.comp.blackPoint, sd.comp.whitePoint, datasize);
+      byte *bytes = m_pDevice->GetTextureData(liveid, slice, mip, params, datasize);
 
       if(bytes == NULL)
       {
@@ -1056,12 +1013,20 @@ bool ReplayRenderer::SaveTexture(const TextureSave &saveData, const char *path)
     }
     else if(sd.destType == eFileType_PNG)
     {
+      // discard alpha if requested
+      for(uint32_t p = 0; sd.alpha == eAlphaMap_Discard && p < td.width * td.height; p++)
+        subdata[0][p * 4 + 3] = 255;
+
       int ret = stbi_write_png_to_func(fileWriteFunc, (void *)f, td.width, td.height, numComps,
                                        subdata[0], rowPitch);
       success = (ret != 0);
     }
     else if(sd.destType == eFileType_TGA)
     {
+      // discard alpha if requested
+      for(uint32_t p = 0; sd.alpha == eAlphaMap_Discard && p < td.width * td.height; p++)
+        subdata[0][p * 4 + 3] = 255;
+
       int ret = stbi_write_tga_to_func(fileWriteFunc, (void *)f, td.width, td.height, numComps,
                                        subdata[0]);
       success = (ret != 0);
@@ -1089,7 +1054,7 @@ bool ReplayRenderer::SaveTexture(const TextureSave &saveData, const char *path)
     else if(sd.destType == eFileType_HDR || sd.destType == eFileType_EXR)
     {
       float *fldata = NULL;
-      float *bgra[4] = {NULL, NULL, NULL, NULL};
+      float *abgr[4] = {NULL, NULL, NULL, NULL};
 
       if(sd.destType == eFileType_HDR)
       {
@@ -1097,10 +1062,10 @@ bool ReplayRenderer::SaveTexture(const TextureSave &saveData, const char *path)
       }
       else
       {
-        bgra[0] = new float[td.width * td.height];
-        bgra[1] = new float[td.width * td.height];
-        bgra[2] = new float[td.width * td.height];
-        bgra[3] = new float[td.width * td.height];
+        abgr[0] = new float[td.width * td.height];
+        abgr[1] = new float[td.width * td.height];
+        abgr[2] = new float[td.width * td.height];
+        abgr[3] = new float[td.width * td.height];
       }
 
       byte *srcData = subdata[0];
@@ -1193,10 +1158,10 @@ bool ReplayRenderer::SaveTexture(const TextureSave &saveData, const char *path)
           }
           else
           {
-            bgra[0][(y * td.width + x)] = b;
-            bgra[1][(y * td.width + x)] = g;
-            bgra[2][(y * td.width + x)] = r;
-            bgra[3][(y * td.width + x)] = a;
+            abgr[0][(y * td.width + x)] = a;
+            abgr[1][(y * td.width + x)] = b;
+            abgr[2][(y * td.width + x)] = g;
+            abgr[3][(y * td.width + x)] = r;
           }
         }
       }
@@ -1217,11 +1182,14 @@ bool ReplayRenderer::SaveTexture(const TextureSave &saveData, const char *path)
                            TINYEXR_PIXELTYPE_FLOAT, TINYEXR_PIXELTYPE_FLOAT};
         int reqTypes[4] = {TINYEXR_PIXELTYPE_HALF, TINYEXR_PIXELTYPE_HALF, TINYEXR_PIXELTYPE_HALF,
                            TINYEXR_PIXELTYPE_HALF};
-        const char *bgraNames[4] = {"B", "G", "R", "A"};
+
+        // must be in this order as many viewers don't pay attention to channels and just assume
+        // they are in this order
+        const char *bgraNames[4] = {"A", "B", "G", "R"};
 
         exrImage.num_channels = 4;
         exrImage.channel_names = bgraNames;
-        exrImage.images = (unsigned char **)bgra;
+        exrImage.images = (unsigned char **)abgr;
         exrImage.width = td.width;
         exrImage.height = td.height;
         exrImage.pixel_types = pixTypes;
@@ -1246,10 +1214,10 @@ bool ReplayRenderer::SaveTexture(const TextureSave &saveData, const char *path)
       }
       else
       {
-        delete[] bgra[0];
-        delete[] bgra[1];
-        delete[] bgra[2];
-        delete[] bgra[3];
+        delete[] abgr[0];
+        delete[] abgr[1];
+        delete[] abgr[2];
+        delete[] abgr[3];
       }
     }
 
@@ -1308,16 +1276,19 @@ bool ReplayRenderer::PixelHistory(ResourceId target, uint32_t x, uint32_t y, uin
       case eUsage_GS_Constants:
       case eUsage_PS_Constants:
       case eUsage_CS_Constants:
+      case eUsage_All_Constants:
       case eUsage_VS_Resource:
       case eUsage_HS_Resource:
       case eUsage_DS_Resource:
       case eUsage_GS_Resource:
       case eUsage_PS_Resource:
       case eUsage_CS_Resource:
+      case eUsage_All_Resource:
       case eUsage_InputTarget:
       case eUsage_CopySrc:
       case eUsage_ResolveSrc:
       case eUsage_Barrier:
+      case eUsage_Indirect:
         // read-only, not a valid pixel history event
         continue;
 
@@ -1329,6 +1300,7 @@ bool ReplayRenderer::PixelHistory(ResourceId target, uint32_t x, uint32_t y, uin
       case eUsage_GS_RWResource:
       case eUsage_PS_RWResource:
       case eUsage_CS_RWResource:
+      case eUsage_All_RWResource:
       case eUsage_ColourTarget:
       case eUsage_DepthStencilTarget:
       case eUsage_Clear:
@@ -1602,8 +1574,7 @@ ReplayCreateStatus ReplayRenderer::PostCreateInit(IReplayDriver *device)
 
   m_FrameRecord.frameInfo = fr.frameInfo;
   m_FrameRecord.m_DrawCallList = fr.drawcallList;
-  SetupDrawcallPointers(&m_Drawcalls, fr.frameInfo.immContextId, m_FrameRecord.m_DrawCallList, NULL,
-                        NULL);
+  SetupDrawcallPointers(&m_Drawcalls, m_FrameRecord.m_DrawCallList, NULL, NULL);
 
   return eReplayCreate_Success;
 }
@@ -1634,6 +1605,7 @@ void ReplayRenderer::FetchPipelineState()
   m_pDevice->SavePipelineState();
 
   m_D3D11PipelineState = m_pDevice->GetD3D11PipelineState();
+  m_D3D12PipelineState = m_pDevice->GetD3D12PipelineState();
   m_GLPipelineState = m_pDevice->GetGLPipelineState();
   m_VulkanPipelineState = m_pDevice->GetVulkanPipelineState();
 
@@ -1641,6 +1613,17 @@ void ReplayRenderer::FetchPipelineState()
     D3D11PipelineState::ShaderStage *stages[] = {
         &m_D3D11PipelineState.m_VS, &m_D3D11PipelineState.m_HS, &m_D3D11PipelineState.m_DS,
         &m_D3D11PipelineState.m_GS, &m_D3D11PipelineState.m_PS, &m_D3D11PipelineState.m_CS,
+    };
+
+    for(int i = 0; i < 6; i++)
+      if(stages[i]->Shader != ResourceId())
+        stages[i]->ShaderDetails = m_pDevice->GetShader(m_pDevice->GetLiveID(stages[i]->Shader), "");
+  }
+
+  {
+    D3D12PipelineState::ShaderStage *stages[] = {
+        &m_D3D12PipelineState.m_VS, &m_D3D12PipelineState.m_HS, &m_D3D12PipelineState.m_DS,
+        &m_D3D12PipelineState.m_GS, &m_D3D12PipelineState.m_PS, &m_D3D12PipelineState.m_CS,
     };
 
     for(int i = 0; i < 6; i++)
@@ -1714,13 +1697,6 @@ extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayRenderer_InitResolver(ReplayR
   return rend->InitResolver();
 }
 
-extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayRenderer_SetContextFilter(ReplayRenderer *rend,
-                                                                             ResourceId id,
-                                                                             uint32_t firstDefEv,
-                                                                             uint32_t lastDefEv)
-{
-  return rend->SetContextFilter(id, firstDefEv, lastDefEv);
-}
 extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayRenderer_SetFrameEvent(ReplayRenderer *rend,
                                                                           uint32_t eventID,
                                                                           bool32 force)
@@ -1731,6 +1707,11 @@ extern "C" RENDERDOC_API bool32 RENDERDOC_CC
 ReplayRenderer_GetD3D11PipelineState(ReplayRenderer *rend, D3D11PipelineState *state)
 {
   return rend->GetD3D11PipelineState(state);
+}
+extern "C" RENDERDOC_API bool32 RENDERDOC_CC
+ReplayRenderer_GetD3D12PipelineState(ReplayRenderer *rend, D3D12PipelineState *state)
+{
+  return rend->GetD3D12PipelineState(state);
 }
 extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayRenderer_GetGLPipelineState(ReplayRenderer *rend,
                                                                                GLPipelineState *state)
@@ -1887,21 +1868,6 @@ extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayRenderer_GetPostVSData(Replay
                                                                           MeshFormat *data)
 {
   return rend->GetPostVSData(instID, stage, data);
-}
-
-extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayRenderer_GetMinMax(
-    ReplayRenderer *rend, ResourceId tex, uint32_t sliceFace, uint32_t mip, uint32_t sample,
-    FormatComponentType typeHint, PixelValue *minval, PixelValue *maxval)
-{
-  return rend->GetMinMax(tex, sliceFace, mip, sample, typeHint, minval, maxval);
-}
-extern "C" RENDERDOC_API bool32 RENDERDOC_CC
-ReplayRenderer_GetHistogram(ReplayRenderer *rend, ResourceId tex, uint32_t sliceFace, uint32_t mip,
-                            uint32_t sample, FormatComponentType typeHint, float minval,
-                            float maxval, bool32 channels[4], rdctype::array<uint32_t> *histogram)
-{
-  bool chans[4] = {channels[0] != 0, channels[1] != 0, channels[2] != 0, channels[3] != 0};
-  return rend->GetHistogram(tex, sliceFace, mip, sample, typeHint, minval, maxval, chans, histogram);
 }
 
 extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayRenderer_GetBufferData(

@@ -383,6 +383,8 @@ namespace renderdocui.Code
             ret.columns = Math.Min(format.compCount, 4);
             ret.rows = Math.Min(matrixdim, 4);
 
+            ret.displayAsHex = hex;
+
             ret.members = new ShaderVariable[0] { };
 
             ret.value.fv = new float[16];
@@ -499,6 +501,10 @@ namespace renderdocui.Code
                 uint arrayCount = 1;
                 uint matrixCount = 0;
                 uint width = 0;
+
+                // check for square matrix declarations like 'mat4' and 'mat3'
+                if (basetype == "mat" && !match.Groups[4].Success)
+                    matrixDim = vectorDim;
 
                 // calculate format
                 {

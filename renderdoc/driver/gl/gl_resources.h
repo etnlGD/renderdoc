@@ -244,7 +244,7 @@ struct GLResourceRecord : public ResourceRecord
 
   void VerifyDataType(GLenum target)
   {
-#if !defined(RELEASE)
+#if ENABLED(RDOC_DEVEL)
     if(target == eGL_NONE)
       return;    // target == GL_NONE means ARB_dsa, target was omitted
     if(datatype == eGL_NONE)
@@ -257,6 +257,13 @@ struct GLResourceRecord : public ResourceRecord
   bool AlreadyDataType(GLenum target) { return datatype == TextureBinding(target); }
   GLenum datatype;
   GLenum usage;
+
+  // for texture buffers and texture views, this points from the data texture (or buffer)
+  // to the view texture. When preparing resource initial states, we force initial states
+  // for anything that is viewed if the viewer is frame referenced. Otherwise we might
+  // lose the underlying data for the view.
+  // Since it's 1-to-many, we keep a set here.
+  set<ResourceId> viewTextures;
 
   GLResource Resource;
 

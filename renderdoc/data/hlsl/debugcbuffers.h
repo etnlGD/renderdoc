@@ -73,7 +73,7 @@ cbuffer DebugGeometryCBuffer REG(b0)
   row_major float4x4 InvProj;
 };
 
-cbuffer DebugPixelCBufferData REG(b1)
+cbuffer DebugPixelCBufferData REG(b0)
 {
   float4 Channels;
 
@@ -125,7 +125,6 @@ cbuffer HistogramCBufferData REG(b0)
 #define RESTYPE_DEPTH_STENCIL 0x5
 #define RESTYPE_DEPTH_MS 0x6
 #define RESTYPE_DEPTH_STENCIL_MS 0x7
-#define RESTYPE_CUBE 0x8
 #define RESTYPE_TEX2D_MS 0x9
 
 #define MESHDISPLAY_SOLID 0x1
@@ -156,3 +155,9 @@ cbuffer HistogramCBufferData REG(b0)
 #define HGRAM_TILES_PER_BLOCK 32
 
 #define HGRAM_NUM_BUCKETS 256
+
+#define MESH_OTHER 0    // this covers points and lines, logic is the same
+#define MESH_TRIANGLE_LIST 1
+#define MESH_TRIANGLE_STRIP 2
+#define MESH_TRIANGLE_LIST_ADJ 3
+#define MESH_TRIANGLE_STRIP_ADJ 4

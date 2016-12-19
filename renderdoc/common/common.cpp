@@ -81,7 +81,7 @@ float SRGB8_lookuptable[256] = {
 
 void rdcassert(const char *msg, const char *file, unsigned int line, const char *func)
 {
-  rdclog_int(RDCLog_Error, file, line, "Assertion failed: %s", msg);
+  rdclog_int(RDCLog_Error, RDCLOG_PROJECT, file, line, "Assertion failed: %s", msg);
 }
 
 #if 0
@@ -111,7 +111,7 @@ bool Vec16NotEqual(void *a, void *b)
 	}
 	
 	return false;
-#elif defined(WIN64)
+#elif ENABLED(RDOC_X64)
   uint64_t *a64 = (uint64_t *)a;
   uint64_t *b64 = (uint64_t *)b;
 
@@ -244,7 +244,7 @@ uint32_t Log2Floor(uint32_t value)
   return 31 - Bits::CountLeadingZeroes(value);
 }
 
-#if RDC64BIT
+#if ENABLED(RDOC_X64)
 uint64_t Log2Floor(uint64_t value)
 {
   RDCASSERT(value > 0);
@@ -252,24 +252,40 @@ uint64_t Log2Floor(uint64_t value)
 }
 #endif
 
-static string &logfile()
-{
-  // deliberately leak this so that it doesn't get destructed while we're still logging in process
-  // teardown.
-  static string *fn = new string;
-  return *fn;
-}
+static string logfile;
+static void *logfileHandle = NULL;
 
 const char *rdclog_getfilename()
 {
-  return logfile().c_str();
+  return logfile.c_str();
 }
 
 void rdclog_filename(const char *filename)
 {
-  logfile() = "";
+  string previous = logfile;
+
+  logfile = "";
   if(filename && filename[0])
-    logfile() = filename;
+    logfile = filename;
+
+  FileIO::logfile_close(logfileHandle);
+
+  if(!logfile.empty())
+  {
+    logfileHandle = FileIO::logfile_open(filename);
+
+    if(logfileHandle && previous.c_str())
+    {
+      vector<unsigned char> previousContents;
+      FileIO::slurp(previous.c_str(), previousContents);
+
+      if(!previousContents.empty())
+        FileIO::logfile_append(logfileHandle, (const char *)&previousContents[0],
+                               previousContents.size());
+
+      FileIO::Delete(previous.c_str());
+    }
+  }
 }
 
 static bool log_output_enabled = false;
@@ -277,6 +293,13 @@ static bool log_output_enabled = false;
 void rdclog_enableoutput()
 {
   log_output_enabled = true;
+}
+
+void rdclog_closelog()
+{
+  log_output_enabled = false;
+  if(logfileHandle)
+    FileIO::logfile_close(logfileHandle);
 }
 
 void rdclog_flush()
@@ -289,29 +312,24 @@ void rdclogprint_int(LogType type, const char *fullMsg, const char *msg)
 
   SCOPED_LOCK(lock);
 
-#if defined(OUTPUT_LOG_TO_DEBUG_OUT)
+#if ENABLED(OUTPUT_LOG_TO_DEBUG_OUT)
   OSUtility::WriteOutput(OSUtility::Output_DebugMon, fullMsg);
 #endif
-#if defined(OUTPUT_LOG_TO_STDOUT)
+#if ENABLED(OUTPUT_LOG_TO_STDOUT)
   // don't output debug messages to stdout/stderr
   if(type != RDCLog_Debug && log_output_enabled)
     OSUtility::WriteOutput(OSUtility::Output_StdOut, msg);
 #endif
-#if defined(OUTPUT_LOG_TO_STDERR)
+#if ENABLED(OUTPUT_LOG_TO_STDERR)
   // don't output debug messages to stdout/stderr
   if(type != RDCLog_Debug && log_output_enabled)
     OSUtility::WriteOutput(OSUtility::Output_StdErr, msg);
 #endif
-#if defined(OUTPUT_LOG_TO_DISK)
-  if(!logfile().empty())
+#if ENABLED(OUTPUT_LOG_TO_DISK)
+  if(logfileHandle)
   {
-    FILE *f = FileIO::fopen(logfile().c_str(), "a");
-    if(f)
-    {
-      // strlen used as byte length - str is UTF-8 so this is NOT number of characters
-      FileIO::fwrite(fullMsg, 1, strlen(fullMsg), f);
-      FileIO::fclose(f);
-    }
+    // strlen used as byte length - str is UTF-8 so this is NOT number of characters
+    FileIO::logfile_append(logfileHandle, fullMsg, strlen(fullMsg));
   }
 #endif
 }
@@ -319,7 +337,8 @@ void rdclogprint_int(LogType type, const char *fullMsg, const char *msg)
 const size_t rdclog_outBufSize = 4 * 1024;
 static char rdclog_outputBuffer[rdclog_outBufSize + 1];
 
-void rdclog_int(LogType type, const char *file, unsigned int line, const char *fmt, ...)
+void rdclog_int(LogType type, const char *project, const char *file, unsigned int line,
+                const char *fmt, ...)
 {
   if(type <= RDCLog_First || type >= RDCLog_NumTypes)
   {
@@ -330,15 +349,13 @@ void rdclog_int(LogType type, const char *file, unsigned int line, const char *f
   va_list args;
   va_start(args, fmt);
 
-  const char *name = "RENDERDOC: ";
-
   char timestamp[64] = {0};
-#if defined(INCLUDE_TIMESTAMP_IN_LOG)
+#if ENABLED(INCLUDE_TIMESTAMP_IN_LOG)
   StringFormat::sntimef(timestamp, 63, "[%H:%M:%S] ");
 #endif
 
   char location[64] = {0};
-#if defined(INCLUDE_LOCATION_IN_LOG)
+#if ENABLED(INCLUDE_LOCATION_IN_LOG)
   string loc;
   loc = basename(string(file));
   StringFormat::snprintf(location, 63, "% 20s(%4d) - ", loc.c_str(), line);
@@ -357,8 +374,9 @@ void rdclog_int(LogType type, const char *file, unsigned int line, const char *f
   char *output = rdclog_outputBuffer;
   size_t available = rdclog_outBufSize;
 
-  int numWritten = StringFormat::snprintf(output, available, "%s %s%s%s - ", name, timestamp,
-                                          location, typestr[type]);
+  int numWritten =
+      StringFormat::snprintf(output, available, "% 4s %06u: %s%s%s - ", project,
+                             Process::GetCurrentPID(), timestamp, location, typestr[type]);
 
   if(numWritten < 0)
   {

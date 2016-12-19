@@ -37,6 +37,35 @@ struct FetchFrameRecord
   rdctype::array<FetchDrawcall> drawcallList;
 };
 
+enum RemapTextureEnum
+{
+  eRemap_None,
+  eRemap_RGBA8,
+  eRemap_RGBA16,
+  eRemap_RGBA32,
+  eRemap_D32S8
+};
+
+struct GetTextureDataParams
+{
+  bool forDiskSave;
+  FormatComponentType typeHint;
+  bool resolve;
+  RemapTextureEnum remap;
+  float blackPoint;
+  float whitePoint;
+
+  GetTextureDataParams()
+      : forDiskSave(false),
+        typeHint(eCompType_None),
+        resolve(false),
+        remap(eRemap_None),
+        blackPoint(0.0f),
+        whitePoint(0.0f)
+  {
+  }
+};
+
 // these two interfaces define what an API driver implementation must provide
 // to the replay. At minimum it must implement IRemoteDriver which contains
 // all of the functionality that cannot be achieved elsewhere. An IReplayDriver
@@ -68,13 +97,13 @@ public:
 
   virtual void SavePipelineState() = 0;
   virtual D3D11PipelineState GetD3D11PipelineState() = 0;
+  virtual D3D12PipelineState GetD3D12PipelineState() = 0;
   virtual GLPipelineState GetGLPipelineState() = 0;
   virtual VulkanPipelineState GetVulkanPipelineState() = 0;
 
   virtual FetchFrameRecord GetFrameRecord() = 0;
 
   virtual void ReadLogInitialisation() = 0;
-  virtual void SetContextFilter(ResourceId id, uint32_t firstDefEv, uint32_t lastDefEv) = 0;
   virtual void ReplayLog(uint32_t endEventID, ReplayLogType replayType) = 0;
 
   virtual vector<uint32_t> GetPassEvents(uint32_t eventID) = 0;
@@ -88,9 +117,8 @@ public:
 
   virtual void GetBufferData(ResourceId buff, uint64_t offset, uint64_t len,
                              vector<byte> &retData) = 0;
-  virtual byte *GetTextureData(ResourceId tex, uint32_t arrayIdx, uint32_t mip, bool forDiskSave,
-                               FormatComponentType typeHint, bool resolve, bool forceRGBA8unorm,
-                               float blackPoint, float whitePoint, size_t &dataSize) = 0;
+  virtual byte *GetTextureData(ResourceId tex, uint32_t arrayIdx, uint32_t mip,
+                               const GetTextureDataParams &params, size_t &dataSize) = 0;
 
   virtual void BuildTargetShader(string source, string entry, const uint32_t compileFlags,
                                  ShaderStageType type, ResourceId *id, string *errors) = 0;
@@ -155,6 +183,7 @@ public:
   virtual ResourceId CreateProxyTexture(const FetchTexture &templateTex) = 0;
   virtual void SetProxyTextureData(ResourceId texid, uint32_t arrayIdx, uint32_t mip, byte *data,
                                    size_t dataSize) = 0;
+  virtual bool IsTextureSupported(const ResourceFormat &format) = 0;
 
   virtual ResourceId CreateProxyBuffer(const FetchBuffer &templateBuf) = 0;
   virtual void SetProxyBufferData(ResourceId bufid, byte *data, size_t dataSize) = 0;
@@ -181,7 +210,7 @@ public:
 
 // utility function useful in any driver implementation
 template <typename FetchDrawcallContainer>
-FetchDrawcall *SetupDrawcallPointers(vector<FetchDrawcall *> *drawcallTable, ResourceId contextID,
+FetchDrawcall *SetupDrawcallPointers(vector<FetchDrawcall *> *drawcallTable,
                                      FetchDrawcallContainer &draws, FetchDrawcall *parent,
                                      FetchDrawcall *previous)
 {
@@ -197,14 +226,12 @@ FetchDrawcall *SetupDrawcallPointers(vector<FetchDrawcall *> *drawcallTable, Res
     {
       if(drawcallTable)
       {
-        RDCASSERT(drawcallTable->empty() || draw->eventID > drawcallTable->back()->eventID ||
-                  draw->context != contextID);
+        RDCASSERT(drawcallTable->empty() || draw->eventID > drawcallTable->back()->eventID);
         drawcallTable->resize(RDCMAX(drawcallTable->size(), size_t(draw->eventID + 1)));
         (*drawcallTable)[draw->eventID] = draw;
       }
 
-      ret = previous =
-          SetupDrawcallPointers(drawcallTable, contextID, draw->children, draw, previous);
+      ret = previous = SetupDrawcallPointers(drawcallTable, draw->children, draw, previous);
     }
     else if(draw->flags & (eDraw_PushMarker | eDraw_SetMarker | eDraw_Present | eDraw_MultiDraw))
     {
@@ -212,8 +239,7 @@ FetchDrawcall *SetupDrawcallPointers(vector<FetchDrawcall *> *drawcallTable, Res
 
       if(drawcallTable)
       {
-        RDCASSERT(drawcallTable->empty() || draw->eventID > drawcallTable->back()->eventID ||
-                  draw->context != contextID);
+        RDCASSERT(drawcallTable->empty() || draw->eventID > drawcallTable->back()->eventID);
         drawcallTable->resize(RDCMAX(drawcallTable->size(), size_t(draw->eventID + 1)));
         (*drawcallTable)[draw->eventID] = draw;
       }
@@ -226,8 +252,7 @@ FetchDrawcall *SetupDrawcallPointers(vector<FetchDrawcall *> *drawcallTable, Res
 
       if(drawcallTable)
       {
-        RDCASSERT(drawcallTable->empty() || draw->eventID > drawcallTable->back()->eventID ||
-                  draw->context != contextID);
+        RDCASSERT(drawcallTable->empty() || draw->eventID > drawcallTable->back()->eventID);
         drawcallTable->resize(RDCMAX(drawcallTable->size(), size_t(draw->eventID + 1)));
         (*drawcallTable)[draw->eventID] = draw;
       }

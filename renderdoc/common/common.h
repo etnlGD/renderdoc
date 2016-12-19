@@ -122,6 +122,12 @@ T RDCMAX(const T &a, const T &b)
 }
 
 template <typename T>
+T RDCLERP(const T &a, const T &b, const T &step)
+{
+  return (1.0f - step) * a + step * b;
+}
+
+template <typename T>
 inline T AlignUp4(T x)
 {
   return (x + 0x3) & (~0x3);
@@ -152,7 +158,7 @@ bool FindDiffRange(void *a, void *b, size_t bufSize, size_t &diffStart, size_t &
 uint32_t CalcNumMips(int Width, int Height, int Depth);
 
 uint32_t Log2Floor(uint32_t value);
-#if RDC64BIT
+#if ENABLED(RDOC_X64)
 uint64_t Log2Floor(uint64_t value);
 #endif
 
@@ -165,7 +171,7 @@ uint64_t Log2Floor(uint64_t value);
     OSUtility::ForceCrash(); \
   } while((void)0, 0)
 
-#if !defined(RELEASE) || defined(FORCE_DEBUGBREAK)
+#if ENABLED(RDOC_DEVEL) || ENABLED(FORCE_DEBUGBREAK)
 #define RDCBREAK()                   \
   do                                 \
   {                                  \
@@ -201,7 +207,7 @@ enum LogType
   RDCLog_NumTypes,
 };
 
-#if defined(STRIP_LOG)
+#if ENABLED(STRIP_LOG)
 #define RDCLOGFILE(fn) \
   do                   \
   {                    \
@@ -247,21 +253,28 @@ void rdclog_flush();
 // fatal error messages from within the more complex log function).
 void rdclogprint_int(LogType type, const char *fullMsg, const char *msg);
 
-// printf() style main logger function
-void rdclog_int(LogType type, const char *file, unsigned int line, const char *fmt, ...);
+#if !defined(RDCLOG_PROJECT)
+#define RDCLOG_PROJECT "RDOC"
+#endif
 
-#define rdclog(type, ...) rdclog_int(type, __FILE__, __LINE__, __VA_ARGS__)
+// printf() style main logger function
+void rdclog_int(LogType type, const char *project, const char *file, unsigned int line,
+                const char *fmt, ...);
+
+#define rdclog(type, ...) rdclog_int(type, RDCLOG_PROJECT, __FILE__, __LINE__, __VA_ARGS__)
 
 const char *rdclog_getfilename();
 void rdclog_filename(const char *filename);
 void rdclog_enableoutput();
+void rdclog_closelog();
 
 #define RDCLOGFILE(fn) rdclog_filename(fn)
 #define RDCGETLOGFILE() rdclog_getfilename()
 
 #define RDCLOGOUTPUT() rdclog_enableoutput()
+#define RDCSTOPLOGGING() rdclog_closelog()
 
-#if(!defined(RELEASE) || defined(FORCE_DEBUG_LOGS)) && !defined(STRIP_DEBUG_LOGS)
+#if(ENABLED(RDOC_DEVEL) || ENABLED(FORCE_DEBUG_LOGS)) && DISABLED(STRIP_DEBUG_LOGS)
 #define RDCDEBUG(...) rdclog(RDCLog_Debug, __VA_ARGS__)
 #else
 #define RDCDEBUG(...) \
@@ -273,7 +286,7 @@ void rdclog_enableoutput();
 #define RDCLOG(...) rdclog(RDCLog_Comment, __VA_ARGS__)
 #define RDCWARN(...) rdclog(RDCLog_Warning, __VA_ARGS__)
 
-#if defined(DEBUGBREAK_ON_ERROR_LOG)
+#if ENABLED(DEBUGBREAK_ON_ERROR_LOG)
 #define RDCERR(...)                    \
   do                                   \
   {                                    \
@@ -307,7 +320,7 @@ void rdclog_enableoutput();
 // Assert
 //
 
-#if !defined(RELEASE) || defined(FORCE_ASSERTS)
+#if ENABLED(RDOC_DEVEL) || ENABLED(FORCE_ASSERTS)
 void rdcassert(const char *msg, const char *file, unsigned int line, const char *func);
 
 // this defines the root macro, RDCASSERTMSG(msg, cond, ...)
@@ -331,7 +344,7 @@ void rdcassert(const char *msg, const char *file, unsigned int line, const char 
 // Compile asserts
 //
 
-#if defined(STRIP_COMPILE_ASSERTS)
+#if ENABLED(STRIP_COMPILE_ASSERTS)
 #define RDCCOMPILE_ASSERT(condition, message) \
   do                                          \
   {                                           \

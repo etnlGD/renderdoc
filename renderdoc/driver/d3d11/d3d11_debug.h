@@ -94,6 +94,7 @@ struct D3D11PostVSData
 };
 
 struct CopyPixelParams;
+struct GetTextureDataParams;
 
 class D3D11DebugManager
 {
@@ -127,9 +128,8 @@ public:
   void GetBufferData(ID3D11Buffer *buff, uint64_t offset, uint64_t length, vector<byte> &retData,
                      bool unwrap);
 
-  byte *GetTextureData(ResourceId tex, uint32_t arrayIdx, uint32_t mip, bool forDiskSave,
-                       FormatComponentType typeHint, bool resolve, bool forceRGBA8unorm,
-                       float blackPoint, float whitePoint, size_t &dataSize);
+  byte *GetTextureData(ResourceId tex, uint32_t arrayIdx, uint32_t mip,
+                       const GetTextureDataParams &params, size_t &dataSize);
 
   void FillCBufferVariables(const vector<DXBC::CBufferVariable> &invars,
                             vector<ShaderVariable> &outvars, bool flattenVec4s,
@@ -208,7 +208,7 @@ public:
     eTexType_Stencil,
     eTexType_DepthMS,
     eTexType_StencilMS,
-    eTexType_Cube,
+    eTexType_Unused,    // removed, kept just to keep slots the same
     eTexType_2DMS,
     eTexType_Max
   };
@@ -261,7 +261,7 @@ private:
     CacheElem(ResourceId id_, FormatComponentType typeHint_, bool raw_)
         : created(false), id(id_), typeHint(typeHint_), raw(raw_), srvResource(NULL)
     {
-      srv[0] = srv[1] = srv[2] = NULL;
+      srv[0] = srv[1] = NULL;
     }
 
     void Release()
@@ -269,7 +269,6 @@ private:
       SAFE_RELEASE(srvResource);
       SAFE_RELEASE(srv[0]);
       SAFE_RELEASE(srv[1]);
-      SAFE_RELEASE(srv[2]);
     }
 
     bool created;
@@ -277,7 +276,7 @@ private:
     FormatComponentType typeHint;
     bool raw;
     ID3D11Resource *srvResource;
-    ID3D11ShaderResourceView *srv[3];
+    ID3D11ShaderResourceView *srv[2];
   };
 
   static const int NUM_CACHED_SRVS = 64;
@@ -360,7 +359,6 @@ private:
 
   // these gets updated to pull the elements selected out of the buffers
   ID3D11InputLayout *m_MeshDisplayLayout;
-  ID3D11InputLayout *m_PostMeshDisplayLayout;
 
   // whenever these change
   ResourceFormat m_PrevMeshFmt;
@@ -436,7 +434,6 @@ private:
       SAFE_RELEASE(StencIncrEqDepthState);
 
       SAFE_RELEASE(GenericLayout);
-      SAFE_RELEASE(GenericHomogLayout);
       SAFE_RELEASE(GenericVSCBuffer);
       SAFE_RELEASE(GenericGSCBuffer);
       SAFE_RELEASE(GenericPSCBuffer);
@@ -447,9 +444,9 @@ private:
       SAFE_RELEASE(MeshVS);
       SAFE_RELEASE(MeshGS);
       SAFE_RELEASE(MeshPS);
+      SAFE_RELEASE(TriangleSizeGS);
+      SAFE_RELEASE(TriangleSizePS);
       SAFE_RELEASE(FullscreenVS);
-      SAFE_RELEASE(WireframeVS);
-      SAFE_RELEASE(WireframeHomogVS);
       SAFE_RELEASE(WireframePS);
       SAFE_RELEASE(OverlayPS);
 
@@ -503,7 +500,6 @@ private:
       SAFE_RELEASE(histogramUAV);
 
       SAFE_DELETE_ARRAY(MeshVSBytecode);
-      SAFE_DELETE_ARRAY(MeshHomogVSBytecode);
 
       SAFE_RELEASE(PickPixelRT);
       SAFE_RELEASE(PickPixelStageTex);
@@ -522,14 +518,15 @@ private:
     ID3D11DepthStencilState *NoDepthState, *LEqualDepthState, *NopDepthState, *AllPassDepthState,
         *AllPassIncrDepthState, *StencIncrEqDepthState;
 
-    ID3D11InputLayout *GenericLayout, *GenericHomogLayout;
+    ID3D11InputLayout *GenericLayout;
     ID3D11Buffer *GenericVSCBuffer;
     ID3D11Buffer *GenericGSCBuffer;
     ID3D11Buffer *GenericPSCBuffer;
     ID3D11Buffer *PublicCBuffers[20];
-    ID3D11VertexShader *GenericVS, *WireframeVS, *MeshVS, *WireframeHomogVS, *FullscreenVS;
-    ID3D11GeometryShader *MeshGS;
-    ID3D11PixelShader *TexDisplayPS, *OverlayPS, *WireframePS, *MeshPS, *CheckerboardPS;
+    ID3D11VertexShader *GenericVS, *MeshVS, *FullscreenVS;
+    ID3D11GeometryShader *MeshGS, *TriangleSizeGS;
+    ID3D11PixelShader *TexDisplayPS, *OverlayPS, *WireframePS, *MeshPS, *CheckerboardPS,
+        *TriangleSizePS;
     ID3D11PixelShader *OutlinePS;
     ID3D11PixelShader *CopyMSToArrayPS, *CopyArrayToMSPS;
     ID3D11PixelShader *FloatCopyMSToArrayPS, *FloatCopyArrayToMSPS;
@@ -559,9 +556,6 @@ private:
 
     byte *MeshVSBytecode;
     uint32_t MeshVSBytelen;
-
-    byte *MeshHomogVSBytecode;
-    uint32_t MeshHomogVSBytelen;
 
     int publicCBufIdx;
 

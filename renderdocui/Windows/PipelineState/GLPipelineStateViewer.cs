@@ -1776,7 +1776,9 @@ namespace renderdocui.Windows.PipelineState
                 }
                 else if (sender is TreelistView.TreeListView)
                 {
-                    TreelistView.NodesSelection sel = ((TreelistView.TreeListView)sender).NodesSelection;
+                    TreelistView.TreeListView view = (TreelistView.TreeListView)sender;
+                    view.SortNodesSelection();
+                    TreelistView.NodesSelection sel = view.NodesSelection;
 
                     if (sel.Count > 0)
                     {
@@ -3362,7 +3364,7 @@ namespace renderdocui.Windows.PipelineState
                     writer.WriteStartElement("html");
                     writer.WriteAttributeString("lang", "en");
 
-                    var title = String.Format("{0} EID {1} - D3D11 Pipeline export", Path.GetFileName(m_Core.LogFileName), m_Core.CurEvent);
+                    var title = String.Format("{0} EID {1} - OpenGL Pipeline export", Path.GetFileName(m_Core.LogFileName), m_Core.CurEvent);
 
                     var css = @"
 /* If you think this css is ugly/bad, open a pull request! */

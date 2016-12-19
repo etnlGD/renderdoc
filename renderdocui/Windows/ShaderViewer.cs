@@ -259,7 +259,7 @@ namespace renderdocui.Windows
             m_CloseCallback = closeCallback;
 
             if (m_Core.LogLoaded)
-                pointLinearSamplersToolStripMenuItem.Visible = (m_Core.APIProps.pipelineType == GraphicsAPI.D3D11);
+                pointLinearSamplersToolStripMenuItem.Visible = m_Core.APIProps.pipelineType.IsD3D();
 
             DockContent sel = null;
 
@@ -369,6 +369,12 @@ namespace renderdocui.Windows
 
             if (m_FindAll == null)
                 m_FindAll = new FindAllDialog(FindAllFiles);
+
+            if (m_FindAll.Visible)
+            {
+                m_FindAll.Activate();
+                return;
+            }
 
             m_FindAll.Show(this);
         }
@@ -480,13 +486,14 @@ namespace renderdocui.Windows
 
             var disasm = shader != null ? shader.Disassembly : "";
 
-            if (m_Core.Config.ShaderViewer_FriendlyNaming && m_ShaderDetails != null)
+            if (m_Core.Config.ShaderViewer_FriendlyNaming && m_ShaderDetails != null &&
+                m_Core.APIProps.pipelineType.IsD3D())
             {
                 for (int i = 0; i < m_ShaderDetails.ConstantBlocks.Length; i++)
                 {
-                    var stem = string.Format("cb{0}", i);
-
                     var cbuf = m_ShaderDetails.ConstantBlocks[i];
+
+                    var stem = string.Format("cb{0}", cbuf.bindPoint);
 
                     if (cbuf.variables.Length == 0)
                         continue;
@@ -1707,7 +1714,7 @@ namespace renderdocui.Windows
 
         public void OnLogfileLoaded()
         {
-            pointLinearSamplersToolStripMenuItem.Visible = (m_Core.APIProps.pipelineType == GraphicsAPI.D3D11);
+            pointLinearSamplersToolStripMenuItem.Visible = (m_Core.APIProps.pipelineType.IsD3D());
         }
 
         public void OnEventSelected(UInt32 eventID)
@@ -2065,7 +2072,7 @@ namespace renderdocui.Windows
 
         private int GetPostVersionInsertPosition()
         {
-            if (m_Core.APIProps.pipelineType == GraphicsAPI.D3D11)
+            if (m_Core.APIProps.pipelineType.IsD3D())
                 return 0;
 
             int ver = CurrentScintilla.Text.IndexOf("#version");
@@ -2096,7 +2103,7 @@ namespace renderdocui.Windows
             if (CurrentScintilla == null)
                 return;
 
-            if (m_Core.APIProps.pipelineType == GraphicsAPI.D3D11)
+            if (m_Core.APIProps.pipelineType.IsD3D())
                 CurrentScintilla.InsertText(GetPostVersionInsertPosition(), "uint4 RENDERDOC_TexDim; // xyz == width, height, depth. w == # mips" + Environment.NewLine + Environment.NewLine);
             else if (m_Core.APIProps.pipelineType == GraphicsAPI.OpenGL)
                 CurrentScintilla.InsertText(GetPostVersionInsertPosition(), "uniform uvec4 RENDERDOC_TexDim; // xyz == width, height, depth. w == # mips" + Environment.NewLine + Environment.NewLine);
@@ -2112,7 +2119,7 @@ namespace renderdocui.Windows
 
             if (m_Core.APIProps.pipelineType == GraphicsAPI.Vulkan)
                 InsertVulkanUBO();
-            else if (m_Core.APIProps.pipelineType == GraphicsAPI.D3D11)
+            else if (m_Core.APIProps.pipelineType.IsD3D())
                 CurrentScintilla.InsertText(GetPostVersionInsertPosition(), "uint RENDERDOC_SelectedMip; // selected mip in UI" + Environment.NewLine + Environment.NewLine);
             else if (m_Core.APIProps.pipelineType == GraphicsAPI.OpenGL)
                 CurrentScintilla.InsertText(GetPostVersionInsertPosition(), "uniform uint RENDERDOC_SelectedMip; // selected mip in UI" + Environment.NewLine + Environment.NewLine);
@@ -2126,7 +2133,7 @@ namespace renderdocui.Windows
 
             if (m_Core.APIProps.pipelineType == GraphicsAPI.Vulkan)
                 InsertVulkanUBO();
-            else if (m_Core.APIProps.pipelineType == GraphicsAPI.D3D11)
+            else if (m_Core.APIProps.pipelineType.IsD3D())
                 CurrentScintilla.InsertText(GetPostVersionInsertPosition(), "uint RENDERDOC_SelectedSliceFace; // selected array slice or cubemap face in UI" + Environment.NewLine + Environment.NewLine);
             else if (m_Core.APIProps.pipelineType == GraphicsAPI.OpenGL)
                 CurrentScintilla.InsertText(GetPostVersionInsertPosition(), "uniform uint RENDERDOC_SelectedSliceFace; // selected array slice or cubemap face in UI" + Environment.NewLine + Environment.NewLine);
@@ -2140,7 +2147,7 @@ namespace renderdocui.Windows
 
             if (m_Core.APIProps.pipelineType == GraphicsAPI.Vulkan)
                 InsertVulkanUBO();
-            else if (m_Core.APIProps.pipelineType == GraphicsAPI.D3D11)
+            else if (m_Core.APIProps.pipelineType.IsD3D())
                 CurrentScintilla.InsertText(GetPostVersionInsertPosition(), "int RENDERDOC_SelectedSample; // selected MSAA sample or -numSamples for resolve. See docs" + Environment.NewLine + Environment.NewLine);
             else if (m_Core.APIProps.pipelineType == GraphicsAPI.OpenGL)
                 CurrentScintilla.InsertText(GetPostVersionInsertPosition(), "uniform int RENDERDOC_SelectedSample; // selected MSAA sample or -numSamples for resolve. See docs" + Environment.NewLine + Environment.NewLine);
@@ -2152,7 +2159,7 @@ namespace renderdocui.Windows
             if (CurrentScintilla == null)
                 return;
 
-            if(m_Core.APIProps.pipelineType == GraphicsAPI.D3D11)
+            if(m_Core.APIProps.pipelineType.IsD3D())
                 CurrentScintilla.InsertText(GetPostVersionInsertPosition(), "uint RENDERDOC_TextureType; // 1 = 1D, 2 = 2D, 3 = 3D, 4 = Depth, 5 = Depth + Stencil, 6 = Depth (MS), 7 = Depth + Stencil (MS)" + Environment.NewLine + Environment.NewLine);
             else if (m_Core.APIProps.pipelineType == GraphicsAPI.OpenGL)
                 CurrentScintilla.InsertText(GetPostVersionInsertPosition(), "uniform uint RENDERDOC_TextureType; // 1 = 1D, 2 = 2D, 3 = 3D, 4 = Cube, 5 = 1DArray, 6 = 2DArray, 7 = CubeArray, 8 = Rect, 9 = Buffer, 10 = 2DMS" + Environment.NewLine + Environment.NewLine);
@@ -2166,7 +2173,7 @@ namespace renderdocui.Windows
             if (CurrentScintilla == null)
                 return;
 
-            if (m_Core.APIProps.pipelineType == GraphicsAPI.D3D11)
+            if (m_Core.APIProps.pipelineType.IsD3D())
             {
                 CurrentScintilla.InsertText(GetPostVersionInsertPosition(), "// Samplers" + Environment.NewLine +
                                                 "SamplerState pointSampler : register(s0);" + Environment.NewLine +
@@ -2181,7 +2188,7 @@ namespace renderdocui.Windows
             if (CurrentScintilla == null)
                 return;
 
-            if (m_Core.APIProps.pipelineType == GraphicsAPI.D3D11)
+            if (m_Core.APIProps.pipelineType.IsD3D())
             {
                 CurrentScintilla.InsertText(GetPostVersionInsertPosition(), "// Textures" + Environment.NewLine +
                                                 "Texture1DArray<float4> texDisplayTex1DArray : register(t1);" + Environment.NewLine +
@@ -2191,7 +2198,6 @@ namespace renderdocui.Windows
                                                 "Texture2DArray<uint2> texDisplayTexStencilArray : register(t5);" + Environment.NewLine +
                                                 "Texture2DMSArray<float2> texDisplayTexDepthMSArray : register(t6);" + Environment.NewLine +
                                                 "Texture2DMSArray<uint2> texDisplayTexStencilMSArray : register(t7);" + Environment.NewLine +
-                                                "Texture2DArray<float4> texDisplayTexCubeArray : register(t8);" + Environment.NewLine +
                                                 "Texture2DMSArray<float4> texDisplayTex2DMSArray : register(t9);" + Environment.NewLine +
                                                 "" + Environment.NewLine +
                                                 "Texture1DArray<uint4> texDisplayUIntTex1DArray : register(t11);" + Environment.NewLine +

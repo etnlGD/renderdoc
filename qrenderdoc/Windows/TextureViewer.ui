@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>591</width>
+    <width>775</width>
     <height>571</height>
    </rect>
   </property>
@@ -47,9 +47,9 @@
   <widget class="QFrame" name="rangeToolbar">
    <property name="geometry">
     <rect>
-     <x>20</x>
-     <y>190</y>
-     <width>255</width>
+     <x>10</x>
+     <y>120</y>
+     <width>558</width>
      <height>28</height>
     </rect>
    </property>
@@ -82,25 +82,19 @@
      <number>2</number>
     </property>
     <item>
-     <widget class="QLabel" name="label_5">
+     <widget class="QLabel" name="rangeLabel">
       <property name="text">
        <string>Range</string>
       </property>
      </widget>
     </item>
     <item>
-     <widget class="QLineEdit" name="lineEdit">
+     <widget class="RDLineEdit" name="rangeBlack">
       <property name="sizePolicy">
        <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
         <horstretch>0</horstretch>
         <verstretch>0</verstretch>
        </sizepolicy>
-      </property>
-      <property name="maximumSize">
-       <size>
-        <width>50</width>
-        <height>16777215</height>
-       </size>
       </property>
       <property name="text">
        <string>0.0</string>
@@ -108,18 +102,28 @@
      </widget>
     </item>
     <item>
-     <widget class="QLineEdit" name="lineEdit_2">
+     <widget class="RangeHistogram" name="rangeHistogram" native="true">
+      <property name="minimumSize">
+       <size>
+        <width>200</width>
+        <height>0</height>
+       </size>
+      </property>
+      <property name="baseSize">
+       <size>
+        <width>0</width>
+        <height>0</height>
+       </size>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="RDLineEdit" name="rangeWhite">
       <property name="sizePolicy">
        <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
         <horstretch>0</horstretch>
         <verstretch>0</verstretch>
        </sizepolicy>
-      </property>
-      <property name="maximumSize">
-       <size>
-        <width>50</width>
-        <height>16777215</height>
-       </size>
       </property>
       <property name="text">
        <string>1.0</string>
@@ -127,7 +131,13 @@
      </widget>
     </item>
     <item>
-     <widget class="QToolButton" name="toolButton_16">
+     <widget class="QToolButton" name="zoomRange">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Fixed" vsizetype="MinimumExpanding">
+        <horstretch>0</horstretch>
+        <verstretch>0</verstretch>
+       </sizepolicy>
+      </property>
       <property name="text">
        <string/>
       </property>
@@ -141,7 +151,13 @@
      </widget>
     </item>
     <item>
-     <widget class="QToolButton" name="toolButton_18">
+     <widget class="QToolButton" name="autoFit">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Fixed" vsizetype="MinimumExpanding">
+        <horstretch>0</horstretch>
+        <verstretch>0</verstretch>
+       </sizepolicy>
+      </property>
       <property name="text">
        <string/>
       </property>
@@ -155,7 +171,13 @@
      </widget>
     </item>
     <item>
-     <widget class="QToolButton" name="toolButton_17">
+     <widget class="QToolButton" name="reset01">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Fixed" vsizetype="MinimumExpanding">
+        <horstretch>0</horstretch>
+        <verstretch>0</verstretch>
+       </sizepolicy>
+      </property>
       <property name="text">
        <string>...</string>
       </property>
@@ -169,13 +191,22 @@
      </widget>
     </item>
     <item>
-     <widget class="QToolButton" name="toolButton_3">
+     <widget class="QToolButton" name="visualiseRange">
+      <property name="sizePolicy">
+       <sizepolicy hsizetype="Fixed" vsizetype="MinimumExpanding">
+        <horstretch>0</horstretch>
+        <verstretch>0</verstretch>
+       </sizepolicy>
+      </property>
       <property name="text">
        <string>...</string>
       </property>
       <property name="icon">
        <iconset resource="../resources.qrc">
         <normaloff>:/Resources/chart_curve.png</normaloff>:/Resources/chart_curve.png</iconset>
+      </property>
+      <property name="checkable">
+       <bool>true</bool>
       </property>
       <property name="autoRaise">
        <bool>true</bool>
@@ -187,8 +218,8 @@
   <widget class="QFrame" name="overlayToolbar">
    <property name="geometry">
     <rect>
-     <x>200</x>
-     <y>145</y>
+     <x>490</x>
+     <y>40</y>
      <width>129</width>
      <height>28</height>
     </rect>
@@ -207,7 +238,7 @@
    </property>
    <layout class="QHBoxLayout" name="horizontalLayout_8">
     <property name="spacing">
-     <number>3</number>
+     <number>2</number>
     </property>
     <property name="leftMargin">
      <number>6</number>
@@ -222,23 +253,27 @@
      <number>2</number>
     </property>
     <item>
-     <widget class="QLabel" name="label_4">
+     <widget class="QLabel" name="overlayLabel">
       <property name="text">
        <string>Overlay</string>
       </property>
      </widget>
     </item>
     <item>
-     <widget class="QComboBox" name="comboBox_4"/>
+     <widget class="QComboBox" name="overlay">
+      <property name="maxVisibleItems">
+       <number>20</number>
+      </property>
+     </widget>
     </item>
    </layout>
   </widget>
   <widget class="QFrame" name="zoomToolbar">
    <property name="geometry">
     <rect>
-     <x>3</x>
-     <y>145</y>
-     <width>191</width>
+     <x>10</x>
+     <y>80</y>
+     <width>221</width>
      <height>28</height>
     </rect>
    </property>
@@ -256,7 +291,7 @@
    </property>
    <layout class="QHBoxLayout" name="horizontalLayout_9">
     <property name="spacing">
-     <number>3</number>
+     <number>2</number>
     </property>
     <property name="leftMargin">
      <number>6</number>
@@ -271,14 +306,39 @@
      <number>2</number>
     </property>
     <item>
-     <widget class="QLabel" name="label_2">
+     <widget class="QLabel" name="zoomLabel">
       <property name="text">
        <string>Zoom</string>
       </property>
      </widget>
     </item>
     <item>
-     <widget class="QToolButton" name="toolButton_14">
+     <widget class="QToolButton" name="zoomExactSize">
+      <property name="enabled">
+       <bool>true</bool>
+      </property>
+      <property name="text">
+       <string>1:1</string>
+      </property>
+      <property name="checkable">
+       <bool>false</bool>
+      </property>
+      <property name="checked">
+       <bool>false</bool>
+      </property>
+      <property name="toolButtonStyle">
+       <enum>Qt::ToolButtonTextBesideIcon</enum>
+      </property>
+      <property name="autoRaise">
+       <bool>true</bool>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QToolButton" name="fitToWindow">
+      <property name="enabled">
+       <bool>true</bool>
+      </property>
       <property name="text">
        <string>Fit</string>
       </property>
@@ -301,10 +361,23 @@
      </widget>
     </item>
     <item>
-     <widget class="QComboBox" name="comboBox_3"/>
+     <widget class="QComboBox" name="zoomOption">
+      <property name="minimumSize">
+       <size>
+        <width>70</width>
+        <height>0</height>
+       </size>
+      </property>
+      <property name="editable">
+       <bool>true</bool>
+      </property>
+      <property name="insertPolicy">
+       <enum>QComboBox::NoInsert</enum>
+      </property>
+     </widget>
     </item>
     <item>
-     <widget class="QToolButton" name="toolButton_15">
+     <widget class="QToolButton" name="flip_y">
       <property name="text">
        <string/>
       </property>
@@ -325,9 +398,9 @@
   <widget class="QFrame" name="actionToolbar">
    <property name="geometry">
     <rect>
-     <x>340</x>
+     <x>330</x>
      <y>40</y>
-     <width>101</width>
+     <width>149</width>
      <height>28</height>
     </rect>
    </property>
@@ -345,7 +418,7 @@
    </property>
    <layout class="QHBoxLayout" name="horizontalLayout_4">
     <property name="spacing">
-     <number>3</number>
+     <number>2</number>
     </property>
     <property name="leftMargin">
      <number>6</number>
@@ -360,14 +433,14 @@
      <number>2</number>
     </property>
     <item>
-     <widget class="QLabel" name="label_6">
+     <widget class="QLabel" name="actionLabel">
       <property name="text">
        <string>Actions</string>
       </property>
      </widget>
     </item>
     <item>
-     <widget class="QToolButton" name="toolButton">
+     <widget class="QToolButton" name="saveTex">
       <property name="text">
        <string/>
       </property>
@@ -381,13 +454,41 @@
      </widget>
     </item>
     <item>
-     <widget class="QToolButton" name="toolButton_2">
+     <widget class="QToolButton" name="texListShow">
       <property name="text">
        <string/>
       </property>
       <property name="icon">
        <iconset resource="../resources.qrc">
         <normaloff>:/Resources/page_white_link.png</normaloff>:/Resources/page_white_link.png</iconset>
+      </property>
+      <property name="autoRaise">
+       <bool>true</bool>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QToolButton" name="viewTexBuffer">
+      <property name="text">
+       <string/>
+      </property>
+      <property name="icon">
+       <iconset resource="../resources.qrc">
+        <normaloff>:/Resources/page_white_code.png</normaloff>:/Resources/page_white_code.png</iconset>
+      </property>
+      <property name="autoRaise">
+       <bool>true</bool>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QToolButton" name="locationGoto">
+      <property name="text">
+       <string/>
+      </property>
+      <property name="icon">
+       <iconset resource="../resources.qrc">
+        <normaloff>:/Resources/find.png</normaloff>:/Resources/find.png</iconset>
       </property>
       <property name="autoRaise">
        <bool>true</bool>
@@ -401,9 +502,15 @@
     <rect>
      <x>10</x>
      <y>40</y>
-     <width>304</width>
+     <width>299</width>
      <height>28</height>
     </rect>
+   </property>
+   <property name="sizePolicy">
+    <sizepolicy hsizetype="Fixed" vsizetype="Preferred">
+     <horstretch>0</horstretch>
+     <verstretch>0</verstretch>
+    </sizepolicy>
    </property>
    <property name="minimumSize">
     <size>
@@ -419,7 +526,7 @@
    </property>
    <layout class="QHBoxLayout" name="horizontalLayout_6">
     <property name="spacing">
-     <number>3</number>
+     <number>2</number>
     </property>
     <property name="leftMargin">
      <number>6</number>
@@ -434,7 +541,7 @@
      <number>2</number>
     </property>
     <item>
-     <widget class="QLabel" name="label_3">
+     <widget class="QLabel" name="subResLabel">
       <property name="text">
        <string>Subresource</string>
       </property>
@@ -448,24 +555,38 @@
      </widget>
     </item>
     <item>
-     <widget class="QLabel" name="label_8">
+     <widget class="QLabel" name="mipLabel">
       <property name="text">
        <string>Mip</string>
       </property>
      </widget>
     </item>
     <item>
-     <widget class="QComboBox" name="comboBox_2"/>
+     <widget class="QComboBox" name="mipLevel">
+      <property name="maxVisibleItems">
+       <number>20</number>
+      </property>
+      <property name="sizeAdjustPolicy">
+       <enum>QComboBox::AdjustToContents</enum>
+      </property>
+     </widget>
     </item>
     <item>
-     <widget class="QLabel" name="label_9">
+     <widget class="QLabel" name="sliceFaceLabel">
       <property name="text">
        <string>Slice/Face</string>
       </property>
      </widget>
     </item>
     <item>
-     <widget class="QComboBox" name="comboBox_7"/>
+     <widget class="QComboBox" name="sliceFace">
+      <property name="maxVisibleItems">
+       <number>20</number>
+      </property>
+      <property name="sizeAdjustPolicy">
+       <enum>QComboBox::AdjustToContents</enum>
+      </property>
+     </widget>
     </item>
    </layout>
   </widget>
@@ -474,9 +595,15 @@
     <rect>
      <x>3</x>
      <y>3</y>
-     <width>579</width>
+     <width>701</width>
      <height>28</height>
     </rect>
+   </property>
+   <property name="sizePolicy">
+    <sizepolicy hsizetype="Minimum" vsizetype="Fixed">
+     <horstretch>0</horstretch>
+     <verstretch>0</verstretch>
+    </sizepolicy>
    </property>
    <property name="minimumSize">
     <size>
@@ -492,7 +619,7 @@
    </property>
    <layout class="QHBoxLayout" name="horizontalLayout_5">
     <property name="spacing">
-     <number>3</number>
+     <number>2</number>
     </property>
     <property name="leftMargin">
      <number>6</number>
@@ -507,28 +634,28 @@
      <number>2</number>
     </property>
     <item>
-     <widget class="QLabel" name="label">
+     <widget class="QLabel" name="channelLabel">
       <property name="text">
        <string>Channels</string>
       </property>
      </widget>
     </item>
     <item>
-     <widget class="QComboBox" name="comboBox">
+     <widget class="QComboBox" name="channels">
       <property name="frame">
        <bool>true</bool>
       </property>
      </widget>
     </item>
     <item>
-     <widget class="Line" name="line_2">
+     <widget class="Line" name="depthStencilSep">
       <property name="orientation">
        <enum>Qt::Vertical</enum>
       </property>
      </widget>
     </item>
     <item>
-     <widget class="QToolButton" name="toolButton_7">
+     <widget class="QToolButton" name="channelRed">
       <property name="text">
        <string>R</string>
       </property>
@@ -544,7 +671,7 @@
      </widget>
     </item>
     <item>
-     <widget class="QToolButton" name="toolButton_6">
+     <widget class="QToolButton" name="channelGreen">
       <property name="text">
        <string>G</string>
       </property>
@@ -560,7 +687,7 @@
      </widget>
     </item>
     <item>
-     <widget class="QToolButton" name="toolButton_5">
+     <widget class="QToolButton" name="channelBlue">
       <property name="text">
        <string>B</string>
       </property>
@@ -579,7 +706,7 @@
      </widget>
     </item>
     <item>
-     <widget class="QToolButton" name="toolButton_4">
+     <widget class="QToolButton" name="channelAlpha">
       <property name="text">
        <string>A</string>
       </property>
@@ -592,21 +719,21 @@
      </widget>
     </item>
     <item>
-     <widget class="Line" name="line_3">
+     <widget class="Line" name="mulSep">
       <property name="orientation">
        <enum>Qt::Vertical</enum>
       </property>
      </widget>
     </item>
     <item>
-     <widget class="QLabel" name="label_7">
+     <widget class="QLabel" name="mulLabel">
       <property name="text">
        <string>Mul:</string>
       </property>
      </widget>
     </item>
     <item>
-     <widget class="QComboBox" name="comboBox_5">
+     <widget class="QComboBox" name="hdrMul">
       <property name="sizePolicy">
        <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
         <horstretch>0</horstretch>
@@ -619,22 +746,40 @@
         <height>0</height>
        </size>
       </property>
-      <property name="maximumSize">
-       <size>
-        <width>16777215</width>
-        <height>16777215</height>
-       </size>
-      </property>
       <property name="editable">
        <bool>true</bool>
       </property>
       <property name="currentText">
        <string>128</string>
       </property>
+      <property name="insertPolicy">
+       <enum>QComboBox::NoInsert</enum>
+      </property>
      </widget>
     </item>
     <item>
-     <widget class="QComboBox" name="comboBox_6">
+     <widget class="Line" name="line_2">
+      <property name="orientation">
+       <enum>Qt::Vertical</enum>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QRadioButton" name="depthDisplay">
+      <property name="text">
+       <string>Depth</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QRadioButton" name="stencilDisplay">
+      <property name="text">
+       <string>Stencil</string>
+      </property>
+     </widget>
+    </item>
+    <item>
+     <widget class="QComboBox" name="customShader">
       <property name="sizePolicy">
        <sizepolicy hsizetype="Preferred" vsizetype="Fixed">
         <horstretch>0</horstretch>
@@ -650,7 +795,7 @@
      </widget>
     </item>
     <item>
-     <widget class="QToolButton" name="toolButton_9">
+     <widget class="QToolButton" name="customCreate">
       <property name="text">
        <string/>
       </property>
@@ -664,7 +809,7 @@
      </widget>
     </item>
     <item>
-     <widget class="QToolButton" name="toolButton_11">
+     <widget class="QToolButton" name="customEdit">
       <property name="text">
        <string/>
       </property>
@@ -678,7 +823,7 @@
      </widget>
     </item>
     <item>
-     <widget class="QToolButton" name="toolButton_8">
+     <widget class="QToolButton" name="customDelete">
       <property name="text">
        <string/>
       </property>
@@ -692,7 +837,7 @@
      </widget>
     </item>
     <item>
-     <widget class="QToolButton" name="toolButton_12">
+     <widget class="QToolButton" name="backcolorPick">
       <property name="text">
        <string/>
       </property>
@@ -709,7 +854,7 @@
      </widget>
     </item>
     <item>
-     <widget class="QToolButton" name="toolButton_10">
+     <widget class="QToolButton" name="checkerBack">
       <property name="text">
        <string/>
       </property>
@@ -729,14 +874,14 @@
      </widget>
     </item>
     <item>
-     <widget class="Line" name="line_4">
+     <widget class="Line" name="gammaSep">
       <property name="orientation">
        <enum>Qt::Vertical</enum>
       </property>
      </widget>
     </item>
     <item>
-     <widget class="QToolButton" name="toolButton_13">
+     <widget class="QToolButton" name="gammaDisplay">
       <property name="minimumSize">
        <size>
         <width>23</width>
@@ -762,13 +907,25 @@
   <widget class="QWidget" name="renderContainer" native="true">
    <property name="geometry">
     <rect>
-     <x>290</x>
-     <y>190</y>
+     <x>250</x>
+     <y>220</y>
      <width>291</width>
-     <height>241</height>
+     <height>231</height>
     </rect>
    </property>
-   <layout class="QVBoxLayout" name="verticalLayout">
+   <property name="sizePolicy">
+    <sizepolicy hsizetype="Minimum" vsizetype="Minimum">
+     <horstretch>0</horstretch>
+     <verstretch>0</verstretch>
+    </sizepolicy>
+   </property>
+   <property name="minimumSize">
+    <size>
+     <width>100</width>
+     <height>100</height>
+    </size>
+   </property>
+   <layout class="QVBoxLayout" name="renderLayout">
     <property name="spacing">
      <number>0</number>
     </property>
@@ -797,23 +954,17 @@
           <verstretch>0</verstretch>
          </sizepolicy>
         </property>
-        <property name="cursor">
-         <cursorShape>CrossCursor</cursorShape>
-        </property>
-        <property name="styleSheet">
-         <string notr="true"/>
-        </property>
        </widget>
       </item>
       <item row="1" column="1">
-       <widget class="QScrollBar" name="verticalScrollBar">
+       <widget class="QScrollBar" name="renderVScroll">
         <property name="orientation">
          <enum>Qt::Vertical</enum>
         </property>
        </widget>
       </item>
       <item row="2" column="0">
-       <widget class="QScrollBar" name="horizontalScrollBar">
+       <widget class="QScrollBar" name="renderHScroll">
         <property name="orientation">
          <enum>Qt::Horizontal</enum>
         </property>
@@ -855,12 +1006,6 @@
           <height>14</height>
          </size>
         </property>
-        <property name="maximumSize">
-         <size>
-          <width>32</width>
-          <height>14</height>
-         </size>
-        </property>
        </widget>
       </item>
       <item>
@@ -880,19 +1025,6 @@
          <string>Status Text</string>
         </property>
        </widget>
-      </item>
-      <item>
-       <spacer name="horizontalSpacer">
-        <property name="orientation">
-         <enum>Qt::Horizontal</enum>
-        </property>
-        <property name="sizeHint" stdset="0">
-         <size>
-          <width>40</width>
-          <height>20</height>
-         </size>
-        </property>
-       </spacer>
       </item>
      </layout>
     </item>
@@ -936,14 +1068,14 @@
        </widget>
       </item>
       <item row="1" column="0">
-       <widget class="QPushButton" name="pushButton">
+       <widget class="QPushButton" name="pixelHistory">
         <property name="text">
          <string>History</string>
         </property>
        </widget>
       </item>
       <item row="1" column="1">
-       <widget class="QPushButton" name="pushButton_2">
+       <widget class="QPushButton" name="debugPixelContext">
         <property name="text">
          <string>Debug</string>
         </property>
@@ -953,75 +1085,154 @@
     </item>
    </layout>
   </widget>
-  <widget class="QScrollArea" name="resourceThumbs">
+  <widget class="ThumbnailStrip" name="inputThumbs" native="true">
    <property name="geometry">
     <rect>
-     <x>430</x>
-     <y>460</y>
+     <x>40</x>
+     <y>470</y>
      <width>120</width>
      <height>80</height>
     </rect>
    </property>
-   <property name="frameShape">
-    <enum>QFrame::Panel</enum>
-   </property>
-   <property name="frameShadow">
-    <enum>QFrame::Plain</enum>
-   </property>
-   <property name="widgetResizable">
-    <bool>true</bool>
-   </property>
-   <widget class="QWidget" name="scrollAreaWidgetContents">
-    <property name="geometry">
-     <rect>
-      <x>0</x>
-      <y>0</y>
-      <width>118</width>
-      <height>78</height>
-     </rect>
-    </property>
-   </widget>
   </widget>
-  <widget class="QScrollArea" name="targetThumbs">
+  <widget class="ThumbnailStrip" name="outputThumbs" native="true">
    <property name="geometry">
     <rect>
-     <x>290</x>
-     <y>460</y>
+     <x>210</x>
+     <y>470</y>
      <width>120</width>
      <height>80</height>
     </rect>
    </property>
+  </widget>
+  <widget class="QFrame" name="textureListFrame">
+   <property name="geometry">
+    <rect>
+     <x>550</x>
+     <y>210</y>
+     <width>221</width>
+     <height>244</height>
+    </rect>
+   </property>
    <property name="frameShape">
-    <enum>QFrame::Panel</enum>
+    <enum>QFrame::NoFrame</enum>
    </property>
    <property name="frameShadow">
     <enum>QFrame::Plain</enum>
    </property>
-   <property name="widgetResizable">
-    <bool>true</bool>
-   </property>
-   <widget class="QWidget" name="scrollAreaWidgetContents_2">
-    <property name="geometry">
-     <rect>
-      <x>0</x>
-      <y>0</y>
-      <width>118</width>
-      <height>78</height>
-     </rect>
+   <layout class="QVBoxLayout" name="verticalLayout">
+    <property name="spacing">
+     <number>6</number>
     </property>
-   </widget>
+    <property name="leftMargin">
+     <number>3</number>
+    </property>
+    <property name="topMargin">
+     <number>3</number>
+    </property>
+    <property name="rightMargin">
+     <number>3</number>
+    </property>
+    <property name="bottomMargin">
+     <number>3</number>
+    </property>
+    <item>
+     <layout class="QHBoxLayout" name="textureListControls">
+      <property name="spacing">
+       <number>0</number>
+      </property>
+      <item>
+       <widget class="QComboBox" name="textureListFilter">
+        <property name="sizePolicy">
+         <sizepolicy hsizetype="MinimumExpanding" vsizetype="Fixed">
+          <horstretch>0</horstretch>
+          <verstretch>0</verstretch>
+         </sizepolicy>
+        </property>
+        <property name="editable">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+      <item>
+       <widget class="QToolButton" name="cancelTextureListFilter">
+        <property name="text">
+         <string/>
+        </property>
+        <property name="icon">
+         <iconset resource="../resources.qrc">
+          <normaloff>:/Resources/cross.png</normaloff>:/Resources/cross.png</iconset>
+        </property>
+        <property name="autoRaise">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </item>
+    <item>
+     <widget class="RDListView" name="textureList">
+      <property name="frameShape">
+       <enum>QFrame::Box</enum>
+      </property>
+      <property name="frameShadow">
+       <enum>QFrame::Sunken</enum>
+      </property>
+      <property name="editTriggers">
+       <set>QAbstractItemView::NoEditTriggers</set>
+      </property>
+      <property name="showDropIndicator" stdset="0">
+       <bool>false</bool>
+      </property>
+      <property name="defaultDropAction">
+       <enum>Qt::CopyAction</enum>
+      </property>
+      <property name="selectionMode">
+       <enum>QAbstractItemView::NoSelection</enum>
+      </property>
+      <property name="viewMode">
+       <enum>QListView::ListMode</enum>
+      </property>
+      <property name="uniformItemSizes">
+       <bool>true</bool>
+      </property>
+     </widget>
+    </item>
+   </layout>
   </widget>
  </widget>
  <customwidgets>
+  <customwidget>
+   <class>ToolWindowManager</class>
+   <extends>QWidget</extends>
+   <header>ToolWindowManager.h</header>
+  </customwidget>
   <customwidget>
    <class>CustomPaintWidget</class>
    <extends>QWidget</extends>
    <header>Widgets/CustomPaintWidget.h</header>
   </customwidget>
   <customwidget>
-   <class>ToolWindowManager</class>
+   <class>ThumbnailStrip</class>
    <extends>QWidget</extends>
-   <header>ToolWindowManager.h</header>
+   <header>Widgets/ThumbnailStrip.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>RDLineEdit</class>
+   <extends>QLineEdit</extends>
+   <header>Widgets/Extended/RDLineEdit.h</header>
+  </customwidget>
+  <customwidget>
+   <class>RDListView</class>
+   <extends>QListView</extends>
+   <header>Widgets/Extended/RDListView.h</header>
+  </customwidget>
+  <customwidget>
+   <class>RangeHistogram</class>
+   <extends>QWidget</extends>
+   <header>Widgets/RangeHistogram.h</header>
+   <container>1</container>
   </customwidget>
  </customwidgets>
  <resources>

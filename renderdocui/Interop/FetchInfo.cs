@@ -180,7 +180,7 @@ namespace renderdoc
             if ((object)y == null) return (object)x == null;
 
             if (x.special || y.special)
-                return x.special == y.special && x.specialFormat == y.specialFormat;
+                return x.special == y.special && x.specialFormat == y.specialFormat && x.compType == y.compType;
 
             return x.compCount == y.compCount &&
                 x.compByteWidth == y.compByteWidth &&
@@ -307,7 +307,6 @@ namespace renderdoc
         public bool cubemap;
         public UInt32 mips;
         public UInt32 arraysize;
-        public UInt32 numSubresources;
         public TextureCreationFlags creationFlags;
         public UInt32 msQual, msSamp;
         public UInt64 byteSize;
@@ -498,11 +497,11 @@ namespace renderdoc
         public UInt32 frameNumber;
         public UInt32 firstEvent;
         public UInt64 fileOffset;
-        public UInt64 fileSize;
+        public UInt64 uncompressedFileSize;
+        public UInt64 compressedFileSize;
         public UInt64 persistentSize;
         public UInt64 initDataSize;
         public UInt64 captureTime;
-        public ResourceId immContextId;
         [CustomMarshalAs(CustomUnmanagedType.CustomClass)]
         public FetchFrameStatistics stats;
 
@@ -610,8 +609,6 @@ namespace renderdoc
 
         public ResourceId copySource;
         public ResourceId copyDestination;
-
-        public ResourceId context;
 
         public Int64 parentDrawcall;
         public Int64 previousDrawcall;
@@ -729,7 +726,8 @@ namespace renderdoc
 
         public Int32 mip = -1;
 
-        public struct ComponentMapping
+        [StructLayout(LayoutKind.Sequential)]
+        public class ComponentMapping
         {
             public float blackPoint;
             public float whitePoint;
@@ -739,7 +737,7 @@ namespace renderdoc
         public ComponentMapping comp = new ComponentMapping();
 
         [StructLayout(LayoutKind.Sequential)]
-        public struct SampleMapping
+        public class SampleMapping
         {
             public bool mapToArray;
 
@@ -749,7 +747,7 @@ namespace renderdoc
         public SampleMapping sample = new SampleMapping();
 
         [StructLayout(LayoutKind.Sequential)]
-        public struct SliceMapping
+        public class SliceMapping
         {
             public Int32 sliceIndex;
 
@@ -782,7 +780,7 @@ namespace renderdoc
         {
             get
             {
-                return pipelineType == GraphicsAPI.D3D11 ? ".hlsl" : ".glsl";
+                return pipelineType.IsD3D() ? ".hlsl" : ".glsl";
             }
         }
     };

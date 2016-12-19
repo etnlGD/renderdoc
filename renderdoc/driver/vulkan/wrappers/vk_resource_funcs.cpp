@@ -990,7 +990,16 @@ bool WrappedVulkan::Serialise_vkCreateImage(Serialiser *localSerialiser, VkDevic
 
     // ensure we can cast multisampled images, for copying to arrays
     if((int)info.samples > 1)
+    {
       info.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+
+      // colour targets we do a simple compute copy, for depth-stencil we need
+      // to take a slower path that uses drawing
+      if(!IsDepthOrStencilFormat(info.format))
+        info.usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+      else
+        info.usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    }
 
     VkResult ret = ObjDisp(device)->CreateImage(Unwrap(device), &info, NULL, &img);
 
@@ -1011,13 +1020,12 @@ bool WrappedVulkan::Serialise_vkCreateImage(Serialiser *localSerialiser, VkDevic
       range.baseMipLevel = range.baseArrayLayer = 0;
       range.levelCount = info.mipLevels;
       range.layerCount = info.arrayLayers;
-      if(info.imageType == VK_IMAGE_TYPE_3D)
-        range.layerCount = info.extent.depth;
 
       ImageLayouts &layouts = m_ImageLayouts[live];
       layouts.subresourceStates.clear();
 
       layouts.layerCount = info.arrayLayers;
+      layouts.sampleCount = (int)info.samples;
       layouts.levelCount = info.mipLevels;
       layouts.extent = info.extent;
       layouts.format = info.format;
@@ -1044,6 +1052,12 @@ VkResult WrappedVulkan::vkCreateImage(VkDevice device, const VkImageCreateInfo *
   VkImageCreateInfo createInfo_adjusted = *pCreateInfo;
 
   createInfo_adjusted.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+
+  if(createInfo_adjusted.samples != VK_SAMPLE_COUNT_1_BIT)
+  {
+    createInfo_adjusted.usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+    createInfo_adjusted.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+  }
 
   VkResult ret =
       ObjDisp(device)->CreateImage(Unwrap(device), &createInfo_adjusted, pAllocator, pImage);
@@ -1138,8 +1152,6 @@ VkResult WrappedVulkan::vkCreateImage(VkDevice device, const VkImageCreateInfo *
     range.baseMipLevel = range.baseArrayLayer = 0;
     range.levelCount = pCreateInfo->mipLevels;
     range.layerCount = pCreateInfo->arrayLayers;
-    if(pCreateInfo->imageType == VK_IMAGE_TYPE_3D)
-      range.layerCount = pCreateInfo->extent.depth;
 
     ImageLayouts *layout = NULL;
     {
@@ -1149,6 +1161,7 @@ VkResult WrappedVulkan::vkCreateImage(VkDevice device, const VkImageCreateInfo *
 
     layout->layerCount = pCreateInfo->arrayLayers;
     layout->levelCount = pCreateInfo->mipLevels;
+    layout->sampleCount = (int)pCreateInfo->samples;
     layout->extent = pCreateInfo->extent;
     layout->format = pCreateInfo->format;
 
@@ -1254,6 +1267,7 @@ VkResult WrappedVulkan::vkCreateImageView(VkDevice device, const VkImageViewCrea
       record->baseResource = imageRecord->GetResourceID();
       record->baseResourceMem = imageRecord->baseResource;
       record->sparseInfo = imageRecord->sparseInfo;
+      record->viewRange = pCreateInfo->subresourceRange;
     }
     else
     {

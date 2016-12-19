@@ -30,11 +30,11 @@
 
 static uint64_t GetHandle(WindowingSystem system, void *data)
 {
-#if defined(RENDERDOC_PLATFORM_LINUX)
+#if ENABLED(RDOC_LINUX)
 
   if(system == eWindowingSystem_Xlib)
   {
-#if defined(RENDERDOC_WINDOWING_XLIB)
+#if ENABLED(RDOC_XLIB)
     return (uint64_t)((XlibWindowData *)data)->window;
 #else
     RDCERR("Xlib windowing system data passed in, but support is not compiled in");
@@ -43,7 +43,7 @@ static uint64_t GetHandle(WindowingSystem system, void *data)
 
   if(system == eWindowingSystem_XCB)
   {
-#if defined(RENDERDOC_WINDOWING_XCB)
+#if ENABLED(RDOC_XCB)
     return (uint64_t)((XCBWindowData *)data)->window;
 #else
     RDCERR("XCB windowing system data passed in, but support is not compiled in");
@@ -54,12 +54,12 @@ static uint64_t GetHandle(WindowingSystem system, void *data)
 
   return 0;
 
-#elif defined(RENDERDOC_PLATFORM_WIN32)
+#elif ENABLED(RDOC_WIN32)
 
   RDCASSERT(system == eWindowingSystem_Win32);
   return (uint64_t)data;    // HWND
 
-#elif defined(RENDERDOC_PLATFORM_ANDROID)
+#elif ENABLED(RDOC_ANDROID)
 
   RDCASSERT(system == eWindowingSystem_Android);
   return (uint64_t)data;    // ANativeWindow *
@@ -103,9 +103,6 @@ ReplayOutput::ReplayOutput(ReplayRenderer *parent, WindowingSystem system, void 
   m_MainOutput.texture = ResourceId();
 
   m_pDevice->GetOutputWindowDimensions(m_MainOutput.outputID, m_Width, m_Height);
-
-  m_FirstDeferredEvent = 0;
-  m_LastDeferredEvent = 0;
 
   m_CustomShaderResourceId = ResourceId();
 }
@@ -156,12 +153,6 @@ bool ReplayOutput::SetMeshDisplay(const MeshDisplay &o)
   return true;
 }
 
-void ReplayOutput::SetContextFilter(ResourceId id, uint32_t firstDefEv, uint32_t lastDefEv)
-{
-  m_FirstDeferredEvent = firstDefEv;
-  m_LastDeferredEvent = lastDefEv;
-}
-
 void ReplayOutput::SetFrameEvent(int eventID)
 {
   m_EventID = eventID;
@@ -177,9 +168,43 @@ void ReplayOutput::SetFrameEvent(int eventID)
 
 void ReplayOutput::RefreshOverlay()
 {
-  FetchDrawcall *draw = m_pRenderer->GetDrawcallByEID(m_EventID, m_LastDeferredEvent);
+  FetchDrawcall *draw = m_pRenderer->GetDrawcallByEID(m_EventID);
 
-  passEvents = m_pDevice->GetPassEvents(m_LastDeferredEvent > 0 ? m_LastDeferredEvent : m_EventID);
+  passEvents = m_pDevice->GetPassEvents(m_EventID);
+
+  bool postVSBuffers = false;
+  bool postVSWholePass = false;
+
+  if(m_Config.m_Type == eOutputType_MeshDisplay && m_OverlayDirty)
+  {
+    postVSBuffers = true;
+    postVSWholePass = m_RenderData.meshDisplay.showWholePass != 0;
+  }
+
+  if(m_Config.m_Type == eOutputType_TexDisplay)
+  {
+    postVSBuffers = m_RenderData.texDisplay.overlay == eTexOverlay_TriangleSizePass ||
+                    m_RenderData.texDisplay.overlay == eTexOverlay_TriangleSizeDraw;
+    postVSWholePass = m_RenderData.texDisplay.overlay == eTexOverlay_TriangleSizePass;
+  }
+
+  if(postVSBuffers)
+  {
+    if(m_Config.m_Type == eOutputType_MeshDisplay)
+      m_OverlayDirty = false;
+
+    if(draw != NULL && (draw->flags & eDraw_Drawcall))
+    {
+      m_pDevice->InitPostVSBuffers(draw->eventID);
+
+      if(postVSWholePass && !passEvents.empty())
+      {
+        m_pDevice->InitPostVSBuffers(passEvents);
+
+        m_pDevice->ReplayLog(m_EventID, eReplay_WithoutDraw);
+      }
+    }
+  }
 
   if(m_Config.m_Type == eOutputType_TexDisplay && m_RenderData.texDisplay.overlay != eTexOverlay_None)
   {
@@ -190,22 +215,9 @@ void ReplayOutput::RefreshOverlay()
           m_RenderData.texDisplay.overlay, m_EventID, passEvents);
       m_OverlayDirty = false;
     }
-  }
-
-  if(m_Config.m_Type == eOutputType_MeshDisplay && m_OverlayDirty)
-  {
-    m_OverlayDirty = false;
-
-    if(draw == NULL || (draw->flags & eDraw_Drawcall) == 0)
-      return;
-
-    m_pDevice->InitPostVSBuffers(draw->eventID);
-
-    if(m_RenderData.meshDisplay.showWholePass && !passEvents.empty())
+    else
     {
-      m_pDevice->InitPostVSBuffers(passEvents);
-
-      m_pDevice->ReplayLog(m_EventID, eReplay_WithoutDraw);
+      m_OverlayResourceId = ResourceId();
     }
   }
 }
@@ -280,6 +292,68 @@ bool ReplayOutput::AddThumbnail(WindowingSystem system, void *data, ResourceId t
   return true;
 }
 
+bool ReplayOutput::GetMinMax(PixelValue *minval, PixelValue *maxval)
+{
+  PixelValue *a = minval;
+  PixelValue *b = maxval;
+
+  PixelValue dummy;
+
+  if(a == NULL)
+    a = &dummy;
+  if(b == NULL)
+    b = &dummy;
+
+  ResourceId tex = m_pDevice->GetLiveID(m_RenderData.texDisplay.texid);
+
+  FormatComponentType typeHint = m_RenderData.texDisplay.typeHint;
+  uint32_t slice = m_RenderData.texDisplay.sliceFace;
+  uint32_t mip = m_RenderData.texDisplay.mip;
+  uint32_t sample = m_RenderData.texDisplay.sampleIdx;
+
+  if(m_RenderData.texDisplay.CustomShader != ResourceId() && m_CustomShaderResourceId != ResourceId())
+  {
+    tex = m_CustomShaderResourceId;
+    typeHint = eCompType_None;
+    slice = 0;
+    sample = 0;
+  }
+
+  return m_pDevice->GetMinMax(tex, slice, mip, sample, typeHint, &a->value_f[0], &b->value_f[0]);
+}
+
+bool ReplayOutput::GetHistogram(float minval, float maxval, bool channels[4],
+                                rdctype::array<uint32_t> *histogram)
+{
+  if(histogram == NULL)
+    return false;
+
+  vector<uint32_t> hist;
+
+  ResourceId tex = m_pDevice->GetLiveID(m_RenderData.texDisplay.texid);
+
+  FormatComponentType typeHint = m_RenderData.texDisplay.typeHint;
+  uint32_t slice = m_RenderData.texDisplay.sliceFace;
+  uint32_t mip = m_RenderData.texDisplay.mip;
+  uint32_t sample = m_RenderData.texDisplay.sampleIdx;
+
+  if(m_RenderData.texDisplay.CustomShader != ResourceId() && m_CustomShaderResourceId != ResourceId())
+  {
+    tex = m_CustomShaderResourceId;
+    typeHint = eCompType_None;
+    slice = 0;
+    sample = 0;
+  }
+
+  bool ret =
+      m_pDevice->GetHistogram(tex, slice, mip, sample, typeHint, minval, maxval, channels, hist);
+
+  if(ret)
+    *histogram = hist;
+
+  return ret;
+}
+
 bool ReplayOutput::PickPixel(ResourceId tex, bool customShader, uint32_t x, uint32_t y,
                              uint32_t sliceFace, uint32_t mip, uint32_t sample, PixelValue *ret)
 {
@@ -299,7 +373,9 @@ bool ReplayOutput::PickPixel(ResourceId tex, bool customShader, uint32_t x, uint
     typeHint = eCompType_None;
   }
   if((m_RenderData.texDisplay.overlay == eTexOverlay_QuadOverdrawDraw ||
-      m_RenderData.texDisplay.overlay == eTexOverlay_QuadOverdrawPass) &&
+      m_RenderData.texDisplay.overlay == eTexOverlay_QuadOverdrawPass ||
+      m_RenderData.texDisplay.overlay == eTexOverlay_TriangleSizeDraw ||
+      m_RenderData.texDisplay.overlay == eTexOverlay_TriangleSizePass) &&
      m_OverlayResourceId != ResourceId())
   {
     decodeRamp = true;
@@ -325,6 +401,21 @@ bool ReplayOutput::PickPixel(ResourceId tex, bool customShader, uint32_t x, uint
         break;
       }
     }
+
+    // decode back into approximate pixel size area
+    if(m_RenderData.texDisplay.overlay == eTexOverlay_TriangleSizePass ||
+       m_RenderData.texDisplay.overlay == eTexOverlay_TriangleSizeDraw)
+    {
+      float bucket = (float)ret->value_i[0];
+
+      // decode bucket into approximate triangle area
+      if(bucket <= 0.5f)
+        ret->value_f[0] = 0.0f;
+      else if(bucket < 2.0f)
+        ret->value_f[0] = 16.0f;
+      else
+        ret->value_f[0] = -2.5f * logf(1.0f + (bucket - 22.0f) / 20.1f);
+    }
   }
 
   return true;
@@ -332,7 +423,7 @@ bool ReplayOutput::PickPixel(ResourceId tex, bool customShader, uint32_t x, uint
 
 uint32_t ReplayOutput::PickVertex(uint32_t eventID, uint32_t x, uint32_t y)
 {
-  FetchDrawcall *draw = m_pRenderer->GetDrawcallByEID(eventID, 0);
+  FetchDrawcall *draw = m_pRenderer->GetDrawcallByEID(eventID);
 
   if(!draw)
     return ~0U;
@@ -397,7 +488,9 @@ void ReplayOutput::DisplayContext()
     disp.texid = m_CustomShaderResourceId;
 
   if((m_RenderData.texDisplay.overlay == eTexOverlay_QuadOverdrawDraw ||
-      m_RenderData.texDisplay.overlay == eTexOverlay_QuadOverdrawPass) &&
+      m_RenderData.texDisplay.overlay == eTexOverlay_QuadOverdrawPass ||
+      m_RenderData.texDisplay.overlay == eTexOverlay_TriangleSizeDraw ||
+      m_RenderData.texDisplay.overlay == eTexOverlay_TriangleSizePass) &&
      m_OverlayResourceId != ResourceId())
     disp.texid = m_OverlayResourceId;
 
@@ -492,7 +585,12 @@ bool ReplayOutput::Display()
     disp.rangemin = 0.0f;
     disp.rangemax = 1.0f;
     disp.sliceFace = 0;
+    disp.offx = 0.0f;
+    disp.offy = 0.0f;
     disp.rawoutput = false;
+    disp.overlay = eTexOverlay_None;
+
+    disp.lightBackgroundColour = disp.darkBackgroundColour = FloatVector();
 
     if(m_Thumbnails[i].typeHint == eCompType_SNorm)
       disp.rangemin = -1.0f;
@@ -537,7 +635,7 @@ bool ReplayOutput::Display()
 
 void ReplayOutput::DisplayTex()
 {
-  FetchDrawcall *draw = m_pRenderer->GetDrawcallByEID(m_EventID, m_LastDeferredEvent);
+  FetchDrawcall *draw = m_pRenderer->GetDrawcallByEID(m_EventID);
 
   if(m_MainOutput.outputID == 0)
     return;
@@ -617,7 +715,7 @@ void ReplayOutput::DisplayTex()
 
 void ReplayOutput::DisplayMesh()
 {
-  FetchDrawcall *draw = m_pRenderer->GetDrawcallByEID(m_EventID, m_LastDeferredEvent);
+  FetchDrawcall *draw = m_pRenderer->GetDrawcallByEID(m_EventID);
 
   if(draw == NULL || m_MainOutput.outputID == 0 || m_Width <= 0 || m_Height <= 0 ||
      (m_RenderData.meshDisplay.type == eMeshDataStage_Unknown) || (draw->flags & eDraw_Drawcall) == 0)
@@ -671,7 +769,7 @@ void ReplayOutput::DisplayMesh()
   {
     for(size_t i = 0; m_RenderData.meshDisplay.showWholePass && i < passEvents.size(); i++)
     {
-      FetchDrawcall *d = m_pRenderer->GetDrawcallByEID(passEvents[i], m_LastDeferredEvent);
+      FetchDrawcall *d = m_pRenderer->GetDrawcallByEID(passEvents[i]);
 
       if(d)
       {
@@ -775,6 +873,20 @@ extern "C" RENDERDOC_API void RENDERDOC_CC ReplayOutput_GetCustomShaderTexID(Rep
 {
   if(id)
     *id = output->GetCustomShaderTexID();
+}
+
+extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayOutput_GetMinMax(ReplayOutput *output,
+                                                                    PixelValue *minval,
+                                                                    PixelValue *maxval)
+{
+  return output->GetMinMax(minval, maxval);
+}
+extern "C" RENDERDOC_API bool32 RENDERDOC_CC
+ReplayOutput_GetHistogram(ReplayOutput *output, float minval, float maxval, bool32 channels[4],
+                          rdctype::array<uint32_t> *histogram)
+{
+  bool chans[4] = {channels[0] != 0, channels[1] != 0, channels[2] != 0, channels[3] != 0};
+  return output->GetHistogram(minval, maxval, chans, histogram);
 }
 
 extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayOutput_PickPixel(

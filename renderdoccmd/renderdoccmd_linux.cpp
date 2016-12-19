@@ -51,14 +51,34 @@ void Daemonise()
   daemon(1, 0);
 }
 
-// this is included as a data file in librenderdoc.so
-extern unsigned char driver_vulkan_renderdoc_json[];
-extern int driver_vulkan_renderdoc_json_len;
+// this is exported from vk_linux.cpp
+
+#if defined(RENDERDOC_SUPPORT_VULKAN)
+
+extern "C" void RENDERDOC_GetLayerJSON(char **txt, int *len);
+
+#else
+
+// just for ease of compiling, define a dummy function
+
+void RENDERDOC_GetLayerJSON(char **txt, int *len)
+{
+  static char dummy[] = "";
+  *txt = dummy;
+  *len = 0;
+}
+
+#endif
 
 static string GenerateJSON(const string &sopath)
 {
-  char *txt = (char *)driver_vulkan_renderdoc_json;
-  int len = driver_vulkan_renderdoc_json_len;
+  char *txt = NULL;
+  int len = 0;
+
+  RENDERDOC_GetLayerJSON(&txt, &len);
+
+  if(len <= 0)
+    return "";
 
   string json = string(txt, txt + len);
 
@@ -277,7 +297,7 @@ struct VulkanRegisterCommand : public Command
   string libPath;
 };
 
-static void VerifyVulkanLayer(int argc, char *argv[])
+void VerifyVulkanLayer(int argc, char *argv[])
 {
   // see if the user has suppressed all this checking as a "I know what I'm doing" measure
 
@@ -684,7 +704,7 @@ void DisplayRendererPreview(ReplayRenderer *renderer, TextureDisplay &displayCfg
 // symbol defined in libGL but not librenderdoc.
 // Forces link of libGL after renderdoc (otherwise all symbols would
 // be resolved and libGL wouldn't link, meaning dlsym(RTLD_NEXT) would fai
-extern "C" void glXWaitGL();
+extern "C" void glXWaitX();
 
 #endif
 
@@ -704,7 +724,7 @@ int main(int argc, char *argv[])
 
   volatile bool never_run = false;
   if(never_run)
-    glXWaitGL();
+    glXWaitX();
 
 #endif
 

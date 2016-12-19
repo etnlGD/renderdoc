@@ -93,6 +93,7 @@ namespace renderdoc
     public enum ShaderBindType
     {
         Unknown = 0,
+        ConstantBuffer,
         Sampler,
         ImageSampler,
         ReadOnlyImage,
@@ -170,6 +171,8 @@ namespace renderdoc
         ClearBeforeDraw,
         QuadOverdrawPass,
         QuadOverdrawDraw,
+        TriangleSizePass,
+        TriangleSizeDraw,
     };
 
     public enum FileType
@@ -188,6 +191,7 @@ namespace renderdoc
         Discard,
         BlendToColour,
         BlendToCheckerboard,
+        Preserve,
     };
 
     public enum SpecialFormat
@@ -227,6 +231,7 @@ namespace renderdoc
     public enum GraphicsAPI
     {
         D3D11,
+        D3D12,
         OpenGL,
         Vulkan,
     };
@@ -301,7 +306,7 @@ namespace renderdoc
     };
 
     [Flags]
-    public enum D3D11BufferViewFlags
+    public enum D3DBufferViewFlags
     {
         Raw = 0x1,
         Append = 0x2,
@@ -332,6 +337,7 @@ namespace renderdoc
     [Flags]
     public enum ShaderStageBits
     {
+        None         = 0,
         Vertex       = (1 << ShaderStageType.Vertex),
         Hull         = (1 << ShaderStageType.Hull),
         Tess_Control = (1 << ShaderStageType.Tess_Control),
@@ -341,6 +347,7 @@ namespace renderdoc
         Pixel        = (1 << ShaderStageType.Pixel),
         Fragment     = (1 << ShaderStageType.Fragment),
         Compute      = (1 << ShaderStageType.Compute),
+        All          = (Vertex | Hull | Domain | Geometry | Pixel | Fragment | Compute),
     };
 
     public enum DebugMessageSource
@@ -394,6 +401,7 @@ namespace renderdoc
     	GS_Constants,
     	PS_Constants,
     	CS_Constants,
+        All_Constants,
 
     	SO,
 
@@ -403,6 +411,7 @@ namespace renderdoc
     	GS_Resource,
     	PS_Resource,
     	CS_Resource,
+        All_Resource,
 
         VS_RWResource,
         HS_RWResource,
@@ -410,10 +419,13 @@ namespace renderdoc
         GS_RWResource,
         PS_RWResource,
         CS_RWResource,
+        All_RWResource,
 
         InputTarget,
     	ColourTarget,
     	DepthStencilTarget,
+
+        Indirect,
 
         Clear,
 
@@ -480,15 +492,23 @@ namespace renderdoc
         FrontAndBack,
     };
 
-    public enum GPUCounters
+    public enum GPUCounters : uint
     {
         FirstGeneric = 1,
         EventGPUDuration = FirstGeneric,
         InputVerticesRead,
-        VSInvocations,
-        PSInvocations,
+        IAPrimitives,
+        GSPrimitives,
+        RasterizerInvocations,
         RasterizedPrimitives,
         SamplesWritten,
+        VSInvocations,
+        HSInvocations,
+        DSInvocations,
+        TESInvocations = DSInvocations,
+        GSInvocations,
+        PSInvocations,
+        CSInvocations,
 
         FirstAMD = 1000000,
 
@@ -567,6 +587,11 @@ namespace renderdoc
         public static UInt32 GetVertexOffset(this PrimitiveTopology topology, UInt32 primitiveIndex)
         {
             return Topology_VertexOffset(topology, primitiveIndex);
+        }
+
+        public static bool IsD3D(this GraphicsAPI apitype)
+        {
+            return (apitype == GraphicsAPI.D3D11 || apitype == GraphicsAPI.D3D12);
         }
 
         public static string Str(this DebugMessageSource source)
@@ -687,7 +712,7 @@ namespace renderdoc
 
         public static string Str(this ResourceUsage usage, GraphicsAPI apitype)
         {
-            if (apitype == GraphicsAPI.D3D11)
+            if (apitype.IsD3D())
             {
                 switch (usage)
                 {
@@ -700,6 +725,7 @@ namespace renderdoc
                     case ResourceUsage.DS_Constants: return "DS - Constant Buffer";
                     case ResourceUsage.CS_Constants: return "CS - Constant Buffer";
                     case ResourceUsage.PS_Constants: return "PS - Constant Buffer";
+                    case ResourceUsage.All_Constants: return "All - Constant Buffer";
 
                     case ResourceUsage.SO: return "Stream Out";
 
@@ -709,6 +735,7 @@ namespace renderdoc
                     case ResourceUsage.DS_Resource: return "DS - Resource";
                     case ResourceUsage.CS_Resource: return "CS - Resource";
                     case ResourceUsage.PS_Resource: return "PS - Resource";
+                    case ResourceUsage.All_Resource: return "All - Resource";
 
                     case ResourceUsage.VS_RWResource: return "VS - UAV";
                     case ResourceUsage.HS_RWResource: return "HS - UAV";
@@ -716,10 +743,13 @@ namespace renderdoc
                     case ResourceUsage.GS_RWResource: return "GS - UAV";
                     case ResourceUsage.PS_RWResource: return "PS - UAV";
                     case ResourceUsage.CS_RWResource: return "CS - UAV";
+                    case ResourceUsage.All_RWResource: return "All - UAV";
 
                     case ResourceUsage.InputTarget: return "Colour Input";
                     case ResourceUsage.ColourTarget: return "Rendertarget";
                     case ResourceUsage.DepthStencilTarget: return "Depthstencil";
+
+                    case ResourceUsage.Indirect: return "Indirect argument";
 
                     case ResourceUsage.Clear: return "Clear";
 
@@ -749,6 +779,7 @@ namespace renderdoc
                     case ResourceUsage.DS_Constants: return "DS - Uniform Buffer";
                     case ResourceUsage.CS_Constants: return "CS - Uniform Buffer";
                     case ResourceUsage.PS_Constants: return "PS - Uniform Buffer";
+                    case ResourceUsage.All_Constants: return "All - Uniform Buffer";
 
                     case ResourceUsage.SO: return "Transform Feedback";
 
@@ -758,6 +789,7 @@ namespace renderdoc
                     case ResourceUsage.DS_Resource: return "DS - Texture";
                     case ResourceUsage.CS_Resource: return "CS - Texture";
                     case ResourceUsage.PS_Resource: return "PS - Texture";
+                    case ResourceUsage.All_Resource: return "All - Texture";
 
                     case ResourceUsage.VS_RWResource: return "VS - Image/SSBO";
                     case ResourceUsage.HS_RWResource: return "HS - Image/SSBO";
@@ -765,10 +797,13 @@ namespace renderdoc
                     case ResourceUsage.GS_RWResource: return "GS - Image/SSBO";
                     case ResourceUsage.PS_RWResource: return "PS - Image/SSBO";
                     case ResourceUsage.CS_RWResource: return "CS - Image/SSBO";
+                    case ResourceUsage.All_RWResource: return "All - Image/SSBO";
 
                     case ResourceUsage.InputTarget: return "FBO Input";
                     case ResourceUsage.ColourTarget: return "FBO Colour";
                     case ResourceUsage.DepthStencilTarget: return "FBO Depthstencil";
+
+                    case ResourceUsage.Indirect: return "Indirect argument";
 
                     case ResourceUsage.Clear: return "Clear";
 
@@ -789,7 +824,7 @@ namespace renderdoc
 
         public static string Str(this ShaderStageType stage, GraphicsAPI apitype)
         {
-            if (apitype == GraphicsAPI.D3D11)
+            if (apitype.IsD3D())
             {
                 switch (stage)
                 {
@@ -855,12 +890,13 @@ namespace renderdoc
         {
             switch (bindType)
             {
+                case ShaderBindType.ConstantBuffer:   return "Constants";
                 case ShaderBindType.Sampler:          return "Sampler";
                 case ShaderBindType.ImageSampler:     return "Image&Sampler";
                 case ShaderBindType.ReadOnlyImage:    return "Image";
                 case ShaderBindType.ReadWriteImage:   return "RW Image";
-                case ShaderBindType.ReadOnlyTBuffer:  return "RW TBuffer";
-                case ShaderBindType.ReadWriteTBuffer: return "TBuffer";
+                case ShaderBindType.ReadOnlyTBuffer:  return "TBuffer";
+                case ShaderBindType.ReadWriteTBuffer: return "RW TBuffer";
                 case ShaderBindType.ReadOnlyBuffer:   return "Buffer";
                 case ShaderBindType.ReadWriteBuffer:  return "RW Buffer";
                 case ShaderBindType.InputAttachment:  return "Input";

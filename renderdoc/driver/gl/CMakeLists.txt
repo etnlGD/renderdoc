@@ -28,6 +28,7 @@ set(sources
     wrappers/gl_emulated.cpp
     wrappers/gl_framebuffer_funcs.cpp
     wrappers/gl_get_funcs.cpp
+    wrappers/gl_interop_funcs.cpp
     wrappers/gl_query_funcs.cpp
     wrappers/gl_sampler_funcs.cpp
     wrappers/gl_shader_funcs.cpp
@@ -46,6 +47,7 @@ elseif(APPLE)
 elseif(UNIX)
     list(APPEND sources
         gl_replay_linux.cpp
+        glx_hooks_linux.cpp
         gl_hooks_linux.cpp)
 endif()
 

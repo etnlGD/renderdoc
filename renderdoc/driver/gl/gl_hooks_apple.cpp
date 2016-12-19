@@ -33,6 +33,8 @@
 
 #include "driver/gl/gl_hookset_defs.h"
 
+Threading::CriticalSection glLock;
+
 class OpenGLHook : LibraryHook
 {
 public:
@@ -59,6 +61,11 @@ GLWindowingData MakeContext(GLWindowingData share)
 {
   RDCUNIMPLEMENTED("MakeContext");
   return GLWindowingData();
+}
+
+Threading::CriticalSection &GetGLLock()
+{
+  return glLock;
 }
 
 void DeleteContext(GLWindowingData context)

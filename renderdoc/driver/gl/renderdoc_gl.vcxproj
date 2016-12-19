@@ -34,10 +34,19 @@
     <ClInclude Include="official\wglext.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="glx_hooks_linux.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="gl_common.cpp" />
     <ClCompile Include="gl_counters.cpp" />
     <ClCompile Include="gl_debug.cpp" />
     <ClCompile Include="gl_driver.cpp" />
+    <ClCompile Include="gl_hooks_android.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="gl_hooks_apple.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="gl_hooks_linux.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
@@ -45,6 +54,12 @@
     <ClCompile Include="gl_manager.cpp" />
     <ClCompile Include="gl_renderstate.cpp" />
     <ClCompile Include="gl_replay.cpp" />
+    <ClCompile Include="gl_replay_android.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
+    <ClCompile Include="gl_replay_apple.cpp">
+      <ExcludedFromBuild>true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="gl_replay_linux.cpp">
       <ExcludedFromBuild>true</ExcludedFromBuild>
     </ClCompile>
@@ -57,6 +72,7 @@
     <ClCompile Include="wrappers\gl_emulated.cpp" />
     <ClCompile Include="wrappers\gl_framebuffer_funcs.cpp" />
     <ClCompile Include="wrappers\gl_get_funcs.cpp" />
+    <ClCompile Include="wrappers\gl_interop_funcs.cpp" />
     <ClCompile Include="wrappers\gl_query_funcs.cpp" />
     <ClCompile Include="wrappers\gl_sampler_funcs.cpp" />
     <ClCompile Include="wrappers\gl_shader_funcs.cpp" />

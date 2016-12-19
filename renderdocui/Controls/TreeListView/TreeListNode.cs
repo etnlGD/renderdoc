@@ -22,6 +22,7 @@ namespace TreelistView
         int                 m_treeColumn = -1;
 		int					m_id = -1;
 		object				m_tag = null;
+        bool                m_clippedText = false;
         bool                m_bold = false;
         bool                m_italic = false;
         float               m_treeLineWidth = 0.0f;
@@ -32,7 +33,25 @@ namespace TreelistView
 
         Color[]             m_backCols = null;
 
-        public TreeListView OwnerView = null;
+        private TreeListView m_ownerview = null;
+        public TreeListView OwnerView
+        {
+            get
+            {
+                if (m_ownerview != null)
+                    return m_ownerview;
+
+                if (m_owner != null)
+                    m_ownerview = m_owner.OwnerView;
+
+                return m_ownerview;
+            }
+
+            set
+            {
+                m_ownerview = value;
+            }
+        }
 
 		public Node Parent
 		{
@@ -63,6 +82,11 @@ namespace TreelistView
 			{
 				m_hasChildren = value;
 			}
+		}
+		public bool ClippedText
+		{
+			get { return m_clippedText; }
+			set { m_clippedText = value; }
 		}
 		public Image Image
 		{
@@ -414,7 +438,25 @@ namespace TreelistView
 		int		m_nextId = 0;
 		int		m_IdDirty = 0;
 
-        public TreeListView OwnerView = null;
+        private TreeListView m_ownerview = null;
+        public TreeListView OwnerView
+        {
+            get
+            {
+                if(m_ownerview != null)
+                    return m_ownerview;
+
+                if(m_owner != null)
+                    m_ownerview = m_owner.OwnerView;
+
+                return m_ownerview;
+            }
+
+            set
+            {
+                m_ownerview = value;
+            }
+        }
 
 		Node[]	m_nodesInternal = null;
 		Node	m_owner = null;
@@ -1058,12 +1100,12 @@ namespace TreelistView
 			return m_nodesMap.ContainsKey(node);
 		}
 
-		public IList<Node> GetSortedNodes()
+		public void Sort()
 		{
 			SortedList<string, Node> list = new SortedList<string,Node>();
 			foreach (Node node in m_nodes)
 				list.Add(node.GetId(), node);
-			return list.Values;
+			m_nodes = new List<Node>(list.Values);
 		}
 
 	}

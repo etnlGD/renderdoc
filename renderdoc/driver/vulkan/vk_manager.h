@@ -105,7 +105,7 @@ public:
                            const SrcBarrierType &t, uint32_t nummips, uint32_t numslices);
 
   void RecordBarriers(vector<pair<ResourceId, ImageRegionState> > &states,
-                      map<ResourceId, ImageLayouts> &layouts, uint32_t numBarriers,
+                      const map<ResourceId, ImageLayouts> &layouts, uint32_t numBarriers,
                       const VkImageMemoryBarrier *barriers);
 
   void MergeBarriers(vector<pair<ResourceId, ImageRegionState> > &dststates,
@@ -252,7 +252,7 @@ private:
 
   bool ResourceTypeRelease(WrappedVkRes *res);
 
-  bool Force_InitialState(WrappedVkRes *res);
+  bool Force_InitialState(WrappedVkRes *res, bool prepare);
   bool AllowDeletedResource_InitialState() { return true; }
   bool Need_InitialStateChunk(WrappedVkRes *res);
   bool Prepare_InitialState(WrappedVkRes *res);

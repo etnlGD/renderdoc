@@ -283,8 +283,6 @@ bool WrappedVulkan::Serialise_vkCreateSwapchainKHR(Serialiser *localSerialiser, 
 
       m_ImageLayouts[liveId].extent = iminfo.extent;
       m_ImageLayouts[liveId].format = iminfo.format;
-      m_ImageLayouts[liveId].layerCount = 1;
-      m_ImageLayouts[liveId].levelCount = 1;
 
       m_ImageLayouts[liveId].subresourceStates.clear();
       m_ImageLayouts[liveId].subresourceStates.push_back(
@@ -479,8 +477,8 @@ VkResult WrappedVulkan::vkCreateSwapchainKHR(VkDevice device,
 {
   VkSwapchainCreateInfoKHR createInfo = *pCreateInfo;
 
-  // make sure we can readback to get the screenshot
-  createInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+  // make sure we can readback to get the screenshot, and render to it for the text overlay
+  createInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
   createInfo.surface = Unwrap(createInfo.surface);
   createInfo.oldSwapchain = Unwrap(createInfo.oldSwapchain);
 
@@ -539,33 +537,6 @@ VkResult WrappedVulkan::vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR 
 
   if(m_State == WRITING_IDLE)
   {
-    m_FrameTimes.push_back(m_FrameTimer.GetMilliseconds());
-    m_TotalTime += m_FrameTimes.back();
-    m_FrameTimer.Restart();
-
-    // update every second
-    if(m_TotalTime > 1000.0)
-    {
-      m_MinFrametime = 10000.0;
-      m_MaxFrametime = 0.0;
-      m_AvgFrametime = 0.0;
-
-      m_TotalTime = 0.0;
-
-      for(size_t i = 0; i < m_FrameTimes.size(); i++)
-      {
-        m_AvgFrametime += m_FrameTimes[i];
-        if(m_FrameTimes[i] < m_MinFrametime)
-          m_MinFrametime = m_FrameTimes[i];
-        if(m_FrameTimes[i] > m_MaxFrametime)
-          m_MaxFrametime = m_FrameTimes[i];
-      }
-
-      m_AvgFrametime /= double(m_FrameTimes.size());
-
-      m_FrameTimes.clear();
-    }
-
     uint32_t overlay = RenderDoc::Inst().GetOverlayBits();
 
     if(overlay & eRENDERDOC_Overlay_Enabled)
@@ -603,106 +574,11 @@ VkResult WrappedVulkan::vkQueuePresentKHR(VkQueue queue, const VkPresentInfoKHR 
 
       GetDebugManager()->BeginText(textstate);
 
-      if(activeWindow)
-      {
-        vector<RENDERDOC_InputButton> keys = RenderDoc::Inst().GetCaptureKeys();
+      int flags = activeWindow ? RenderDoc::eOverlay_ActiveWindow : 0;
+      string overlayText = RenderDoc::Inst().GetOverlayText(RDC_Vulkan, m_FrameCounter, flags);
 
-        string overlayText = "Vulkan. ";
-
-        if(Keyboard::PlatformHasKeyInput())
-        {
-          for(size_t i = 0; i < keys.size(); i++)
-          {
-            if(i > 0)
-              overlayText += ", ";
-
-            overlayText += ToStr::Get(keys[i]);
-          }
-
-          if(!keys.empty())
-            overlayText += " to capture.";
-        }
-        else
-        {
-          if(RenderDoc::Inst().IsTargetControlConnected())
-          {
-            overlayText += "Connected by " + RenderDoc::Inst().GetTargetControlUsername() + ".";
-          }
-          else
-          {
-            uint32_t port = RenderDoc::Inst().GetTargetControlIdent();
-            if(port)
-              overlayText +=
-                  StringFormat::Fmt("Listening for remote access connection on port %i.", port);
-            else
-              overlayText += "No remote access socket.";
-          }
-        }
-
-        if(overlay & eRENDERDOC_Overlay_FrameNumber)
-        {
-          overlayText += StringFormat::Fmt(" Frame: %d.", m_FrameCounter);
-        }
-        if(overlay & eRENDERDOC_Overlay_FrameRate)
-        {
-          overlayText += StringFormat::Fmt(" %.2lf ms (%.2lf .. %.2lf) (%.0lf FPS)", m_AvgFrametime,
-                                           m_MinFrametime, m_MaxFrametime, 1000.0f / m_AvgFrametime);
-        }
-
-        float y = 0.0f;
-
-        if(!overlayText.empty())
-        {
-          GetDebugManager()->RenderText(textstate, 0.0f, y, overlayText.c_str());
-          y += 1.0f;
-        }
-
-        if(overlay & eRENDERDOC_Overlay_CaptureList)
-        {
-          GetDebugManager()->RenderText(textstate, 0.0f, y, "%d Captures saved.\n",
-                                        (uint32_t)m_CapturedFrames.size());
-          y += 1.0f;
-
-          uint64_t now = Timing::GetUnixTimestamp();
-          for(size_t i = 0; i < m_CapturedFrames.size(); i++)
-          {
-            if(now - m_CapturedFrames[i].captureTime < 20)
-            {
-              GetDebugManager()->RenderText(textstate, 0.0f, y, "Captured frame %d.\n",
-                                            m_CapturedFrames[i].frameNumber);
-              y += 1.0f;
-            }
-          }
-        }
-
-#if !defined(RELEASE)
-        GetDebugManager()->RenderText(textstate, 0.0f, y, "%llu chunks - %.2f MB",
-                                      Chunk::NumLiveChunks(),
-                                      float(Chunk::TotalMem()) / 1024.0f / 1024.0f);
-        y += 1.0f;
-#endif
-      }
-      else
-      {
-        vector<RENDERDOC_InputButton> keys = RenderDoc::Inst().GetFocusKeys();
-
-        string str = "Vulkan. Inactive swapchain.";
-
-        for(size_t i = 0; i < keys.size(); i++)
-        {
-          if(i == 0)
-            str += " ";
-          else
-            str += ", ";
-
-          str += ToStr::Get(keys[i]);
-        }
-
-        if(!keys.empty())
-          str += " to cycle between swapchains";
-
-        GetDebugManager()->RenderText(textstate, 0.0f, 0.0f, str.c_str());
-      }
+      if(!overlayText.empty())
+        GetDebugManager()->RenderText(textstate, 0.0f, 0.0f, overlayText.c_str());
 
       GetDebugManager()->EndText(textstate);
 
@@ -851,8 +727,8 @@ VkResult WrappedVulkan::vkCreateSharedSwapchainsKHR(VkDevice device, uint32_t sw
   for(uint32_t i = 0; i < swapchainCount; i++)
   {
     unwrapped[i] = pCreateInfos[i];
-    // make sure we can readback to get the screenshot
-    unwrapped[i].imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    // make sure we can readback to get the screenshot, and render to it for the text overlay
+    unwrapped[i].imageUsage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     unwrapped[i].surface = Unwrap(unwrapped[i].surface);
     unwrapped[i].oldSwapchain = Unwrap(unwrapped[i].oldSwapchain);
   }

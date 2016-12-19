@@ -158,7 +158,7 @@ void D3D11RenderState::ReleaseRefs()
   RDCEraseEl(CSUAVs);
 }
 
-void D3D11RenderState::MarkDirty(D3D11ResourceManager *manager) const
+void D3D11RenderState::MarkDirty(WrappedID3D11DeviceContext *ctx) const
 {
   for(UINT i = 0; i < D3D11_1_UAV_SLOT_COUNT; i++)
   {
@@ -166,13 +166,13 @@ void D3D11RenderState::MarkDirty(D3D11ResourceManager *manager) const
     if(CSUAVs[i])
     {
       CSUAVs[i]->GetResource(&res);
-      manager->MarkDirtyResource(GetIDForResource(res));
+      ctx->MarkDirtyResource(GetIDForResource(res));
       SAFE_RELEASE(res);
     }
   }
 
   for(UINT i = 0; i < D3D11_SO_BUFFER_SLOT_COUNT; i++)
-    manager->MarkDirtyResource(GetIDForResource(SO.Buffers[i]));
+    ctx->MarkDirtyResource(GetIDForResource(SO.Buffers[i]));
 
   for(UINT i = 0; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; i++)
   {
@@ -180,7 +180,7 @@ void D3D11RenderState::MarkDirty(D3D11ResourceManager *manager) const
     if(OM.RenderTargets[i])
     {
       OM.RenderTargets[i]->GetResource(&res);
-      manager->MarkDirtyResource(GetIDForResource(res));
+      ctx->MarkDirtyResource(GetIDForResource(res));
       SAFE_RELEASE(res);
     }
   }
@@ -191,7 +191,7 @@ void D3D11RenderState::MarkDirty(D3D11ResourceManager *manager) const
     if(OM.UAVs[i])
     {
       OM.UAVs[i]->GetResource(&res);
-      manager->MarkDirtyResource(GetIDForResource(res));
+      ctx->MarkDirtyResource(GetIDForResource(res));
       SAFE_RELEASE(res);
     }
   }
@@ -201,7 +201,7 @@ void D3D11RenderState::MarkDirty(D3D11ResourceManager *manager) const
     if(OM.DepthView)
     {
       OM.DepthView->GetResource(&res);
-      manager->MarkDirtyResource(GetIDForResource(res));
+      ctx->MarkDirtyResource(GetIDForResource(res));
       SAFE_RELEASE(res);
     }
   }
@@ -850,6 +850,10 @@ void D3D11RenderState::Clear()
   ReleaseRefs();
   OM.BlendFactor[0] = OM.BlendFactor[1] = OM.BlendFactor[2] = OM.BlendFactor[3] = 1.0f;
   OM.SampleMask = 0xffffffff;
+
+  for(size_t i = 0; i < ARRAY_COUNT(VS.CBCounts); i++)
+    VS.CBCounts[i] = HS.CBCounts[i] = DS.CBCounts[i] = GS.CBCounts[i] = PS.CBCounts[i] =
+        CS.CBCounts[i] = 4096;
 }
 
 void D3D11RenderState::ApplyState(WrappedID3D11DeviceContext *context)
@@ -1487,13 +1491,11 @@ bool D3D11RenderState::shader::Used_CB(uint32_t slot) const
   if(dxbc == NULL)
     return true;
 
-  if(slot >= dxbc->m_CBuffers.size())
-    return false;
+  for(size_t i = 0; i < dxbc->m_CBuffers.size(); i++)
+    if(dxbc->m_CBuffers[i].reg == slot)
+      return true;
 
-  if(dxbc->m_CBuffers[slot].variables.empty())
-    return false;
-
-  return true;
+  return false;
 }
 
 bool D3D11RenderState::shader::Used_SRV(uint32_t slot) const
@@ -1514,7 +1516,7 @@ bool D3D11RenderState::shader::Used_SRV(uint32_t slot) const
 
   for(size_t i = 0; i < dxbc->m_Resources.size(); i++)
   {
-    if(dxbc->m_Resources[i].bindPoint == slot &&
+    if(dxbc->m_Resources[i].reg == slot &&
        (dxbc->m_Resources[i].type == DXBC::ShaderInputBind::TYPE_TEXTURE ||
         dxbc->m_Resources[i].type == DXBC::ShaderInputBind::TYPE_STRUCTURED ||
         dxbc->m_Resources[i].type == DXBC::ShaderInputBind::TYPE_TBUFFER ||
@@ -1542,7 +1544,7 @@ bool D3D11RenderState::shader::Used_UAV(uint32_t slot) const
 
   for(size_t i = 0; i < dxbc->m_Resources.size(); i++)
   {
-    if(dxbc->m_Resources[i].bindPoint == slot &&
+    if(dxbc->m_Resources[i].reg == slot &&
        (dxbc->m_Resources[i].type == DXBC::ShaderInputBind::TYPE_UAV_APPEND_STRUCTURED ||
         dxbc->m_Resources[i].type == DXBC::ShaderInputBind::TYPE_UAV_CONSUME_STRUCTURED ||
         dxbc->m_Resources[i].type == DXBC::ShaderInputBind::TYPE_UAV_RWBYTEADDRESS ||

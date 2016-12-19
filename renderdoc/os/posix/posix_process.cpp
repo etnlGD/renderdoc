@@ -341,14 +341,15 @@ static pid_t RunProcess(const char *app, const char *workingDir, const char *cmd
   return childPid;
 }
 
-uint32_t Process::InjectIntoProcess(uint32_t pid, const char *logfile, const CaptureOptions *opts,
-                                    bool waitForExit)
+uint32_t Process::InjectIntoProcess(uint32_t pid, EnvironmentModification *env, const char *logfile,
+                                    const CaptureOptions *opts, bool waitForExit)
 {
   RDCUNIMPLEMENTED("Injecting into already running processes on linux");
   return 0;
 }
 
-uint32_t Process::LaunchProcess(const char *app, const char *workingDir, const char *cmdLine)
+uint32_t Process::LaunchProcess(const char *app, const char *workingDir, const char *cmdLine,
+                                ProcessResult *result)
 {
   if(app == NULL || app[0] == 0)
   {
@@ -420,6 +421,8 @@ uint32_t Process::LaunchAndInjectIntoProcess(const char *app, const char *workin
       EnvironmentModification(eEnvModification_Replace, "RENDERDOC_LOGFILE", logfile));
   modifications.push_back(
       EnvironmentModification(eEnvModification_Replace, "RENDERDOC_CAPTUREOPTS", optstr.c_str()));
+  modifications.push_back(EnvironmentModification(eEnvModification_Replace,
+                                                  "RENDERDOC_DEBUG_LOG_FILE", RDCGETLOGFILE()));
 
   for(size_t i = 0; i < modifications.size(); i++)
   {

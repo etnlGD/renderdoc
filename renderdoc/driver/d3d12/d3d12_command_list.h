@@ -89,7 +89,7 @@ class WrappedID3D12GraphicsCommandList : public RefCounter12<ID3D12GraphicsComma
   // command recording/replay data shared between queues and lists
   D3D12CommandData *m_Cmd;
 
-  WrappedID3D12RootSignature *m_CurRootSig;
+  WrappedID3D12RootSignature *m_CurGfxRootSig, *m_CurCompRootSig;
 
   ResourceId m_ResourceID;
   D3D12ResourceRecord *m_ListRecord;
@@ -123,6 +123,7 @@ public:
   WrappedID3D12Device *GetWrappedDevice() { return m_pDevice; }
   D3D12ResourceRecord *GetResourceRecord() { return m_ListRecord; }
   ID3D12GraphicsCommandList *GetList(ResourceId id);
+  ID3D12GraphicsCommandList *GetCrackedList(ResourceId id);
 
   void SetCommandData(D3D12CommandData *cmd) { m_Cmd = cmd; }
   void SetInitParams(REFIID riid, UINT nodeMask, D3D12_COMMAND_LIST_TYPE type)
@@ -408,6 +409,10 @@ public:
                                 BeginEvent(UINT Metadata, const void *pData, UINT Size));
 
   IMPLEMENT_FUNCTION_SERIALISED(virtual void STDMETHODCALLTYPE, EndEvent());
+
+  void ReserveExecuteIndirect(ID3D12GraphicsCommandList *list, ResourceId sig, UINT maxCount);
+  void PatchExecuteIndirect(BakedCmdListInfo &info, uint32_t executeIndex);
+  void ReplayExecuteIndirect(ID3D12GraphicsCommandList *list, BakedCmdListInfo &info);
 
   IMPLEMENT_FUNCTION_SERIALISED(virtual void STDMETHODCALLTYPE,
                                 ExecuteIndirect(ID3D12CommandSignature *pCommandSignature,

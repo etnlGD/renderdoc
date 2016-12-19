@@ -47,8 +47,6 @@ void InitInstanceTable(VkInstance inst, PFN_vkGetInstanceProcAddr gpa);
 // and
 // instance are destroyed. We only clean up after our own objects.
 
-//#define FORCE_VALIDATION_LAYERS
-
 static void StripUnwantedLayers(vector<string> &Layers)
 {
   for(auto it = Layers.begin(); it != Layers.end();)
@@ -72,7 +70,8 @@ static void StripUnwantedLayers(vector<string> &Layers)
     if(*it == "VK_LAYER_LUNARG_standard_validation" || *it == "VK_LAYER_LUNARG_core_validation" ||
        *it == "VK_LAYER_LUNARG_device_limits" || *it == "VK_LAYER_LUNARG_image" ||
        *it == "VK_LAYER_LUNARG_object_tracker" || *it == "VK_LAYER_LUNARG_parameter_validation" ||
-       *it == "VK_LAYER_LUNARG_swapchain" || *it == "VK_LAYER_GOOGLE_threading")
+       *it == "VK_LAYER_LUNARG_swapchain" || *it == "VK_LAYER_GOOGLE_threading" ||
+       *it == "VK_LAYER_GOOGLE_unique_objects")
     {
       it = Layers.erase(it);
       continue;
@@ -84,6 +83,9 @@ static void StripUnwantedLayers(vector<string> &Layers)
 
 ReplayCreateStatus WrappedVulkan::Initialise(VkInitParams &params)
 {
+  if(m_pSerialiser->HasError())
+    return eReplayCreate_FileIOFailed;
+
   m_InitParams = params;
 
   params.AppName = string("RenderDoc @ ") + params.AppName;
@@ -92,7 +94,7 @@ ReplayCreateStatus WrappedVulkan::Initialise(VkInitParams &params)
   // PORTABILITY verify that layers/extensions are available
   StripUnwantedLayers(params.Layers);
 
-#if defined(FORCE_VALIDATION_LAYERS)
+#if ENABLED(FORCE_VALIDATION_LAYERS)
   params.Layers.push_back("VK_LAYER_LUNARG_standard_validation");
 
   params.Extensions.push_back("VK_EXT_debug_report");
@@ -277,6 +279,33 @@ VkResult WrappedVulkan::vkCreateInstance(const VkInstanceCreateInfo *pCreateInfo
   VkInstanceCreateInfo modifiedCreateInfo;
   modifiedCreateInfo = *pCreateInfo;
 
+  for(uint32_t i = 0; i < modifiedCreateInfo.enabledExtensionCount; i++)
+  {
+    if(!IsSupportedExtension(modifiedCreateInfo.ppEnabledExtensionNames[i]))
+    {
+      RDCERR("RenderDoc does not support instance extension '%s'.",
+             modifiedCreateInfo.ppEnabledExtensionNames[i]);
+      RDCERR("File an issue on github to request support: https://github.com/baldurk/renderdoc");
+
+      // see if any debug report callbacks were passed in the pNext chain
+      VkDebugReportCallbackCreateInfoEXT *report =
+          (VkDebugReportCallbackCreateInfoEXT *)pCreateInfo->pNext;
+
+      while(report)
+      {
+        if(report && report->sType == VK_STRUCTURE_TYPE_DEBUG_REPORT_CALLBACK_CREATE_INFO_EXT)
+          report->pfnCallback(VK_DEBUG_REPORT_ERROR_BIT_EXT,
+                              VK_DEBUG_REPORT_OBJECT_TYPE_INSTANCE_EXT, 0, 1, 1, "RDOC",
+                              "RenderDoc does not support a requested instance extension.",
+                              report->pUserData);
+
+        report = (VkDebugReportCallbackCreateInfoEXT *)report->pNext;
+      }
+
+      return VK_ERROR_EXTENSION_NOT_PRESENT;
+    }
+  }
+
   const char **addedExts = new const char *[modifiedCreateInfo.enabledExtensionCount + 1];
 
   for(uint32_t i = 0; i < modifiedCreateInfo.enabledExtensionCount; i++)
@@ -306,10 +335,10 @@ VkResult WrappedVulkan::vkCreateInstance(const VkInstanceCreateInfo *pCreateInfo
   record->instDevInfo = new InstanceDeviceInfo();
 
 #undef CheckExt
-#define CheckExt(name)                                                        \
-  if(!strcmp(modifiedCreateInfo.ppEnabledExtensionNames[i], STRINGIZE(name))) \
-  {                                                                           \
-    record->instDevInfo->name = true;                                         \
+#define CheckExt(name)                                              \
+  if(!strcmp(modifiedCreateInfo.ppEnabledExtensionNames[i], #name)) \
+  {                                                                 \
+    record->instDevInfo->ext_##name = true;                         \
   }
 
   for(uint32_t i = 0; i < modifiedCreateInfo.enabledExtensionCount; i++)
@@ -787,7 +816,7 @@ bool WrappedVulkan::Serialise_vkCreateDevice(Serialiser *localSerialiser,
 
     AddRequiredExtensions(false, Extensions, supportedExtensions);
 
-#if defined(FORCE_VALIDATION_LAYERS)
+#if ENABLED(FORCE_VALIDATION_LAYERS)
     Layers.push_back("VK_LAYER_LUNARG_standard_validation");
 #endif
 
@@ -919,6 +948,20 @@ bool WrappedVulkan::Serialise_vkCreateDevice(Serialiser *localSerialiser,
     else
       RDCWARN(
           "shaderStorageImageWriteWithoutFormat = false, save/load from 2DMS textures will not be "
+          "possible");
+
+    if(availFeatures.shaderStorageImageMultisample)
+      enabledFeatures.shaderStorageImageMultisample = true;
+    else
+      RDCWARN(
+          "shaderStorageImageMultisample = false, save/load from 2DMS textures will not be "
+          "possible");
+
+    if(availFeatures.sampleRateShading)
+      enabledFeatures.sampleRateShading = true;
+    else
+      RDCWARN(
+          "sampleRateShading = false, save/load from depth 2DMS textures will not be "
           "possible");
 
     uint32_t numExts = 0;
@@ -1146,6 +1189,42 @@ VkResult WrappedVulkan::vkCreateDevice(VkPhysicalDevice physicalDevice,
     m_SetDeviceLoaderData = layerCreateInfo->u.pfnSetDeviceLoaderData;
   }
 
+  // patch enabled features
+
+  VkPhysicalDeviceFeatures availFeatures;
+
+  ObjDisp(physicalDevice)->GetPhysicalDeviceFeatures(Unwrap(physicalDevice), &availFeatures);
+
+  // default to all off. This is equivalent to createInfo.pEnabledFeatures == NULL
+  VkPhysicalDeviceFeatures enabledFeatures = {0};
+
+  // if the user enabled features, of course we want to enable them.
+  if(createInfo.pEnabledFeatures)
+    enabledFeatures = *createInfo.pEnabledFeatures;
+
+  if(availFeatures.shaderStorageImageWriteWithoutFormat)
+    enabledFeatures.shaderStorageImageWriteWithoutFormat = true;
+  else
+    RDCWARN(
+        "shaderStorageImageWriteWithoutFormat = false, save/load from 2DMS textures will not be "
+        "possible");
+
+  if(availFeatures.shaderStorageImageMultisample)
+    enabledFeatures.shaderStorageImageMultisample = true;
+  else
+    RDCWARN(
+        "shaderStorageImageMultisample = false, save/load from 2DMS textures will not be "
+        "possible");
+
+  if(availFeatures.sampleRateShading)
+    enabledFeatures.sampleRateShading = true;
+  else
+    RDCWARN(
+        "sampleRateShading = false, save/load from depth 2DMS textures will not be "
+        "possible");
+
+  createInfo.pEnabledFeatures = &enabledFeatures;
+
   VkResult ret = createFunc(Unwrap(physicalDevice), &createInfo, pAllocator, pDevice);
 
   // don't serialise out any of the pNext stuff for layer initialisation
@@ -1181,17 +1260,18 @@ VkResult WrappedVulkan::vkCreateDevice(VkPhysicalDevice physicalDevice,
       record->instDevInfo = new InstanceDeviceInfo();
 
 #undef CheckExt
-#define CheckExt(name) record->instDevInfo->name = GetRecord(m_Instance)->instDevInfo->name;
+#define CheckExt(name) \
+  record->instDevInfo->ext_##name = GetRecord(m_Instance)->instDevInfo->ext_##name;
 
       // inherit extension enablement from instance, that way GetDeviceProcAddress can check
       // for enabled extensions for instance functions
       CheckInstanceExts();
 
 #undef CheckExt
-#define CheckExt(name)                                                \
-  if(!strcmp(createInfo.ppEnabledExtensionNames[i], STRINGIZE(name))) \
-  {                                                                   \
-    record->instDevInfo->name = true;                                 \
+#define CheckExt(name)                                      \
+  if(!strcmp(createInfo.ppEnabledExtensionNames[i], #name)) \
+  {                                                         \
+    record->instDevInfo->ext_##name = true;                 \
   }
 
       for(uint32_t i = 0; i < createInfo.enabledExtensionCount; i++)

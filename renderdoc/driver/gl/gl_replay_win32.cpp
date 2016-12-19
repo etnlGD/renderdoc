@@ -169,7 +169,11 @@ uint64_t GLReplay::MakeOutputWindow(WindowingSystem system, void *data, bool dep
   attribs[i++] = WGL_CONTEXT_MINOR_VERSION_ARB;
   attribs[i++] = 3;
   attribs[i++] = WGL_CONTEXT_FLAGS_ARB;
+#if ENABLED(RDOC_DEVEL)
   attribs[i++] = WGL_CONTEXT_DEBUG_BIT_ARB;
+#else
+  attribs[i++] = 0;
+#endif
   attribs[i++] = WGL_CONTEXT_PROFILE_MASK_ARB;
   attribs[i++] = WGL_CONTEXT_CORE_PROFILE_BIT_ARB;
 
@@ -402,7 +406,11 @@ ReplayCreateStatus GL_CreateReplayDevice(const char *logfile, IReplayDriver **dr
   attribs[i++] = WGL_CONTEXT_MINOR_VERSION_ARB;
   attribs[i++] = 3;
   attribs[i++] = WGL_CONTEXT_FLAGS_ARB;
+#if ENABLED(RDOC_DEVEL)
   attribs[i++] = WGL_CONTEXT_DEBUG_BIT_ARB;
+#else
+  attribs[i++] = 0;
+#endif
   attribs[i++] = WGL_CONTEXT_PROFILE_MASK_ARB;
   attribs[i++] = WGL_CONTEXT_CORE_PROFILE_BIT_ARB;
 
@@ -496,12 +504,12 @@ ReplayCreateStatus GL_CreateReplayDevice(const char *logfile, IReplayDriver **dr
     uint64_t ptrmask = 0;
 
     for(size_t j = 0; j < 64; j++)
-      if(ptr + j < num && ptrs[i + j])
+      if(ptr + j < num && ptrs[ptr + j])
         ptrmask |= 1ULL << (63 - j);
 
     ptr += 64;
 
-    RDCLOG("%64llb", ptrmask);
+    RDCLOG("%064llb", ptrmask);
   }
 
 // check for the presence of GL functions we will call unconditionally as part of the replay
@@ -796,6 +804,12 @@ ReplayCreateStatus GL_CreateReplayDevice(const char *logfile, IReplayDriver **dr
 
   WrappedOpenGL *gl = new WrappedOpenGL(logfile, real);
   gl->Initialise(initParams);
+
+  if(gl->GetSerialiser()->HasError())
+  {
+    delete gl;
+    return eReplayCreate_FileIOFailed;
+  }
 
   RDCLOG("Created device.");
   GLReplay *replay = gl->GetReplay();

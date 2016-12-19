@@ -270,7 +270,7 @@ void GetDefaultFiles(const char *logBaseName, string &capture_filename, string &
 
   wchar_t *filename_start = temp_filename + wcslen(temp_filename);
 
-  wsprintf(filename_start, L"%ls_%04d.%02d.%02d_%02d.%02d.rdc", mod, 1900 + now.tm_year,
+  wsprintf(filename_start, L"RenderDoc\\%ls_%04d.%02d.%02d_%02d.%02d.rdc", mod, 1900 + now.tm_year,
            now.tm_mon + 1, now.tm_mday, now.tm_hour, now.tm_min);
 
   capture_filename = StringFormat::Wide2UTF8(wstring(temp_filename));
@@ -279,7 +279,7 @@ void GetDefaultFiles(const char *logBaseName, string &capture_filename, string &
 
   wstring wbase = StringFormat::UTF82Wide(string(logBaseName));
 
-  wsprintf(filename_start, L"%ls_%04d.%02d.%02d_%02d.%02d.%02d.log", wbase.c_str(),
+  wsprintf(filename_start, L"RenderDoc\\%ls_%04d.%02d.%02d_%02d.%02d.%02d.log", wbase.c_str(),
            1900 + now.tm_year, now.tm_mon + 1, now.tm_mday, now.tm_hour, now.tm_min, now.tm_sec);
 
   logging_filename = StringFormat::Wide2UTF8(wstring(temp_filename));
@@ -500,6 +500,27 @@ int fclose(FILE *f)
 {
   return ::fclose(f);
 }
+
+void *logfile_open(const char *filename)
+{
+  wstring wfn = StringFormat::UTF82Wide(string(filename));
+  return (void *)CreateFileW(wfn.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                             NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+}
+
+void logfile_append(void *handle, const char *msg, size_t length)
+{
+  if(handle)
+  {
+    DWORD bytesWritten = 0;
+    WriteFile((HANDLE)handle, msg, (DWORD)length, &bytesWritten, NULL);
+  }
+}
+
+void logfile_close(void *handle)
+{
+  CloseHandle((HANDLE)handle);
+}
 };
 
 namespace StringFormat
@@ -573,7 +594,7 @@ string Wide2UTF8(const wstring &s)
 
   if(res == 0)
   {
-#if !defined(_RELEASE)
+#if ENABLED(RDOC_DEVEL)
     RDCWARN("Failed to convert wstring");    // can't pass string through as this would infinitely
                                              // recurse
 #endif
@@ -600,7 +621,7 @@ wstring UTF82Wide(const string &s)
 
   if(res == 0)
   {
-#if !defined(_RELEASE)
+#if ENABLED(RDOC_DEVEL)
     RDCWARN("Failed to convert utf-8 string");    // can't pass string through as this would
                                                   // infinitely recurse
 #endif
@@ -635,7 +656,7 @@ uint64_t GetMachineIdent()
   ret |= MachineIdent_Arch_x86;
 #endif
 
-#if defined(RDC64BIT)
+#if ENABLED(RDOC_X64)
   ret |= MachineIdent_64bit;
 #else
   ret |= MachineIdent_32bit;

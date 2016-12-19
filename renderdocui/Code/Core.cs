@@ -65,7 +65,6 @@ namespace renderdocui.Code
         private string m_LogFile = "";
 
         private UInt32 m_EventID = 0;
-        private UInt32 m_DeferredEvent = 0;
 
         private APIProperties m_APIProperties = null;
 
@@ -75,6 +74,7 @@ namespace renderdocui.Code
         private FetchTexture[] m_Textures = null;
 
         private D3D11PipelineState m_D3D11PipelineState = null;
+        private D3D12PipelineState m_D3D12PipelineState = null;
         private GLPipelineState m_GLPipelineState = null;
         private VulkanPipelineState m_VulkanPipelineState = null;
         private CommonPipelineState m_PipelineState = new CommonPipelineState();
@@ -123,7 +123,7 @@ namespace renderdocui.Code
 
         public APIProperties APIProps { get { return m_APIProperties; } }
 
-        public UInt32 CurEvent { get { return m_DeferredEvent > 0 ? m_DeferredEvent : m_EventID; } }
+        public UInt32 CurEvent { get { return m_EventID; } }
 
         public FetchDrawcall[] CurDrawcalls { get { return GetDrawcalls(); } }
 
@@ -175,6 +175,7 @@ namespace renderdocui.Code
 
         // direct access (note that only one of these will be valid for a log, check APIProps.pipelineType)
         public D3D11PipelineState CurD3D11PipelineState { get { return m_D3D11PipelineState; } }
+        public D3D12PipelineState CurD3D12PipelineState { get { return m_D3D12PipelineState; } }
         public GLPipelineState CurGLPipelineState { get { return m_GLPipelineState; } }
         public VulkanPipelineState CurVulkanPipelineState { get { return m_VulkanPipelineState; } }
         public CommonPipelineState CurPipelineState { get { return m_PipelineState; } }
@@ -225,10 +226,6 @@ namespace renderdocui.Code
 
             // don't group present with anything
             if ((a.flags & DrawcallFlags.Present) != (b.flags & DrawcallFlags.Present))
-                return false;
-
-            // don't group things run on different multithreaded contexts
-            if(a.context != b.context)
                 return false;
 
             // don't group things with different depth outputs
@@ -295,7 +292,7 @@ namespace renderdocui.Code
 
             foreach (var d in draws)
             {
-                ret |= (d.flags & DrawcallFlags.PushMarker) > 0 && (d.flags & DrawcallFlags.CmdList) == 0;
+                ret |= (d.flags & DrawcallFlags.PushMarker) > 0 && (d.flags & DrawcallFlags.CmdList) == 0 && d.children.Length > 0;
                 ret |= ContainsMarker(d.children);
             }
 
@@ -321,13 +318,13 @@ namespace renderdocui.Code
 
             for (int i = 1; i < draws.Length; i++)
             {
-                if ((draws[refdraw].flags & (DrawcallFlags.Copy | DrawcallFlags.Resolve | DrawcallFlags.SetMarker)) > 0)
+                if ((draws[refdraw].flags & (DrawcallFlags.Copy | DrawcallFlags.Resolve | DrawcallFlags.SetMarker | DrawcallFlags.CmdList)) > 0)
                 {
                     refdraw = i;
                     continue;
                 }
 
-                if ((draws[i].flags & (DrawcallFlags.Copy | DrawcallFlags.Resolve | DrawcallFlags.SetMarker)) > 0)
+                if ((draws[i].flags & (DrawcallFlags.Copy | DrawcallFlags.Resolve | DrawcallFlags.SetMarker | DrawcallFlags.CmdList)) > 0)
                     continue;
 
                 if (PassEquivalent(draws[i], draws[refdraw]))
@@ -336,9 +333,7 @@ namespace renderdocui.Code
                 int end = i-1;
 
                 if (end - start < 2 ||
-                    draws[i].children.Length > 0 || draws[refdraw].children.Length > 0 ||
-                    draws[i].context != m_FrameInfo.immContextId ||
-                    draws[refdraw].context != m_FrameInfo.immContextId)
+                    draws[i].children.Length > 0 || draws[refdraw].children.Length > 0)
                 {
                     for (int j = start; j <= end; j++)
                         ret.Add(draws[j]);
@@ -367,7 +362,6 @@ namespace renderdocui.Code
                 mark.drawcallID = draws[start].drawcallID;
                 mark.markerColour = new float[] { 0.0f, 0.0f, 0.0f, 0.0f };
 
-                mark.context = draws[end].context;
                 mark.flags = DrawcallFlags.PushMarker;
                 mark.outputs = draws[end].outputs;
                 mark.depthOut = draws[end].depthOut;
@@ -573,9 +567,10 @@ namespace renderdocui.Code
                 postloadProgress = 0.9f;
 
                 m_D3D11PipelineState = r.GetD3D11PipelineState();
+                m_D3D12PipelineState = r.GetD3D12PipelineState();
                 m_GLPipelineState = r.GetGLPipelineState();
                 m_VulkanPipelineState = r.GetVulkanPipelineState();
-                m_PipelineState.SetStates(m_APIProperties, m_D3D11PipelineState, m_GLPipelineState, m_VulkanPipelineState);
+                m_PipelineState.SetStates(m_APIProperties, m_D3D11PipelineState, m_D3D12PipelineState, m_GLPipelineState, m_VulkanPipelineState);
 
                 UnreadMessageCount = 0;
                 AddMessages(m_FrameInfo.debugMessages);
@@ -675,9 +670,10 @@ namespace renderdocui.Code
             m_Textures = null;
 
             m_D3D11PipelineState = null;
+            m_D3D12PipelineState = null;
             m_GLPipelineState = null;
             m_VulkanPipelineState = null;
-            m_PipelineState.SetStates(null, null, null, null);
+            m_PipelineState.SetStates(null, null,null, null, null);
 
             DebugMessages.Clear();
             UnreadMessageCount = 0;
@@ -704,7 +700,7 @@ namespace renderdocui.Code
             try
             {
                 if (folder.Length == 0 || !Directory.Exists(folder))
-                    folder = Path.GetTempPath();
+                    folder = Path.Combine(Path.GetTempPath(), "RenderDoc");
             }
             catch (ArgumentException)
             {
@@ -892,37 +888,6 @@ namespace renderdocui.Code
 
         #region Log Browsing
 
-        // setting a context filter allows replaying of deferred events. You can set the deferred
-        // events to replay in a context, after replaying up to a given event on the main thread
-        public void SetContextFilter(ILogViewerForm exclude, UInt32 eventID,
-                                     ResourceId ctx, UInt32 firstDeferred, UInt32 lastDeferred)
-        {
-            m_EventID = eventID;
-
-            m_DeferredEvent = lastDeferred;
-
-            m_Renderer.Invoke((ReplayRenderer r) => { r.SetContextFilter(ctx, firstDeferred, lastDeferred); });
-            m_Renderer.Invoke((ReplayRenderer r) => {
-                r.SetFrameEvent(m_EventID, true);
-                m_D3D11PipelineState = r.GetD3D11PipelineState();
-                m_GLPipelineState = r.GetGLPipelineState();
-                m_VulkanPipelineState = r.GetVulkanPipelineState();
-                m_PipelineState.SetStates(m_APIProperties, m_D3D11PipelineState, m_GLPipelineState, m_VulkanPipelineState);
-            });
-
-            foreach (var logviewer in m_LogViewers)
-            {
-                if (logviewer == exclude)
-                    continue;
-
-                Control c = (Control)logviewer;
-                if (c.InvokeRequired)
-                    c.BeginInvoke(new Action(() => logviewer.OnEventSelected(eventID)));
-                else
-                    logviewer.OnEventSelected(eventID);
-            }
-        }
-
         public void RefreshStatus()
         {
             SetEventID(null, m_EventID, true);
@@ -937,16 +902,14 @@ namespace renderdocui.Code
         {
             m_EventID = eventID;
 
-            m_DeferredEvent = 0;
-
-            m_Renderer.Invoke((ReplayRenderer r) => { r.SetContextFilter(ResourceId.Null, 0, 0); });
             m_Renderer.Invoke((ReplayRenderer r) =>
             {
                 r.SetFrameEvent(m_EventID, force);
                 m_D3D11PipelineState = r.GetD3D11PipelineState();
+                m_D3D12PipelineState = r.GetD3D12PipelineState();
                 m_GLPipelineState = r.GetGLPipelineState();
                 m_VulkanPipelineState = r.GetVulkanPipelineState();
-                m_PipelineState.SetStates(m_APIProperties, m_D3D11PipelineState, m_GLPipelineState, m_VulkanPipelineState);
+                m_PipelineState.SetStates(m_APIProperties, m_D3D11PipelineState, m_D3D12PipelineState, m_GLPipelineState, m_VulkanPipelineState);
             });
 
             foreach (var logviewer in m_LogViewers)

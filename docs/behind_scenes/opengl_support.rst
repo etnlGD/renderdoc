@@ -3,11 +3,7 @@ OpenGL Support
 
 This page documents the support of OpenGL in RenderDoc. This gives an overview of what RenderDoc is capable of, and primarily lists information that is relevant. You might also be interested in the :doc:`full list of features <../getting_started/features>`.
 
-.. |github_opengl_link| raw:: html
-
-   <a href="https://github.com/baldurk/renderdoc/wiki/OpenGL" target="_blank">GitHub wiki</a>
-
-The latest information and up-to-date support is always available on the |github_opengl_link|.
+The latest information and up-to-date support is always available on the `GitHub wiki <https://github.com/baldurk/renderdoc/wiki/OpenGL>`_.
 
 OpenGL requirements, and limitations
 ------------------------------------
@@ -33,7 +29,7 @@ There are several places where OpenGL is not yet at feature parity with D3D11.
 Linux and OS X
 --------------
 
-Linux and OS X support follows naturally when thinking about OpenGL support. Currently there is full support for capturing and replaying on linux, however the Qt UI is still heavily work in progress. The recommended method is to capture on linux, and then replay on windows. For more information on this see :doc:`../how/how_network_capture_replay`.
+Linux and OS X support follows naturally when thinking about OpenGL support. Currently there is full support for capturing and replaying on linux, however the Qt UI is still work in progress. The recommended method is to capture on linux, and then replay on windows. For more information on this see :doc:`../how/how_network_capture_replay`.
 
 See Also
 --------

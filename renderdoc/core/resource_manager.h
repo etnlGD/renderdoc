@@ -55,7 +55,7 @@ enum FrameRefType
 
 // verbose prints with IDs of each dirty resource and whether it was prepared,
 // and whether it was serialised.
-#define VERBOSE_DIRTY_RESOURCES 0
+#define VERBOSE_DIRTY_RESOURCES OPTION_OFF
 
 namespace ResourceIDGen
 {
@@ -198,6 +198,21 @@ struct ResourceRecord
     other->LockChunks();
     m_Chunks.swap(other->m_Chunks);
     m_FrameRefs.swap(other->m_FrameRefs);
+    other->UnlockChunks();
+    UnlockChunks();
+  }
+
+  void AppendFrom(ResourceRecord *other)
+  {
+    LockChunks();
+    other->LockChunks();
+
+    for(auto it = other->m_Chunks.begin(); it != other->m_Chunks.end(); ++it)
+      AddChunk(it->second->Duplicate());
+
+    for(auto it = other->Parents.begin(); it != other->Parents.end(); ++it)
+      AddParent(*it);
+
     other->UnlockChunks();
     UnlockChunks();
   }
@@ -383,6 +398,7 @@ public:
 
   // when asked for a given id, return the resource for a replacement id
   void ReplaceResource(ResourceId from, ResourceId to);
+  bool HasReplacement(ResourceId from);
   void RemoveReplacement(ResourceId id);
 
   // fetch original ID for a real ID or vice-versa.
@@ -411,7 +427,7 @@ protected:
 
   virtual bool ResourceTypeRelease(WrappedResourceType res) = 0;
 
-  virtual bool Force_InitialState(WrappedResourceType res) = 0;
+  virtual bool Force_InitialState(WrappedResourceType res, bool prepare) = 0;
   virtual bool AllowDeletedResource_InitialState() { return false; }
   virtual bool Need_InitialStateChunk(WrappedResourceType res) = 0;
   virtual bool Prepare_InitialState(WrappedResourceType res) = 0;
@@ -911,7 +927,7 @@ void ResourceManager<WrappedResourceType, RealResourceType, RecordType>::Prepare
 
     prepared++;
 
-#if VERBOSE_DIRTY_RESOURCES
+#if ENABLED(VERBOSE_DIRTY_RESOURCES)
     RDCDEBUG("Prepare Resource %llu", id);
 #endif
 
@@ -927,7 +943,7 @@ void ResourceManager<WrappedResourceType, RealResourceType, RecordType>::Prepare
     if(it->second == (WrappedResourceType)RecordType::NullResource)
       continue;
 
-    if(Force_InitialState(it->second))
+    if(Force_InitialState(it->second, true))
     {
       prepared++;
       Prepare_InitialState(it->second);
@@ -955,7 +971,7 @@ void ResourceManager<WrappedResourceType, RealResourceType, RecordType>::InsertI
     if(m_FrameReferencedResources.find(id) == m_FrameReferencedResources.end() &&
        !RenderDoc::Inst().GetCaptureOptions().RefAllResources)
     {
-#if VERBOSE_DIRTY_RESOURCES
+#if ENABLED(VERBOSE_DIRTY_RESOURCES)
       RDCDEBUG("Dirty tesource %llu is GPU dirty but not referenced - skipping", id);
 #endif
       skipped++;
@@ -967,7 +983,7 @@ void ResourceManager<WrappedResourceType, RealResourceType, RecordType>::InsertI
 
     if(!AllowDeletedResource_InitialState() && !isAlive)
     {
-#if VERBOSE_DIRTY_RESOURCES
+#if ENABLED(VERBOSE_DIRTY_RESOURCES)
       RDCDEBUG("Resource %llu no longer exists - skipping", id);
 #endif
       continue;
@@ -980,7 +996,7 @@ void ResourceManager<WrappedResourceType, RealResourceType, RecordType>::InsertI
 
     if(record == NULL)
     {
-#if VERBOSE_DIRTY_RESOURCES
+#if ENABLED(VERBOSE_DIRTY_RESOURCES)
       RDCDEBUG("Resource %llu has no resource record - skipping", id);
 #endif
       continue;
@@ -988,13 +1004,13 @@ void ResourceManager<WrappedResourceType, RealResourceType, RecordType>::InsertI
 
     if(record->SpecialResource)
     {
-#if VERBOSE_DIRTY_RESOURCES
+#if ENABLED(VERBOSE_DIRTY_RESOURCES)
       RDCDEBUG("Resource %llu is special - skipping", id);
 #endif
       continue;
     }
 
-#if VERBOSE_DIRTY_RESOURCES
+#if ENABLED(VERBOSE_DIRTY_RESOURCES)
     RDCDEBUG("Serialising dirty Resource %llu", id);
 #endif
 
@@ -1033,7 +1049,7 @@ void ResourceManager<WrappedResourceType, RealResourceType, RecordType>::InsertI
     if(it->second == (WrappedResourceType)RecordType::NullResource)
       continue;
 
-    if(Force_InitialState(it->second))
+    if(Force_InitialState(it->second, false))
     {
       dirty++;
 
@@ -1104,6 +1120,14 @@ void ResourceManager<WrappedResourceType, RealResourceType, RecordType>::Replace
 
   if(HasLiveResource(to))
     m_Replacements[from] = to;
+}
+
+template <typename WrappedResourceType, typename RealResourceType, typename RecordType>
+bool ResourceManager<WrappedResourceType, RealResourceType, RecordType>::HasReplacement(ResourceId from)
+{
+  SCOPED_LOCK(m_Lock);
+
+  return m_Replacements.find(from) != m_Replacements.end();
 }
 
 template <typename WrappedResourceType, typename RealResourceType, typename RecordType>

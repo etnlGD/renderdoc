@@ -34,6 +34,8 @@
 #include "os/os_specific.h"
 #include "serialise/string_utils.h"
 
+#define VERBOSE_DEBUG_HOOK OPTION_OFF
+
 using std::vector;
 using std::map;
 
@@ -49,12 +51,19 @@ struct FunctionHook
   }
 
   bool operator<(const FunctionHook &h) { return function < h.function; }
-  bool ApplyHook(void **IATentry)
+  bool ApplyHook(void **IATentry, bool &already)
   {
     DWORD oldProtection = PAGE_EXECUTE;
 
     if(*IATentry == hookptr)
-      return false;
+    {
+      already = true;
+      return true;
+    }
+
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+    RDCDEBUG("Patching IAT for %s: %p to %p", function.c_str(), IATentry, hookptr);
+#endif
 
     {
       SCOPED_LOCK(installedLock);
@@ -104,6 +113,10 @@ struct DllHookset
   {
     byte *baseAddress = (byte *)module;
 
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+    RDCDEBUG("FetchOrdinalNames");
+#endif
+
     PIMAGE_DOS_HEADER dosheader = (PIMAGE_DOS_HEADER)baseAddress;
 
     if(dosheader->e_magic != 0x5a4d)
@@ -131,7 +144,13 @@ struct DllHookset
     OrdinalNames.resize(maxOrdinal + 1);
 
     for(DWORD i = 0; i < count; i++)
+    {
       OrdinalNames[ordinals[i]] = (char *)(baseAddress + names[i]);
+
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+      RDCDEBUG("ordinal found: '%s' %u", OrdinalNames[ordinals[i]].c_str(), (uint32_t)ordinals[i]);
+#endif
+    }
   }
 };
 
@@ -163,6 +182,10 @@ struct CachedHookData
       lowername[i] = 0;
     }
 
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+    RDCDEBUG("=== ApplyHooks(%s, %p)", modName, module);
+#endif
+
     // fraps seems to non-safely modify the assembly around the hook function, if
     // we modify its import descriptors it leads to a crash as it hooks OUR functions.
     // instead, skip modifying the import descriptors, it will hook the 'real' d3d functions
@@ -172,7 +195,7 @@ struct CachedHookData
     // Also we exclude ourselves here - just in case the application has already loaded
     // renderdoc.dll, or tries to load it.
     if(strstr(lowername, "fraps") || strstr(lowername, "gameoverlayrenderer") ||
-       strstr(lowername, "renderdoc.dll") == lowername)
+       strstr(lowername, STRINGIZE(RDOC_DLL_FILE) ".dll") == lowername)
       return;
 
     // set module pointer if we are hooking exports from this module
@@ -236,9 +259,17 @@ struct CachedHookData
 
     IMAGE_IMPORT_DESCRIPTOR *importDesc = (IMAGE_IMPORT_DESCRIPTOR *)(baseAddress + iatOffset);
 
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+    RDCDEBUG("=== import descriptors:");
+#endif
+
     while(iatOffset && importDesc->FirstThunk)
     {
       const char *dllName = (const char *)(baseAddress + importDesc->Name);
+
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+      RDCDEBUG("found IAT for %s", dllName);
+#endif
 
       DllHookset *hookset = NULL;
 
@@ -252,6 +283,10 @@ struct CachedHookData
             (IMAGE_THUNK_DATA *)(baseAddress + importDesc->OriginalFirstThunk);
         IMAGE_THUNK_DATA *first = (IMAGE_THUNK_DATA *)(baseAddress + importDesc->FirstThunk);
 
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+        RDCDEBUG("Hooking imports for %s", dllName);
+#endif
+
         while(origFirst->u1.AddressOfData)
         {
           void **IATentry = (void **)&first->u1.AddressOfData;
@@ -264,7 +299,7 @@ struct CachedHookData
             }
           };
 
-#ifdef WIN64
+#if ENABLED(RDOC_X64)
           if(IMAGE_SNAP_BY_ORDINAL64(origFirst->u1.AddressOfData))
 #else
           if(IMAGE_SNAP_BY_ORDINAL32(origFirst->u1.AddressOfData))
@@ -272,6 +307,10 @@ struct CachedHookData
           {
             // low bits of origFirst->u1.AddressOfData contain an ordinal
             WORD ordinal = IMAGE_ORDINAL64(origFirst->u1.AddressOfData);
+
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+            RDCDEBUG("Found ordinal import %u", (uint32_t)ordinal);
+#endif
 
             if(!hookset->OrdinalNames.empty())
             {
@@ -286,6 +325,10 @@ struct CachedHookData
                 {
                   const char *importName = (const char *)hookset->OrdinalNames[nameIndex].c_str();
 
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+                  RDCDEBUG("Located ordinal %u as %s", (uint32_t)ordinal, importName);
+#endif
+
                   auto found =
                       std::lower_bound(hookset->FunctionHooks.begin(), hookset->FunctionHooks.end(),
                                        importName, hook_find());
@@ -293,11 +336,22 @@ struct CachedHookData
                   if(found != hookset->FunctionHooks.end() &&
                      !strcmp(found->function.c_str(), importName) && found->excludeModule != module)
                   {
-                    SCOPED_LOCK(lock);
-                    bool applied = found->ApplyHook(IATentry);
-
-                    if(!applied)
+                    bool already = false;
+                    bool applied;
                     {
+                      SCOPED_LOCK(lock);
+                      applied = found->ApplyHook(IATentry, already);
+                    }
+
+                    // if we failed, or if it's already set and we're not doing a missedOrdinals
+                    // second pass, then just bail out immediately as we've already hooked this
+                    // module and there's no point wasting time re-hooking nothing
+                    if(!applied || (already && !missedOrdinals))
+                    {
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+                      RDCDEBUG("Stopping hooking module, %d %d %d", (int)applied, (int)already,
+                               (int)missedOrdinals);
+#endif
                       FreeLibrary(refcountModHandle);
                       return;
                     }
@@ -312,6 +366,9 @@ struct CachedHookData
             }
             else
             {
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+              RDCDEBUG("missed ordinals, will try again");
+#endif
               // the very first time we try to apply hooks, we might apply them to a module
               // before we've looked up the ordinal names for the one it's linking against.
               // Subsequent times we're only loading one new module - and since it can't
@@ -331,17 +388,33 @@ struct CachedHookData
               (IMAGE_IMPORT_BY_NAME *)(baseAddress + origFirst->u1.AddressOfData);
 
           const char *importName = (const char *)import->Name;
+
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+          RDCDEBUG("Found normal import %s", importName);
+#endif
+
           auto found = std::lower_bound(hookset->FunctionHooks.begin(),
                                         hookset->FunctionHooks.end(), importName, hook_find());
 
           if(found != hookset->FunctionHooks.end() &&
              !strcmp(found->function.c_str(), importName) && found->excludeModule != module)
           {
-            SCOPED_LOCK(lock);
-            bool applied = found->ApplyHook(IATentry);
-
-            if(!applied)
+            bool already = false;
+            bool applied;
             {
+              SCOPED_LOCK(lock);
+              applied = found->ApplyHook(IATentry, already);
+            }
+
+            // if we failed, or if it's already set and we're not doing a missedOrdinals
+            // second pass, then just bail out immediately as we've already hooked this
+            // module and there's no point wasting time re-hooking nothing
+            if(!applied || (already && !missedOrdinals))
+            {
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+              RDCDEBUG("Stopping hooking module, %d %d %d", (int)applied, (int)already,
+                       (int)missedOrdinals);
+#endif
               FreeLibrary(refcountModHandle);
               return;
             }
@@ -349,6 +422,16 @@ struct CachedHookData
 
           origFirst++;
           first++;
+        }
+      }
+      else
+      {
+        if(hookset)
+        {
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+          RDCDEBUG("!! Invalid IAT found for %s! %u %u", dllName, importDesc->OriginalFirstThunk,
+                   importDesc->FirstThunk);
+#endif
         }
       }
 
@@ -428,12 +511,22 @@ HMODULE WINAPI Hooked_LoadLibraryExA(LPCSTR lpLibFileName, HANDLE fileHandle, DW
   if(flags == 0 && GetModuleHandleA(lpLibFileName))
     dohook = false;
 
+  SetLastError(S_OK);
+
   // we can use the function naked, as when setting up the hook for LoadLibraryExA, our own module
   // was excluded from IAT patching
   HMODULE mod = LoadLibraryExA(lpLibFileName, fileHandle, flags);
 
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+  RDCDEBUG("LoadLibraryA(%s)", lpLibFileName);
+#endif
+
+  DWORD err = GetLastError();
+
   if(dohook)
     HookAllModules();
+
+  SetLastError(err);
 
   return mod;
 }
@@ -444,12 +537,22 @@ HMODULE WINAPI Hooked_LoadLibraryExW(LPCWSTR lpLibFileName, HANDLE fileHandle, D
   if(flags == 0 && GetModuleHandleW(lpLibFileName))
     dohook = false;
 
+  SetLastError(S_OK);
+
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+  RDCDEBUG("LoadLibraryW(%ls)", lpLibFileName);
+#endif
+
   // we can use the function naked, as when setting up the hook for LoadLibraryExA, our own module
   // was excluded from IAT patching
   HMODULE mod = LoadLibraryExW(lpLibFileName, fileHandle, flags);
 
+  DWORD err = GetLastError();
+
   if(dohook)
     HookAllModules();
+
+  SetLastError(err);
 
   return mod;
 }
@@ -474,8 +577,15 @@ FARPROC WINAPI Hooked_GetProcAddress(HMODULE mod, LPCSTR func)
   if(mod == NULL || func == NULL)
     return (FARPROC)NULL;
 
-  if(mod == s_HookData->ownmodule || OrdinalAsString((void *)func))
+  if(mod == s_HookData->ownmodule)
     return GetProcAddress(mod, func);
+
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+  if(OrdinalAsString((void *)func))
+    RDCDEBUG("Hooked_GetProcAddress(%p, %p)", mod, func);
+  else
+    RDCDEBUG("Hooked_GetProcAddress(%p, %s)", mod, func);
+#endif
 
   for(auto it = s_HookData->DllHooks.begin(); it != s_HookData->DllHooks.end(); ++it)
   {
@@ -484,6 +594,45 @@ FARPROC WINAPI Hooked_GetProcAddress(HMODULE mod, LPCSTR func)
 
     if(mod == it->second.module)
     {
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+      RDCDEBUG("Located module %s", it->first.c_str());
+#endif
+
+      if(OrdinalAsString((void *)func))
+      {
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+        RDCDEBUG("Ordinal hook");
+#endif
+
+        uint32_t ordinal = (uint16_t)(uintptr_t(func) & 0xffff);
+
+        if(ordinal < it->second.OrdinalBase)
+        {
+          RDCERR("Unexpected ordinal - lower than ordinalbase %u for %s",
+                 (uint32_t)it->second.OrdinalBase, it->first.c_str());
+
+          SetLastError(S_OK);
+          return GetProcAddress(mod, func);
+        }
+
+        ordinal -= it->second.OrdinalBase;
+
+        if(ordinal >= it->second.OrdinalNames.size())
+        {
+          RDCERR("Unexpected ordinal - higher than fetched ordinal names (%u) for %s",
+                 (uint32_t)it->second.OrdinalNames.size(), it->first.c_str());
+
+          SetLastError(S_OK);
+          return GetProcAddress(mod, func);
+        }
+
+        func = it->second.OrdinalNames[ordinal].c_str();
+
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+        RDCDEBUG("found ordinal %s", func);
+#endif
+      }
+
       FunctionHook search(func, NULL, NULL);
 
       auto found =
@@ -493,10 +642,25 @@ FARPROC WINAPI Hooked_GetProcAddress(HMODULE mod, LPCSTR func)
         if(found->origptr && *found->origptr == NULL)
           *found->origptr = (void *)GetProcAddress(mod, func);
 
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+        RDCDEBUG("Found hooked function, returning hook pointer %p", found->hookptr);
+#endif
+
+        SetLastError(S_OK);
+
+        if(found->origptr && *found->origptr == NULL)
+          return NULL;
+
         return (FARPROC)found->hookptr;
       }
     }
   }
+
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+  RDCDEBUG("No matching hook found, returning original");
+#endif
+
+  SetLastError(S_OK);
 
   return GetProcAddress(mod, func);
 }
@@ -532,17 +696,23 @@ void Win32_IAT_EndHooks()
   for(auto it = s_HookData->DllHooks.begin(); it != s_HookData->DllHooks.end(); ++it)
     std::sort(it->second.FunctionHooks.begin(), it->second.FunctionHooks.end());
 
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+  RDCDEBUG("Applying hooks");
+#endif
+
   HookAllModules();
 
   if(s_HookData->missedOrdinals)
   {
+#if ENABLED(VERBOSE_DEBUG_HOOK)
+    RDCDEBUG("Missed ordinals - applying hooks again");
+#endif
+
     // we need to do a second pass now that we know ordinal names to finally hook
     // some imports by ordinal only.
-    s_HookData->missedOrdinals = false;
-
     HookAllModules();
 
-    RDCASSERT(!s_HookData->missedOrdinals);
+    s_HookData->missedOrdinals = false;
   }
 }
 

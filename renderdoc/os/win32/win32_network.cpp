@@ -337,6 +337,7 @@ Socket *CreateClientSocket(const char *host, uint16_t port, int timeoutMS)
       }
       else
       {
+        RDCWARN("Error connecting to %s:%d - %d", host, port, err);
         closesocket(s);
         continue;
       }
@@ -348,7 +349,6 @@ Socket *CreateClientSocket(const char *host, uint16_t port, int timeoutMS)
     return new Socket((ptrdiff_t)s);
   }
 
-  RDCWARN("Failed to connect to %s:%d", host, port);
   return NULL;
 }
 

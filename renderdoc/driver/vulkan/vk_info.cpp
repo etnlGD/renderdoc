@@ -403,14 +403,7 @@ void VulkanCreationInfo::RenderPass::Init(VulkanResourceManager *resourceMan,
 {
   attachments.reserve(pCreateInfo->attachmentCount);
   for(uint32_t i = 0; i < pCreateInfo->attachmentCount; i++)
-  {
-    Attachment a;
-    a.loadOp = pCreateInfo->pAttachments[i].loadOp;
-    a.storeOp = pCreateInfo->pAttachments[i].storeOp;
-    a.stencilLoadOp = pCreateInfo->pAttachments[i].stencilLoadOp;
-    a.stencilStoreOp = pCreateInfo->pAttachments[i].stencilStoreOp;
-    attachments.push_back(a);
-  }
+    attachments.push_back(pCreateInfo->pAttachments[i]);
 
   subpasses.resize(pCreateInfo->subpassCount);
   for(uint32_t subp = 0; subp < pCreateInfo->subpassCount; subp++)
@@ -419,18 +412,30 @@ void VulkanCreationInfo::RenderPass::Init(VulkanResourceManager *resourceMan,
     Subpass &dst = subpasses[subp];
 
     dst.inputAttachments.resize(src.inputAttachmentCount);
+    dst.inputLayouts.resize(src.inputAttachmentCount);
     for(uint32_t i = 0; i < src.inputAttachmentCount; i++)
+    {
       dst.inputAttachments[i] = src.pInputAttachments[i].attachment;
+      dst.inputLayouts[i] = src.pInputAttachments[i].layout;
+    }
 
     dst.colorAttachments.resize(src.colorAttachmentCount);
+    dst.colorLayouts.resize(src.colorAttachmentCount);
     for(uint32_t i = 0; i < src.colorAttachmentCount; i++)
+    {
       dst.colorAttachments[i] = src.pColorAttachments[i].attachment;
+      dst.colorLayouts[i] = src.pColorAttachments[i].layout;
+    }
 
     dst.depthstencilAttachment =
         (src.pDepthStencilAttachment != NULL &&
                  src.pDepthStencilAttachment->attachment != VK_ATTACHMENT_UNUSED
              ? (int32_t)src.pDepthStencilAttachment->attachment
              : -1);
+    dst.depthstencilLayout = (src.pDepthStencilAttachment != NULL &&
+                                      src.pDepthStencilAttachment->attachment != VK_ATTACHMENT_UNUSED
+                                  ? src.pDepthStencilAttachment->layout
+                                  : VK_IMAGE_LAYOUT_UNDEFINED);
   }
 }
 
@@ -510,7 +515,7 @@ void VulkanCreationInfo::Sampler::Init(VulkanResourceManager *resourceMan, Vulka
   address[1] = pCreateInfo->addressModeV;
   address[2] = pCreateInfo->addressModeW;
   mipLodBias = pCreateInfo->mipLodBias;
-  maxAnisotropy = pCreateInfo->maxAnisotropy;
+  maxAnisotropy = pCreateInfo->anisotropyEnable ? pCreateInfo->maxAnisotropy : 1.0f;
   compareEnable = pCreateInfo->compareEnable != 0;
   compareOp = pCreateInfo->compareOp;
   minLod = pCreateInfo->minLod;

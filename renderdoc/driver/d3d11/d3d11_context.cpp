@@ -59,11 +59,7 @@ void STDMETHODCALLTYPE WrappedID3DUserDefinedAnnotation::SetMarker(LPCWSTR Name)
 HRESULT STDMETHODCALLTYPE WrappedID3DUserDefinedAnnotation::QueryInterface(REFIID riid,
                                                                            void **ppvObject)
 {
-  // DEFINE_GUID(IID_ID3DUserDefinedAnnotation,0xb2daad8b,0x03d4,0x4dbf,0x95,0xeb,0x32,0xab,0x4b,0x63,0xd0,0xab);
-  static const GUID ID3D11UserDefinedAnnotation_uuid = {
-      0xb2daad8b, 0x03d4, 0x4dbf, {0x95, 0xeb, 0x32, 0xab, 0x4b, 0x63, 0xd0, 0xab}};
-
-  if(riid == ID3D11UserDefinedAnnotation_uuid)
+  if(riid == __uuidof(ID3DUserDefinedAnnotation))
   {
     *ppvObject = (void *)(ID3DUserDefinedAnnotation *)this;
     AddRef();
@@ -108,7 +104,7 @@ WrappedID3D11DeviceContext::WrappedID3D11DeviceContext(WrappedID3D11Device *real
   m_pRealContext3 = NULL;
   m_pRealContext->QueryInterface(__uuidof(ID3D11DeviceContext3), (void **)&m_pRealContext3);
 
-#if defined(RELEASE)
+#if ENABLED(RDOC_RELEASE)
   const bool debugSerialiser = false;
 #else
   const bool debugSerialiser = true;
@@ -132,7 +128,11 @@ WrappedID3D11DeviceContext::WrappedID3D11DeviceContext(WrappedID3D11Device *real
   {
     m_pSerialiser = new Serialiser(NULL, Serialiser::WRITING, debugSerialiser);
     m_State = WRITING_IDLE;
+
+    m_pSerialiser->SetDebugText(true);
   }
+
+  m_OwnSerialiser = false;
 
   // create a temporary and grab its resource ID
   m_ResourceID = ResourceIDGen::GetNewUniqueID();
@@ -154,6 +154,8 @@ WrappedID3D11DeviceContext::WrappedID3D11DeviceContext(WrappedID3D11Device *real
   m_FailureReason = CaptureSucceeded;
   m_EmptyCommandList = true;
 
+  m_PresentChunk = false;
+
   m_DrawcallStack.push_back(&m_ParentDrawcall);
 
   m_CurEventID = 1;
@@ -163,6 +165,7 @@ WrappedID3D11DeviceContext::WrappedID3D11DeviceContext(WrappedID3D11Device *real
   m_UserAnnotation.SetContext(this);
 
   m_CurrentPipelineState = new D3D11RenderState((Serialiser *)NULL);
+  m_DeferredSavedState = NULL;
   m_DoStateVerify = m_State >= WRITING;
 
   if(context->GetType() == D3D11_DEVICE_CONTEXT_IMMEDIATE)
@@ -194,7 +197,7 @@ WrappedID3D11DeviceContext::~WrappedID3D11DeviceContext()
     SAFE_RELEASE(it->second.query);
   }
 
-  if(m_State >= WRITING)
+  if(m_State >= WRITING || m_OwnSerialiser)
   {
     SAFE_DELETE(m_pSerialiser);
   }
@@ -368,6 +371,18 @@ void WrappedID3D11DeviceContext::MarkResourceReferenced(ResourceId id, FrameRefT
   }
 }
 
+void WrappedID3D11DeviceContext::MarkDirtyResource(ResourceId id)
+{
+  if(m_pRealContext->GetType() == D3D11_DEVICE_CONTEXT_IMMEDIATE)
+  {
+    m_pDevice->GetResourceManager()->MarkDirtyResource(id);
+  }
+  else
+  {
+    m_DeferredDirty.insert(id);
+  }
+}
+
 void WrappedID3D11DeviceContext::VerifyState()
 {
 #if 0
@@ -428,10 +443,6 @@ void WrappedID3D11DeviceContext::AttemptCapture()
     m_SuccessfulCapture = true;
     m_FailureReason = CaptureSucceeded;
 
-    for(auto it = m_DeferredRecords.begin(); it != m_DeferredRecords.end(); ++it)
-      (*it)->Delete(m_pDevice->GetResourceManager());
-    m_DeferredRecords.clear();
-
     m_ContextRecord->LockChunks();
     while(m_ContextRecord->HasChunks())
     {
@@ -456,13 +467,6 @@ void WrappedID3D11DeviceContext::FinishCapture()
     m_SuccessfulCapture = false;
     m_FailureReason = CaptureSucceeded;
   }
-
-  for(auto it = m_DeferredRecords.begin(); it != m_DeferredRecords.end(); ++it)
-  {
-    m_ContextRecord->AddParent(*it);
-    (*it)->Delete(m_pDevice->GetResourceManager());
-  }
-  m_DeferredRecords.clear();
 }
 
 void WrappedID3D11DeviceContext::EndCaptureFrame()
@@ -486,6 +490,16 @@ void WrappedID3D11DeviceContext::EndCaptureFrame()
 
     delete call;
   }
+
+  m_ContextRecord->AddChunk(scope.Get());
+}
+
+void WrappedID3D11DeviceContext::Present(UINT SyncInterval, UINT Flags)
+{
+  SCOPED_SERIALISE_CONTEXT(SWAP_PRESENT);
+  m_pSerialiser->Serialise("context", m_ResourceID);
+  m_pSerialiser->Serialise("SyncInterval", SyncInterval);
+  m_pSerialiser->Serialise("Flags", Flags);
 
   m_ContextRecord->AddChunk(scope.Get());
 }
@@ -546,10 +560,6 @@ void WrappedID3D11DeviceContext::CleanupCapture()
     m_FailureReason = CaptureSucceeded;
   }
 
-  for(auto it = m_DeferredRecords.begin(); it != m_DeferredRecords.end(); ++it)
-    (*it)->Delete(m_pDevice->GetResourceManager());
-  m_DeferredRecords.clear();
-
   m_ContextRecord->LockChunks();
   while(m_ContextRecord->HasChunks())
   {
@@ -565,7 +575,7 @@ void WrappedID3D11DeviceContext::CleanupCapture()
   for(auto it = m_MissingTracks.begin(); it != m_MissingTracks.end(); ++it)
   {
     if(m_pDevice->GetResourceManager()->HasResourceRecord(*it))
-      m_pDevice->GetResourceManager()->MarkDirtyResource(*it);
+      MarkDirtyResource(*it);
   }
 
   m_MissingTracks.clear();
@@ -583,7 +593,8 @@ void WrappedID3D11DeviceContext::EndFrame()
 {
   DrainAnnotationQueue();
 
-  m_pDevice->GetResourceManager()->FlushPendingDirty();
+  if(m_State == WRITING_IDLE)
+    m_pDevice->GetResourceManager()->FlushPendingDirty();
 }
 
 bool WrappedID3D11DeviceContext::IsFL11_1()
@@ -595,30 +606,11 @@ void WrappedID3D11DeviceContext::ProcessChunk(uint64_t offset, D3D11ChunkType ch
 {
   m_CurChunkOffset = offset;
 
-  RDCASSERT(GetType() == D3D11_DEVICE_CONTEXT_IMMEDIATE);
-
-  uint64_t cOffs = m_pSerialiser->GetOffset();
-
   ResourceId ctxId;
   m_pSerialiser->Serialise("context", ctxId);
 
-  WrappedID3D11DeviceContext *context =
-      (WrappedID3D11DeviceContext *)m_pDevice->GetResourceManager()->GetLiveResource(ctxId);
-
-  if(m_FakeContext != ResourceId())
-  {
-    if(m_FakeContext == ctxId)
-      context = this;
-    else
-    {
-      m_pSerialiser->SetOffset(cOffs);
-      m_pSerialiser->SkipCurrentChunk();
-      m_pSerialiser->PopContext(chunk);
-      return;
-    }
-  }
-
-  RDCASSERTMSG("Context is invalid", WrappedID3D11DeviceContext::IsAlloc(context), ctxId, context);
+  // ctxId is now ignored
+  WrappedID3D11DeviceContext *context = this;
 
   LogState state = context->m_State;
 
@@ -747,6 +739,38 @@ void WrappedID3D11DeviceContext::ProcessChunk(uint64_t offset, D3D11ChunkType ch
     case DISCARD_VIEW: context->Serialise_DiscardView(NULL); break;
     case DISCARD_VIEW1: context->Serialise_DiscardView1(NULL, NULL, 0); break;
 
+    case RESTORE_STATE_AFTER_EXEC:
+    {
+      // apply saved state.
+      if(m_DeferredSavedState)
+      {
+        m_DeferredSavedState->ApplyState(this);
+        SAFE_DELETE(m_DeferredSavedState);
+      }
+      break;
+    }
+
+    case RESTORE_STATE_AFTER_FINISH:
+    {
+      D3D11RenderState rs(m_pSerialiser);
+      rs.Serialise(m_State, m_pDevice);
+      rs.ApplyState(this);
+      break;
+    }
+
+    case SWAP_DEVICE_STATE: Serialise_SwapDeviceContextState(NULL, NULL); break;
+
+    case SWAP_PRESENT:
+    {
+      // we don't do anything with these parameters, they're just here to store
+      // them for user benefits
+      UINT SyncInterval = 0, Flags = 0;
+      m_pSerialiser->Serialise("SyncInterval", SyncInterval);
+      m_pSerialiser->Serialise("Flags", Flags);
+      m_PresentChunk = true;
+      break;
+    }
+
     case CONTEXT_CAPTURE_FOOTER:
     {
       bool HasCallstack = false;
@@ -766,11 +790,14 @@ void WrappedID3D11DeviceContext::ProcessChunk(uint64_t offset, D3D11ChunkType ch
 
       if(m_State == READING)
       {
-        AddEvent(CONTEXT_CAPTURE_FOOTER, "IDXGISwapChain::Present()");
+        if(!m_PresentChunk)
+          AddEvent("IDXGISwapChain::Present()");
 
         FetchDrawcall draw;
         draw.name = "Present()";
         draw.flags |= eDraw_Present;
+
+        draw.copyDestination = m_pDevice->GetBackbufferResourceID();
 
         AddDrawcall(draw, true);
       }
@@ -799,7 +826,7 @@ void WrappedID3D11DeviceContext::ProcessChunk(uint64_t offset, D3D11ChunkType ch
   else if(context->m_State == READING)
   {
     if(!m_AddedDrawcall)
-      context->AddEvent(chunk, m_pSerialiser->GetDebugStr());
+      context->AddEvent(m_pSerialiser->GetDebugStr());
   }
 
   m_AddedDrawcall = false;
@@ -906,49 +933,11 @@ void WrappedID3D11DeviceContext::AddUsage(const FetchDrawcall &d)
   }
 }
 
-void WrappedID3D11DeviceContext::RefreshDrawcallIDs(DrawcallTreeNode &node)
-{
-  if(GetType() == D3D11_DEVICE_CONTEXT_DEFERRED)
-  {
-    m_pDevice->GetImmediateContext()->RefreshDrawcallIDs(node);
-    return;
-  }
-
-  // assign new drawcall IDs
-  for(size_t i = 0; i < node.children.size(); i++)
-  {
-    m_CurEventID++;
-
-    node.children[i].draw.eventID = m_CurEventID;
-    node.children[i].draw.drawcallID = m_CurDrawcallID;
-
-    // markers don't increment drawcall ID
-    if((node.children[i].draw.flags & (eDraw_SetMarker | eDraw_PushMarker)) == 0)
-      m_CurDrawcallID++;
-
-    RefreshDrawcallIDs(node.children[i]);
-  }
-}
-
 void WrappedID3D11DeviceContext::AddDrawcall(const FetchDrawcall &d, bool hasEvents)
 {
   FetchDrawcall draw = d;
 
-  if(draw.context == ResourceId())
-    draw.context = m_pDevice->GetResourceManager()->GetOriginalID(m_ResourceID);
-
-  if(GetType() == D3D11_DEVICE_CONTEXT_DEFERRED)
-  {
-    m_pDevice->GetImmediateContext()->AddDrawcall(draw, hasEvents);
-    return;
-  }
-
   m_AddedDrawcall = true;
-
-  WrappedID3D11DeviceContext *context =
-      (WrappedID3D11DeviceContext *)m_pDevice->GetResourceManager()->GetLiveResource(draw.context);
-
-  RDCASSERT(context);
 
   draw.eventID = m_CurEventID;
   draw.drawcallID = m_CurDrawcallID;
@@ -983,53 +972,29 @@ void WrappedID3D11DeviceContext::AddDrawcall(const FetchDrawcall &d, bool hasEve
 
   if(hasEvents)
   {
-    vector<FetchAPIEvent> evs;
-    evs.reserve(m_CurEvents.size());
-    for(size_t i = 0; i < m_CurEvents.size();)
-    {
-      if(m_CurEvents[i].context == draw.context)
-      {
-        evs.push_back(m_CurEvents[i]);
-        m_CurEvents.erase(m_CurEvents.begin() + i);
-      }
-      else
-      {
-        i++;
-      }
-    }
-
-    draw.events = evs;
+    draw.events = m_CurEvents;
+    m_CurEvents.clear();
   }
 
   AddUsage(draw);
 
   // should have at least the root drawcall here, push this drawcall
   // onto the back's children list.
-  if(!context->m_DrawcallStack.empty())
+  if(!m_DrawcallStack.empty())
   {
     DrawcallTreeNode node(draw);
     node.children.insert(node.children.begin(), draw.children.elems,
                          draw.children.elems + draw.children.count);
-    context->m_DrawcallStack.back()->children.push_back(node);
+    m_DrawcallStack.back()->children.push_back(node);
   }
   else
     RDCERR("Somehow lost drawcall stack!");
 }
 
-void WrappedID3D11DeviceContext::AddEvent(D3D11ChunkType type, string description, ResourceId ctx)
+void WrappedID3D11DeviceContext::AddEvent(string description)
 {
-  if(ctx == ResourceId())
-    ctx = m_pDevice->GetResourceManager()->GetOriginalID(m_ResourceID);
-
-  if(GetType() == D3D11_DEVICE_CONTEXT_DEFERRED)
-  {
-    m_pDevice->GetImmediateContext()->AddEvent(type, description, ctx);
-    return;
-  }
-
   FetchAPIEvent apievent;
 
-  apievent.context = ctx;
   apievent.fileOffset = m_CurChunkOffset;
   apievent.eventID = m_CurEventID;
 
@@ -1064,12 +1029,374 @@ void WrappedID3D11DeviceContext::ReplayFakeContext(ResourceId id)
   m_FakeContext = id;
 }
 
+static void PadToAligned(Serialiser *dst, uint64_t alignment)
+{
+  uint64_t offs = dst->GetOffset();
+  uint64_t alignedoffs = AlignUp(offs, alignment);
+
+  // nothing to do
+  if(offs == alignedoffs)
+    return;
+
+  uint16_t chunkIdx = 0;
+  dst->Serialise("", chunkIdx);
+  offs += sizeof(chunkIdx);
+
+  uint8_t controlByte = 0;    // control byte 0 indicates padding
+  dst->Serialise("", controlByte);
+  offs += sizeof(controlByte);
+
+  offs++;    // we will have to write out a byte indicating how much padding exists, so add 1
+  alignedoffs = AlignUp(offs, alignment);
+
+  uint8_t padLength = (alignedoffs - offs) & 0xff;
+  dst->Serialise("", padLength);
+
+  // we might have padded with the control bytes, so only write some bytes if we need to
+  if(padLength > 0)
+  {
+    const byte zeroes[256] = {};
+    dst->RawWriteBytes(zeroes, (size_t)padLength);
+  }
+}
+
+static void CopyChunk(Serialiser *src, Serialiser *dst, uint64_t offsBegin)
+{
+  uint64_t offsEnd = src->GetOffset();
+
+  // this whole function is quite an abuse of the serialiser interface :(.
+  // It will all go away when I can break backwards compatibility and remove
+  // this code and greatly tidy up the interface.
+
+  src->SetOffset(offsBegin);
+
+  dst->RawWriteBytes(src->RawReadBytes(size_t(offsEnd - offsBegin)), size_t(offsEnd - offsBegin));
+}
+
+static void CopyUnmap(uint32_t d3dLogVersion, Serialiser *src, Serialiser *dst, Serialiser *tmp)
+{
+  ResourceId Resource;
+  uint32_t Subresource = 0;
+  D3D11_MAP MapType = D3D11_MAP_WRITE_DISCARD;
+  uint32_t MapFlags = 0;
+  uint32_t DiffStart = 0;
+  uint32_t DiffEnd = 0;
+  byte *buf = NULL;
+  size_t len = 0;
+
+  tmp->Rewind();
+  tmp->PushContext("", "", UNMAP, false);
+
+  // context id - ignored but needed to match expected format
+  tmp->Serialise("", Resource);
+
+  src->Serialise("", Resource);
+  tmp->Serialise("", Resource);
+
+  src->Serialise("", Subresource);
+  tmp->Serialise("", Subresource);
+
+  src->Serialise("", MapType);
+  tmp->Serialise("", MapType);
+
+  src->Serialise("", MapFlags);
+  tmp->Serialise("", MapFlags);
+
+  src->Serialise("", DiffStart);
+  tmp->Serialise("", DiffStart);
+
+  src->Serialise("", DiffEnd);
+  tmp->Serialise("", DiffEnd);
+
+  if(d3dLogVersion >= 0x000007)
+    src->AlignNextBuffer(32);
+
+  src->SerialiseBuffer("", buf, len);
+  tmp->SerialiseBuffer("", buf, len);
+
+  src->PopContext(UNMAP);
+  tmp->PopContext(UNMAP);
+
+  SAFE_DELETE_ARRAY(buf);
+
+  dst->RawWriteBytes(tmp->GetRawPtr(0), size_t(tmp->GetOffset()));
+}
+
+static void CopyUpdateSubresource(uint32_t d3dLogVersion, Serialiser *src, Serialiser *dst,
+                                  Serialiser *tmp)
+{
+  ResourceId idx;
+  uint32_t flags = 0;
+  uint32_t DestSubresource = 0;
+  uint8_t isUpdate = true;
+
+  uint8_t HasDestBox = 0;
+  D3D11_BOX box = {};
+  uint32_t SourceRowPitch = 0;
+  uint32_t SourceDepthPitch = 0;
+
+  uint32_t ResourceBufLen = 0;
+
+  byte *buf = NULL;
+  size_t len = 0;
+
+  tmp->Rewind();
+  tmp->PushContext("", "", UPDATE_SUBRESOURCE1, false);
+
+  // context id - ignored but needed to match expected format
+  tmp->Serialise("", idx);
+
+  src->Serialise("", idx);
+  tmp->Serialise("", idx);
+
+  src->Serialise("", flags);
+  tmp->Serialise("", flags);
+
+  src->Serialise("", DestSubresource);
+  tmp->Serialise("", DestSubresource);
+
+  src->Serialise("", isUpdate);
+  tmp->Serialise("", isUpdate);
+
+  if(isUpdate)
+  {
+    src->Serialise("", HasDestBox);
+    tmp->Serialise("", HasDestBox);
+
+    if(HasDestBox)
+    {
+      src->Serialise("", box);
+      tmp->Serialise("", box);
+    }
+
+    src->Serialise("", SourceRowPitch);
+    tmp->Serialise("", SourceRowPitch);
+
+    src->Serialise("", SourceDepthPitch);
+    tmp->Serialise("", SourceDepthPitch);
+
+    src->Serialise("", ResourceBufLen);
+    tmp->Serialise("", ResourceBufLen);
+
+    src->SerialiseBuffer("", buf, len);
+    tmp->SerialiseBuffer("", buf, len);
+  }
+  else
+  {
+    // shouldn't get in here, any chunks we're looking at are context chunks
+    // so they should be recorded as updates
+
+    src->Serialise("", ResourceBufLen);
+    tmp->Serialise("", ResourceBufLen);
+
+    if(d3dLogVersion >= 0x000007)
+      src->AlignNextBuffer(32);
+
+    src->SerialiseBuffer("", buf, len);
+    tmp->SerialiseBuffer("", buf, len);
+  }
+
+  src->PopContext(UPDATE_SUBRESOURCE1);
+  tmp->PopContext(UPDATE_SUBRESOURCE1);
+
+  SAFE_DELETE_ARRAY(buf);
+
+  dst->RawWriteBytes(tmp->GetRawPtr(0), size_t(tmp->GetOffset()));
+}
+
+void WrappedID3D11DeviceContext::FlattenLog()
+{
+  Serialiser *src = m_pSerialiser;
+  Serialiser *dst = new Serialiser(NULL, Serialiser::WRITING, false);
+
+  Serialiser *tmp = new Serialiser(NULL, Serialiser::WRITING, false);
+
+  map<ResourceId, Serialiser *> deferred;
+
+  uint64_t offsBegin = src->GetOffset();
+
+  D3D11ChunkType chunk = (D3D11ChunkType)src->PushContext(NULL, NULL, 1, false);
+  RDCASSERTEQUAL(chunk, CONTEXT_CAPTURE_HEADER);
+  src->SkipCurrentChunk();
+  src->PopContext(chunk);
+
+  CopyChunk(src, dst, offsBegin);
+
+  for(;;)
+  {
+    offsBegin = src->GetOffset();
+
+    chunk = (D3D11ChunkType)src->PushContext(NULL, NULL, 1, false);
+
+    ResourceId ctx;
+    src->Serialise("ctx", ctx);
+
+    WrappedID3D11DeviceContext *context =
+        (WrappedID3D11DeviceContext *)m_pDevice->GetResourceManager()->GetLiveResource(ctx);
+
+    // if it's a local chunk just copy it
+    if(context == this)
+    {
+      ResourceId cmdList;
+      uint8_t restore = 0;
+
+      if(chunk == EXECUTE_CMD_LIST)
+      {
+        m_pSerialiser->Serialise("RestoreContextState", restore);
+        m_pSerialiser->Serialise("cmdList", cmdList);
+      }
+
+      // these chunks need to be reserialised individually to ensure padding bytes in
+      // between all remain the same
+      if(chunk == UNMAP)
+      {
+        PadToAligned(dst, 64);
+        CopyUnmap(m_pDevice->GetLogVersion(), src, dst, tmp);
+      }
+      else if(chunk == UPDATE_SUBRESOURCE || chunk == UPDATE_SUBRESOURCE1)
+      {
+        PadToAligned(dst, 64);
+        CopyUpdateSubresource(m_pDevice->GetLogVersion(), src, dst, tmp);
+      }
+      else
+      {
+        src->SetOffset(offsBegin);
+        src->PushContext(NULL, NULL, 1, false);
+        src->SkipCurrentChunk();
+        src->PopContext(chunk);
+
+        CopyChunk(src, dst, offsBegin);
+      }
+
+      if(chunk == EXECUTE_CMD_LIST)
+      {
+        Serialiser *def = deferred[cmdList];
+
+        if(def == NULL)
+        {
+          RDCERR("ExecuteCommandList found for command list we didn't Finish!");
+        }
+        else
+        {
+          // when inserting, ensure the chunks stay aligned (this is harmless if they don't need
+          // alignment). Do this by inserting padding bytes, ugly but it works.
+          PadToAligned(dst, 64);
+
+          // now insert the chunks to replay
+          dst->RawWriteBytes(deferred[cmdList]->GetRawPtr(0), (size_t)deferred[cmdList]->GetSize());
+
+          // if we have to restore the state, the above Execute.. will have
+          // saved it, so we just add a little chunk to let it pop it again
+          if(restore)
+          {
+            tmp->Rewind();
+            tmp->PushContext("", "", RESTORE_STATE_AFTER_EXEC, false);
+            tmp->PopContext(RESTORE_STATE_AFTER_EXEC);
+
+            dst->RawWriteBytes(tmp->GetRawPtr(0), size_t(tmp->GetOffset()));
+          }
+
+          // again since we inserted chunks we need to align again
+          PadToAligned(dst, 64);
+        }
+      }
+    }
+    else
+    {
+      if(deferred[ctx] == NULL)
+        deferred[ctx] = new Serialiser(NULL, Serialiser::WRITING, false);
+
+      ResourceId cmdList;
+      uint8_t restore = 0;
+
+      if(chunk == FINISH_CMD_LIST)
+      {
+        m_pSerialiser->Serialise("RestoreDeferredContextState", restore);
+        m_pSerialiser->Serialise("cmdList", cmdList);
+
+        if(restore != 0)
+        {
+          RDCWARN(
+              "RestoreDeferredContextState == TRUE was set for command list %llu. "
+              "On old captures this wasn't properly replayed and can't be fixed as-is, "
+              "re-capture with latest RenderDoc to solve this issue.");
+        }
+      }
+
+      // these chunks need to be reserialised individually to ensure padding bytes in
+      // between all remain the same
+      if(chunk == UNMAP)
+      {
+        PadToAligned(deferred[ctx], 64);
+        CopyUnmap(m_pDevice->GetLogVersion(), src, deferred[ctx], tmp);
+      }
+      else if(chunk == UPDATE_SUBRESOURCE || chunk == UPDATE_SUBRESOURCE1)
+      {
+        PadToAligned(deferred[ctx], 64);
+        CopyUpdateSubresource(m_pDevice->GetLogVersion(), src, deferred[ctx], tmp);
+      }
+      else
+      {
+        src->SetOffset(offsBegin);
+        src->PushContext(NULL, NULL, 1, false);
+        src->SkipCurrentChunk();
+        src->PopContext(chunk);
+
+        CopyChunk(src, deferred[ctx], offsBegin);
+      }
+
+      if(chunk == FINISH_CMD_LIST)
+      {
+        // here is where RestoreDeferredContextState is broken, this doesn't
+        // take into account the inherited state from previous recordings.
+        deferred[cmdList] = deferred[ctx];
+        deferred[ctx] = new Serialiser(NULL, Serialiser::WRITING, false);
+      }
+    }
+
+    if(chunk == CONTEXT_CAPTURE_FOOTER)
+    {
+      break;
+    }
+  }
+
+  m_pSerialiser = new Serialiser((size_t)dst->GetSize(), dst->GetRawPtr(0), false);
+  m_OwnSerialiser = true;
+
+  m_pSerialiser->SetDebugText(true);
+  m_pSerialiser->SetChunkNameLookup(&WrappedID3D11Device::GetChunkName);
+
+  // tidy up the temporary serialisers
+  SAFE_DELETE(dst);
+  SAFE_DELETE(tmp);
+
+  for(auto it = deferred.begin(); it != deferred.end(); ++it)
+    SAFE_DELETE(it->second);
+}
+
 void WrappedID3D11DeviceContext::ReplayLog(LogState readType, uint32_t startEventID,
                                            uint32_t endEventID, bool partial)
 {
   m_State = readType;
 
+  if(readType == READING && m_pDevice->GetNumDeferredContexts() &&
+     m_pDevice->GetLogVersion() < 0x00000A)
+  {
+    RDCLOG("Flattening log file");
+
+    // flatten the log
+    FlattenLog();
+
+    RDCLOG("Flattened");
+  }
+
   m_DoStateVerify = true;
+
+  if(readType == EXECUTING && m_pDevice->GetNumDeferredContexts() &&
+     m_pDevice->GetLogVersion() < 0x00000A)
+  {
+    m_pSerialiser->SetOffset(0);
+  }
 
   D3D11ChunkType header = (D3D11ChunkType)m_pSerialiser->PushContext(NULL, NULL, 1, false);
   RDCASSERTEQUAL(header, CONTEXT_CAPTURE_HEADER);
@@ -1077,10 +1404,7 @@ void WrappedID3D11DeviceContext::ReplayLog(LogState readType, uint32_t startEven
   ResourceId id;
   m_pSerialiser->Serialise("context", id);
 
-  WrappedID3D11DeviceContext *context =
-      (WrappedID3D11DeviceContext *)m_pDevice->GetResourceManager()->GetLiveResource(id);
-
-  RDCASSERT(WrappedID3D11DeviceContext::IsAlloc(context) && context == this);
+  // id is now ignored
 
   Serialise_BeginCaptureFrame(!partial);
 
@@ -1248,11 +1572,6 @@ void WrappedID3D11DeviceContext::ClearMaps()
 
 HRESULT STDMETHODCALLTYPE WrappedID3D11DeviceContext::QueryInterface(REFIID riid, void **ppvObject)
 {
-  // This doesn't seem to be in the headers yet. Will update when it appears.
-  // ID3D11Multithread UUID {0f0f0f0f-b0b0-c0c0-d0d0-e0e0e0e0e0e0}
-  static const GUID ID3D11Multithread_uuid = {
-      0x0f0f0f0f, 0xb0b0, 0xc0c0, {0xd0, 0xd0, 0xe0, 0xe0, 0xe0, 0xe0, 0xe0, 0xe0}};
-
   if(riid == __uuidof(IUnknown))
   {
     *ppvObject = (IUnknown *)(ID3D11DeviceContext *)this;
@@ -1313,7 +1632,7 @@ HRESULT STDMETHODCALLTYPE WrappedID3D11DeviceContext::QueryInterface(REFIID riid
       return E_NOINTERFACE;
     }
   }
-  else if(riid == ID3D11Multithread_uuid)
+  else if(riid == __uuidof(ID3D11Multithread))
   {
     RDCWARN("ID3D11Multithread is not supported");
     return E_NOINTERFACE;
@@ -1323,6 +1642,11 @@ HRESULT STDMETHODCALLTYPE WrappedID3D11DeviceContext::QueryInterface(REFIID riid
     *ppvObject = (ID3DUserDefinedAnnotation *)&m_UserAnnotation;
     m_UserAnnotation.AddRef();
     return S_OK;
+  }
+  else if(riid == __uuidof(ID3D11InfoQueue))
+  {
+    // forward to device
+    return m_pDevice->QueryInterface(riid, ppvObject);
   }
   else
   {

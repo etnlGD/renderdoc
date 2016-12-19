@@ -199,7 +199,7 @@ void VulkanResourceManager::RecordSingleBarrier(vector<pair<ResourceId, ImageReg
 }
 
 void VulkanResourceManager::RecordBarriers(vector<pair<ResourceId, ImageRegionState> > &states,
-                                           map<ResourceId, ImageLayouts> &layouts,
+                                           const map<ResourceId, ImageLayouts> &layouts,
                                            uint32_t numBarriers, const VkImageMemoryBarrier *barriers)
 {
   TRDBG("Recording %u barriers", numBarriers);
@@ -218,10 +218,24 @@ void VulkanResourceManager::RecordBarriers(vector<pair<ResourceId, ImageRegionSt
 
     uint32_t nummips = t.subresourceRange.levelCount;
     uint32_t numslices = t.subresourceRange.layerCount;
+
+    auto it = layouts.find(id);
+
     if(nummips == VK_REMAINING_MIP_LEVELS)
-      nummips = layouts[id].levelCount - t.subresourceRange.baseMipLevel;
+    {
+      if(it != layouts.end())
+        nummips = it->second.levelCount - t.subresourceRange.baseMipLevel;
+      else
+        nummips = 1;
+    }
+
     if(numslices == VK_REMAINING_ARRAY_LAYERS)
-      numslices = layouts[id].layerCount - t.subresourceRange.baseArrayLayer;
+    {
+      if(it != layouts.end())
+        numslices = it->second.layerCount - t.subresourceRange.baseArrayLayer;
+      else
+        numslices = 1;
+    }
 
     RecordSingleBarrier(states, id, t, nummips, numslices);
   }
@@ -303,6 +317,9 @@ void VulkanResourceManager::SerialiseImageStates(map<ResourceId, ImageLayouts> &
   // erase any do-nothing barriers
   for(auto it = barriers.begin(); it != barriers.end();)
   {
+    if(it->oldLayout == UNKNOWN_PREV_IMG_LAYOUT)
+      it->oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
     if(it->oldLayout == it->newLayout)
       it = barriers.erase(it);
     else
@@ -410,6 +427,8 @@ void VulkanResourceManager::ApplyBarriers(vector<pair<ResourceId, ImageRegionSta
                     t.oldLayout == VK_IMAGE_LAYOUT_UNDEFINED); // can barrier from UNDEFINED to any
           state
           */
+          if(it->oldLayout == UNKNOWN_PREV_IMG_LAYOUT)
+            it->oldLayout = t.oldLayout;
           t.oldLayout = it->newLayout;
           it->newLayout = t.newLayout;
 
@@ -513,7 +532,7 @@ void VulkanResourceManager::ApplyBarriers(vector<pair<ResourceId, ImageRegionSta
   }
 }
 
-bool VulkanResourceManager::Force_InitialState(WrappedVkRes *res)
+bool VulkanResourceManager::Force_InitialState(WrappedVkRes *res, bool prepare)
 {
   return false;
 }

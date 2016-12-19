@@ -58,7 +58,7 @@ struct ResourceFormat
   bool operator==(const ResourceFormat &r) const
   {
     if(special || r.special)
-      return special == r.special && specialFormat == r.specialFormat;
+      return special == r.special && specialFormat == r.specialFormat && compType == r.compType;
 
     return compCount == r.compCount && compByteWidth == r.compByteWidth && compType == r.compType &&
            bgraOrder == r.bgraOrder && srgbCorrected == r.srgbCorrected;
@@ -103,7 +103,6 @@ struct FetchTexture
   bool32 cubemap;
   uint32_t mips;
   uint32_t arraysize;
-  uint32_t numSubresources;
   uint32_t creationFlags;
   uint32_t msQual, msSamp;
   uint64_t byteSize;
@@ -294,7 +293,8 @@ struct FetchFrameInfo
       : frameNumber(0),
         firstEvent(0),
         fileOffset(0),
-        fileSize(0),
+        uncompressedFileSize(0),
+        compressedFileSize(0),
         persistentSize(0),
         initDataSize(0),
         captureTime(0)
@@ -304,11 +304,11 @@ struct FetchFrameInfo
   uint32_t frameNumber;
   uint32_t firstEvent;
   uint64_t fileOffset;
-  uint64_t fileSize;
+  uint64_t uncompressedFileSize;
+  uint64_t compressedFileSize;
   uint64_t persistentSize;
   uint64_t initDataSize;
   uint64_t captureTime;
-  ResourceId immContextId;
   FetchFrameStatistics stats;
   rdctype::array<DebugMessage> debugMessages;
 };
@@ -359,7 +359,6 @@ struct FetchDrawcall
     copySource = ResourceId();
     copyDestination = ResourceId();
 
-    context = ResourceId();
     parent = 0;
     previous = 0;
     next = 0;
@@ -392,8 +391,6 @@ struct FetchDrawcall
 
   ResourceId copySource;
   ResourceId copyDestination;
-
-  ResourceId context;
 
   int64_t parent;
 

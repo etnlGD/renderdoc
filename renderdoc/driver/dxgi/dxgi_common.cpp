@@ -369,6 +369,24 @@ bool IsDepthFormat(DXGI_FORMAT f)
   return false;
 }
 
+bool IsDepthAndStencilFormat(DXGI_FORMAT f)
+{
+  switch(f)
+  {
+    case DXGI_FORMAT_R32G8X24_TYPELESS:
+    case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
+    case DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS:
+    case DXGI_FORMAT_X32_TYPELESS_G8X24_UINT:
+
+    case DXGI_FORMAT_D24_UNORM_S8_UINT:
+    case DXGI_FORMAT_R24_UNORM_X8_TYPELESS:
+    case DXGI_FORMAT_X24_TYPELESS_G8_UINT:
+    case DXGI_FORMAT_R24G8_TYPELESS: return true;
+  }
+
+  return false;
+}
+
 bool IsTypelessFormat(DXGI_FORMAT f)
 {
   switch(f)
@@ -1225,13 +1243,9 @@ DXGI_FORMAT GetTypelessFormat(DXGI_FORMAT f)
     case DXGI_FORMAT_P208:
     case DXGI_FORMAT_V208:
     case DXGI_FORMAT_V408:
-    case DXGI_FORMAT_B4G4R4A4_UNORM:
-      RDCERR("No Typeless DXGI Format for %d", f);
-      return DXGI_FORMAT_UNKNOWN;
+    case DXGI_FORMAT_B4G4R4A4_UNORM: return f;
 
-    case DXGI_FORMAT_UNKNOWN:
-      RDCWARN("Getting Typeless format of DXGI_FORMAT_UNKNOWN");
-      return DXGI_FORMAT_UNKNOWN;
+    case DXGI_FORMAT_UNKNOWN: return DXGI_FORMAT_UNKNOWN;
 
     default: RDCERR("Unrecognised DXGI Format: %d", f); return DXGI_FORMAT_UNKNOWN;
   }
@@ -1371,27 +1385,34 @@ DXGI_FORMAT MakeDXGIFormat(ResourceFormat fmt)
         break;
       case eSpecial_R11G11B10: ret = DXGI_FORMAT_R11G11B10_FLOAT; break;
       case eSpecial_R5G6B5:
-        RDCASSERT(fmt.bgraOrder);
+        // only support bgra order
+        if(!fmt.bgraOrder)
+          return DXGI_FORMAT_UNKNOWN;
         ret = DXGI_FORMAT_B5G6R5_UNORM;
         break;
       case eSpecial_R5G5B5A1:
-        RDCASSERT(fmt.bgraOrder);
+        // only support bgra order
+        if(!fmt.bgraOrder)
+          return DXGI_FORMAT_UNKNOWN;
         ret = DXGI_FORMAT_B5G5R5A1_UNORM;
         break;
       case eSpecial_R9G9B9E5: ret = DXGI_FORMAT_R9G9B9E5_SHAREDEXP; break;
       case eSpecial_R4G4B4A4:
-        RDCASSERT(fmt.bgraOrder);
+        // only support bgra order
+        if(!fmt.bgraOrder)
+          return DXGI_FORMAT_UNKNOWN;
         ret = DXGI_FORMAT_B4G4R4A4_UNORM;
         break;
       case eSpecial_D24S8: ret = DXGI_FORMAT_R24G8_TYPELESS; break;
       case eSpecial_D32S8: ret = DXGI_FORMAT_R32G8X24_TYPELESS; break;
       case eSpecial_YUV:
-        RDCERR("Video format not unambiguously encoded");
-        ret = DXGI_FORMAT_AYUV;
-        break;
-      case eSpecial_S8: RDCERR("D3D has no stencil-only format"); break;
-      case eSpecial_D16S8: RDCERR("D3D has no D16S8 format"); break;
-      default: RDCERR("Unrecognised/unsupported special format %u", fmt.specialFormat); break;
+        // just claim all YUV formats as unsupported. In theory we could add more
+        // special format enums to identify all the types, and return support for
+        // the ones that exist in D3D
+        return DXGI_FORMAT_UNKNOWN;
+      case eSpecial_S8:       // D3D has no stencil-only format
+      case eSpecial_D16S8:    // D3D has no D16S8 format
+      default: return DXGI_FORMAT_UNKNOWN;
     }
   }
   else if(fmt.compCount == 4)
@@ -1403,7 +1424,7 @@ DXGI_FORMAT MakeDXGIFormat(ResourceFormat fmt)
     else if(fmt.compByteWidth == 1)
       ret = DXGI_FORMAT_R8G8B8A8_TYPELESS;
     else
-      RDCERR("Unrecognised 4-component byte width: %d", fmt.compByteWidth);
+      return DXGI_FORMAT_UNKNOWN;
 
     if(fmt.bgraOrder)
       ret = DXGI_FORMAT_B8G8R8A8_UNORM;
@@ -1412,10 +1433,8 @@ DXGI_FORMAT MakeDXGIFormat(ResourceFormat fmt)
   {
     if(fmt.compByteWidth == 4)
       ret = DXGI_FORMAT_R32G32B32_TYPELESS;
-    // else if(fmt.compByteWidth == 2) ret = DXGI_FORMAT_R16G16B16_TYPELESS; // format doesn't exist
-    // else if(fmt.compByteWidth == 1) ret = DXGI_FORMAT_R8G8B8_TYPELESS; // format doesn't exist
     else
-      RDCERR("Unrecognised 3-component byte width: %d", fmt.compByteWidth);
+      return DXGI_FORMAT_UNKNOWN;
   }
   else if(fmt.compCount == 2)
   {
@@ -1426,7 +1445,7 @@ DXGI_FORMAT MakeDXGIFormat(ResourceFormat fmt)
     else if(fmt.compByteWidth == 1)
       ret = DXGI_FORMAT_R8G8_TYPELESS;
     else
-      RDCERR("Unrecognised 2-component byte width: %d", fmt.compByteWidth);
+      return DXGI_FORMAT_UNKNOWN;
   }
   else if(fmt.compCount == 1)
   {
@@ -1437,11 +1456,11 @@ DXGI_FORMAT MakeDXGIFormat(ResourceFormat fmt)
     else if(fmt.compByteWidth == 1)
       ret = DXGI_FORMAT_R8_TYPELESS;
     else
-      RDCERR("Unrecognised 1-component byte width: %d", fmt.compByteWidth);
+      return DXGI_FORMAT_UNKNOWN;
   }
   else
   {
-    RDCERR("Unrecognised component count: %d", fmt.compCount);
+    return DXGI_FORMAT_UNKNOWN;
   }
 
   if(fmt.compType == eCompType_None)
@@ -1459,13 +1478,10 @@ DXGI_FORMAT MakeDXGIFormat(ResourceFormat fmt)
   else if(fmt.compType == eCompType_SInt)
     ret = GetSIntTypedFormat(ret);
   else
-    RDCERR("Unrecognised component type");
+    return DXGI_FORMAT_UNKNOWN;
 
   if(fmt.srgbCorrected)
     ret = GetSRGBFormat(ret);
-
-  if(ret == DXGI_FORMAT_UNKNOWN)
-    RDCERR("No known DXGI_FORMAT corresponding to resource format!");
 
   return ret;
 }

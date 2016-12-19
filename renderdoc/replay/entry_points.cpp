@@ -23,14 +23,20 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
+#include <sstream>
 #include "api/replay/renderdoc_replay.h"
+#include "api/replay/version.h"
 #include "common/common.h"
 #include "core/core.h"
-#include "data/version.h"
+#include "jpeg-compressor/jpgd.h"
+#include "jpeg-compressor/jpge.h"
 #include "maths/camera.h"
 #include "maths/formatpacking.h"
 #include "replay/replay_renderer.h"
 #include "serialise/serialiser.h"
+#include "serialise/string_utils.h"
+#include "stb/stb_image_resize.h"
+#include "stb/stb_image_write.h"
 
 // these entry points are for the replay/analysis side - not for the application.
 
@@ -279,9 +285,25 @@ extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_FreeEnvironmentModification
   delete[] mods;
 }
 
+extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_SetDebugLogFile(const char *log)
+{
+  if(log)
+    RDCLOGFILE(log);
+}
+
 extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_LogText(const char *text)
 {
-  RDCLOG("%s", text);
+  rdclog_int(RDCLog_Comment, "EXT", "external", 0, "%s", text);
+}
+
+extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_LogMessage(LogMessageType type,
+                                                                const char *project, const char *file,
+                                                                unsigned int line, const char *text)
+{
+  RDCCOMPILE_ASSERT(
+      (int)eLogType_First == (int)RDCLog_First && (int)eLogType_NumTypes == (int)eLogType_NumTypes,
+      "Log type enum is out of sync");
+  rdclog_int((LogType)type, project ? project : "UNK?", file ? file : "unknown", line, "%s", text);
 }
 
 extern "C" RENDERDOC_API const char *RENDERDOC_CC RENDERDOC_GetLogFile()
@@ -402,13 +424,23 @@ extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_StartGlobalHook(const char 
 }
 
 extern "C" RENDERDOC_API uint32_t RENDERDOC_CC RENDERDOC_InjectIntoProcess(
-    uint32_t pid, const char *logfile, const CaptureOptions *opts, bool32 waitForExit)
+    uint32_t pid, void *env, const char *logfile, const CaptureOptions *opts, bool32 waitForExit)
 {
-  return Process::InjectIntoProcess(pid, logfile, opts, waitForExit != 0);
+  return Process::InjectIntoProcess(pid, (Process::EnvironmentModification *)env, logfile, opts,
+                                    waitForExit != 0);
 }
 
-extern "C" RENDERDOC_API bool32 RENDERDOC_CC RENDERDOC_GetThumbnail(const char *filename, byte *buf,
-                                                                    uint32_t &len)
+static void writeToByteVector(void *context, void *data, int size)
+{
+  std::vector<byte> *vec = (std::vector<byte> *)context;
+  byte *start = (byte *)data;
+  byte *end = start + size;
+  vec->insert(vec->end(), start, end);
+}
+
+extern "C" RENDERDOC_API bool32 RENDERDOC_CC RENDERDOC_GetThumbnail(const char *filename,
+                                                                    FileType type, uint32_t maxsize,
+                                                                    rdctype::array<byte> *buf)
 {
   Serialiser ser(filename, Serialiser::READING, false);
 
@@ -440,20 +472,97 @@ extern "C" RENDERDOC_API bool32 RENDERDOC_CC RENDERDOC_GetThumbnail(const char *
   if(jpgbuf == NULL)
     return false;
 
-  if(buf == NULL)
+  // if the desired output is jpg and either there's no max size or it's already satisfied,
+  // return the data directly
+  if(type == eFileType_JPG && (maxsize == 0 || (maxsize > thumbwidth && maxsize > thumbheight)))
   {
-    len = (uint32_t)thumblen;
-    delete[] jpgbuf;
-    return true;
+    create_array_init(*buf, thumblen, jpgbuf);
   }
-
-  if(thumblen > len)
+  else
   {
-    delete[] jpgbuf;
-    return false;
-  }
+    // otherwise we need to decode, resample maybe, and re-encode
 
-  memcpy(buf, jpgbuf, thumblen);
+    int w = (int)thumbwidth;
+    int h = (int)thumbheight;
+    int comp = 3;
+    byte *thumbpixels =
+        jpgd::decompress_jpeg_image_from_memory(jpgbuf, (int)thumblen, &w, &h, &comp, 3);
+
+    if(maxsize != 0)
+    {
+      uint32_t clampedWidth = RDCMIN(maxsize, thumbwidth);
+      uint32_t clampedHeight = RDCMIN(maxsize, thumbheight);
+
+      if(clampedWidth != thumbwidth || clampedHeight != thumbheight)
+      {
+        // preserve aspect ratio, take the smallest scale factor and multiply both
+        float scaleX = float(clampedWidth) / float(thumbwidth);
+        float scaleY = float(clampedHeight) / float(thumbheight);
+
+        if(scaleX < scaleY)
+          clampedHeight = uint32_t(scaleX * thumbheight);
+        else if(scaleY < scaleX)
+          clampedWidth = uint32_t(scaleY * thumbwidth);
+
+        byte *resizedpixels = (byte *)malloc(3 * clampedWidth * clampedHeight);
+
+        stbir_resize_uint8_srgb(thumbpixels, thumbwidth, thumbheight, 0, resizedpixels,
+                                clampedWidth, clampedHeight, 0, 3, -1, 0);
+
+        free(thumbpixels);
+
+        thumbpixels = resizedpixels;
+        thumbwidth = clampedWidth;
+        thumbheight = clampedHeight;
+      }
+    }
+
+    std::vector<byte> encodedBytes;
+
+    switch(type)
+    {
+      case eFileType_JPG:
+      {
+        int len = thumbwidth * thumbheight * 3;
+        encodedBytes.resize(len);
+        jpge::params p;
+        p.m_quality = 90;
+        jpge::compress_image_to_jpeg_file_in_memory(&encodedBytes[0], len, (int)thumbwidth,
+                                                    (int)thumbheight, 3, thumbpixels, p);
+        encodedBytes.resize(len);
+        break;
+      }
+      case eFileType_PNG:
+      {
+        stbi_write_png_to_func(&writeToByteVector, &encodedBytes, (int)thumbwidth, (int)thumbheight,
+                               3, thumbpixels, 0);
+        break;
+      }
+      case eFileType_TGA:
+      {
+        stbi_write_tga_to_func(&writeToByteVector, &encodedBytes, (int)thumbwidth, (int)thumbheight,
+                               3, thumbpixels);
+        break;
+      }
+      case eFileType_BMP:
+      {
+        stbi_write_bmp_to_func(&writeToByteVector, &encodedBytes, (int)thumbwidth, (int)thumbheight,
+                               3, thumbpixels);
+        break;
+      }
+      default:
+      {
+        RDCERR("Unsupported file type %d in thumbnail fetch", type);
+        free(thumbpixels);
+        delete[] jpgbuf;
+        return false;
+      }
+    }
+
+    *buf = encodedBytes;
+
+    free(thumbpixels);
+  }
 
   delete[] jpgbuf;
 
@@ -485,7 +594,19 @@ extern "C" RENDERDOC_API uint32_t RENDERDOC_CC RENDERDOC_EnumerateRemoteTargets(
   else
     nextIdent++;
 
-  for(; nextIdent <= RenderDoc_LastTargetControlPort; nextIdent++)
+  uint32_t lastIdent = RenderDoc_LastTargetControlPort;
+  if(host != NULL && Android::IsHostADB(host))
+  {
+    if(nextIdent == RenderDoc_FirstTargetControlPort)
+      nextIdent += RenderDoc_AndroidPortOffset;
+    lastIdent += RenderDoc_AndroidPortOffset;
+
+    s = "127.0.0.1";
+
+    // could parse out an (optional) device name from host+4 here.
+  }
+
+  for(; nextIdent <= lastIdent; nextIdent++)
   {
     Network::Socket *sock = Network::CreateClientSocket(s.c_str(), (uint16_t)nextIdent, 250);
 
@@ -521,4 +642,133 @@ extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_BecomeRemoteServer(const ch
     port = RENDERDOC_GetDefaultRemoteServerPort();
 
   RenderDoc::Inst().BecomeRemoteServer(listenhost, (uint16_t)port, *killReplay);
+}
+
+extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_StartSelfHostCapture(const char *dllname)
+{
+  void *module = Process::LoadModule(dllname);
+
+  if(module == NULL)
+    return;
+
+  pRENDERDOC_GetAPI get =
+      (pRENDERDOC_GetAPI)Process::GetFunctionAddress(module, "RENDERDOC_GetAPI");
+
+  if(get == NULL)
+    return;
+
+  RENDERDOC_API_1_0_0 *rdoc = NULL;
+
+  get(eRENDERDOC_API_Version_1_0_0, (void **)&rdoc);
+
+  if(rdoc == NULL)
+    return;
+
+  rdoc->StartFrameCapture(NULL, NULL);
+}
+
+extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_EndSelfHostCapture(const char *dllname)
+{
+  void *module = Process::LoadModule(dllname);
+
+  if(module == NULL)
+    return;
+
+  pRENDERDOC_GetAPI get =
+      (pRENDERDOC_GetAPI)Process::GetFunctionAddress(module, "RENDERDOC_GetAPI");
+
+  if(get == NULL)
+    return;
+
+  RENDERDOC_API_1_0_0 *rdoc = NULL;
+
+  get(eRENDERDOC_API_Version_1_0_0, (void **)&rdoc);
+
+  if(rdoc == NULL)
+    return;
+
+  rdoc->EndFrameCapture(NULL, NULL);
+}
+
+namespace Android
+{
+bool IsHostADB(const char *hostname)
+{
+  return !strncmp(hostname, "adb:", 4);
+}
+string adbExecCommand(const string &args)
+{
+  string adbExePath = RenderDoc::Inst().GetConfigSetting("adbExePath");
+  Process::ProcessResult result;
+  Process::LaunchProcess(adbExePath.c_str(), "", args.c_str(), &result);
+  RDCLOG("COMMAND: adb %s", args.c_str());
+  if(result.strStdout.length())
+    // This could be an error (i.e. no package), or just regular output from adb devices.
+    RDCLOG("STDOUT:\n%s", result.strStdout.c_str());
+  return result.strStdout;
+}
+void adbForwardPorts()
+{
+  adbExecCommand(StringFormat::Fmt("forward tcp:%i tcp:%i",
+                                   RenderDoc_RemoteServerPort + RenderDoc_AndroidPortOffset,
+                                   RenderDoc_RemoteServerPort));
+  adbExecCommand(StringFormat::Fmt("forward tcp:%i tcp:%i",
+                                   RenderDoc_FirstTargetControlPort + RenderDoc_AndroidPortOffset,
+                                   RenderDoc_FirstTargetControlPort));
+}
+uint32_t StartAndroidPackageForCapture(const char *package)
+{
+  string packageName = basename(string(package));    // Remove leading '/' if any
+
+  adbExecCommand("shell am force-stop " + packageName);
+  adbForwardPorts();
+  adbExecCommand("shell setprop debug.vulkan.layers VK_LAYER_RENDERDOC_Capture");
+  adbExecCommand("shell pm grant " + packageName +
+                 " android.permission.WRITE_EXTERNAL_STORAGE");    // Creating the capture file
+  adbExecCommand("shell pm grant " + packageName +
+                 " android.permission.READ_EXTERNAL_STORAGE");    // Reading the capture thumbnail
+  adbExecCommand("shell monkey -p " + packageName + " -c android.intent.category.LAUNCHER 1");
+  Threading::Sleep(
+      5000);    // Let the app pickup the setprop before we turn it back off for replaying.
+  adbExecCommand("shell setprop debug.vulkan.layers \\\"\\\"");
+
+  return RenderDoc_FirstTargetControlPort + RenderDoc_AndroidPortOffset;
+}
+}
+
+using namespace Android;
+extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_EnumerateAndroidDevices(rdctype::str *deviceList)
+{
+  string adbStdout = adbExecCommand("devices");
+
+  using namespace std;
+  istringstream stdoutStream(adbStdout);
+  string ret;
+  string line;
+  while(getline(stdoutStream, line))
+  {
+    vector<string> tokens;
+    split(line, tokens, '\t');
+    if(tokens.size() == 2 && trim(tokens[1]) == "device")
+    {
+      if(ret.length())
+        ret += ",";
+      ret += tokens[0];
+    }
+  }
+
+  if(ret.size())
+    adbForwardPorts();    // Forward the ports so we can see if a remoteserver/captured app is
+                          // already running.
+
+  *deviceList = ret;
+}
+
+extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_StartAndroidRemoteServer()
+{
+  adbExecCommand("shell am force-stop org.renderdoc.renderdoccmd");
+  adbForwardPorts();
+  adbExecCommand("shell setprop debug.vulkan.layers \\\"\\\"");
+  adbExecCommand(
+      "shell am start -n org.renderdoc.renderdoccmd/.Loader -e renderdoccmd remoteserver");
 }

@@ -33,7 +33,7 @@ using System.Resources;
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
 [assembly: AssemblyTitle("RenderDoc")]
-[assembly: AssemblyDescription("RenderDoc UI replay app + launcher - http://renderdoc.org/")]
+[assembly: AssemblyDescription("RenderDoc UI replay app + launcher - https://renderdoc.org/")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("Baldur Karlsson")]
 [assembly: AssemblyProduct("RenderDoc UI")]
@@ -59,8 +59,8 @@ using System.Resources;
 // You can specify all the values or you can default the Build and Revision Numbers 
 // by using the '*' as shown below:
 // [assembly: AssemblyVersion("1.0.*")]
-[assembly: AssemblyVersion("0.31.0.0")]
-[assembly: AssemblyFileVersion("0.31.0.0")]
+[assembly: AssemblyVersion("0.33.0.0")]
+[assembly: AssemblyFileVersion("0.33.0.0")]
 
 // this can be replaced with the git hash of the commit being built from e.g. in a script
 [assembly: AssemblyInformationalVersion("NO_GIT_COMMIT_HASH_DEFINED")]

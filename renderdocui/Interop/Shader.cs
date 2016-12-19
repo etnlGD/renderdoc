@@ -38,6 +38,8 @@ namespace renderdoc
 
         public VarType type;
 
+        public bool displayAsHex;
+
         [StructLayout(LayoutKind.Sequential)]
         public struct ValueUnion
         {
@@ -91,10 +93,15 @@ namespace renderdoc
 			if (rows == 0 && columns == 0)
 				return "-";
 
-			if (columns == 1)
-				return type.Str();
+			string typeStr = type.Str();
 
-			return String.Format("{0}{1}", type.Str(), columns);
+			if(displayAsHex && type == VarType.UInt)
+				typeStr = "xint";
+
+			if (columns == 1)
+				return typeStr;
+
+			return String.Format("{0}{1}", typeStr, columns);
 		}
 
 		public string TypeString()
@@ -107,9 +114,14 @@ namespace renderdoc
 					return String.Format("{0}[{1}]", members[0].TypeString(), members.Length);
 			}
 
-			if (rows == 1 && columns == 1) return type.Str();
-			if (rows == 1) return String.Format("{0}{1}", type.Str(), columns);
-			else return String.Format("{0}{1}x{2}", type.Str(), rows, columns);
+			string typeStr = type.Str();
+
+			if (displayAsHex && type == VarType.UInt)
+				typeStr = "xint";
+
+			if (rows == 1 && columns == 1) return typeStr;
+			if (rows == 1) return String.Format("{0}{1}", typeStr, columns);
+			else return String.Format("{0}{1}x{2}", typeStr, rows, columns);
 		}
 
         public string RowValuesToString(int cols, double x, double y, double z, double w)
@@ -130,10 +142,10 @@ namespace renderdoc
 
         public string RowValuesToString(int cols, UInt32 x, UInt32 y, UInt32 z, UInt32 w)
         {
-            if (cols == 1) return Formatter.Format(x);
-            else if (cols == 2) return Formatter.Format(x) + ", " + Formatter.Format(y);
-            else if (cols == 3) return Formatter.Format(x) + ", " + Formatter.Format(y) + ", " + Formatter.Format(z);
-            else return Formatter.Format(x) + ", " + Formatter.Format(y) + ", " + Formatter.Format(z) + ", " + Formatter.Format(w);
+            if (cols == 1) return Formatter.Format(x, displayAsHex);
+            else if (cols == 2) return Formatter.Format(x, displayAsHex) + ", " + Formatter.Format(y, displayAsHex);
+            else if (cols == 3) return Formatter.Format(x, displayAsHex) + ", " + Formatter.Format(y, displayAsHex) + ", " + Formatter.Format(z, displayAsHex);
+            else return Formatter.Format(x, displayAsHex) + ", " + Formatter.Format(y, displayAsHex) + ", " + Formatter.Format(z, displayAsHex) + ", " + Formatter.Format(w, displayAsHex);
         }
 
         public string RowValuesToString(int cols, Int32 x, Int32 y, Int32 z, Int32 w)
@@ -254,7 +266,7 @@ namespace renderdoc
             }
         }
 
-		public string D3D11SemanticString
+        public string D3DSemanticString
         {
             get
             {

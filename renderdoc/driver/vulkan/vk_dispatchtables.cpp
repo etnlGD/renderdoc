@@ -111,9 +111,11 @@ void InitInstanceExtensionTables(VkInstance instance)
 
   InstanceDeviceInfo *info = GetRecord(instance)->instDevInfo;
 
+  instance = Unwrap(instance);
+
 #undef HookInitExtension
 #define HookInitExtension(ext, func) \
-  if(info->ext)                      \
+  if(info->ext_##ext)                \
   {                                  \
     InstanceGPA(func);               \
   }
@@ -144,9 +146,11 @@ void InitDeviceExtensionTables(VkDevice device)
 
   InstanceDeviceInfo *info = GetRecord(device)->instDevInfo;
 
+  device = Unwrap(device);
+
 #undef HookInitExtension
 #define HookInitExtension(ext, func) \
-  if(info->ext)                      \
+  if(info->ext_##ext)                \
   {                                  \
     DeviceGPA(func);                 \
   }

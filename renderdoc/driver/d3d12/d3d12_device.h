@@ -52,6 +52,7 @@ struct D3D12InitParams : public RDCInitParams
 };
 
 class WrappedID3D12Device;
+class WrappedID3D12Resource;
 
 // give every impression of working but do nothing.
 // Just allow the user to call functions so that they don't
@@ -214,11 +215,21 @@ struct DummyID3D12DebugDevice : public ID3D12DebugDevice
 
 class WrappedID3D12CommandQueue;
 
-class WrappedID3D12Device : public IFrameCapturer, public ID3DDevice, public ID3D12Device
+#define IMPLEMENT_FUNCTION_THREAD_SERIALISED(ret, func, ...) \
+  ret func(__VA_ARGS__);                                     \
+  bool CONCAT(Serialise_, func(Serialiser *localSerialiser, __VA_ARGS__));
+
+class WrappedID3D12Device : public IFrameCapturer, public ID3DDevice, public ID3D12Device1
 {
 private:
   ID3D12Device *m_pDevice;
+  ID3D12Device1 *m_pDevice1;
 
+  // list of all queues being captured
+  std::vector<WrappedID3D12CommandQueue *> m_Queues;
+  std::vector<ID3D12Fence *> m_QueueFences;
+
+  // the queue we use for all internal work, the first DIRECT queue
   WrappedID3D12CommandQueue *m_Queue;
 
   ID3D12CommandAllocator *m_Alloc;
@@ -238,6 +249,9 @@ private:
   D3D12Replay m_Replay;
   D3D12DebugManager *m_DebugManager;
 
+  Threading::CriticalSection m_MapsLock;
+  vector<MapState> m_Maps;
+
   void ProcessChunk(uint64_t offset, D3D12ChunkType context);
 
   unsigned int m_InternalRefcount;
@@ -245,14 +259,29 @@ private:
   RefCounter12<ID3D12Device> m_SoftRefCounter;
   bool m_Alive;
 
+  uint64_t threadSerialiserTLSSlot;
+
+  Threading::CriticalSection m_ThreadSerialisersLock;
+  vector<Serialiser *> m_ThreadSerialisers;
+
+  uint64_t tempMemoryTLSSlot;
+  struct TempMem
+  {
+    TempMem() : memory(NULL), size(0) {}
+    byte *memory;
+    size_t size;
+  };
+  Threading::CriticalSection m_ThreadTempMemLock;
+  vector<TempMem *> m_ThreadTempMem;
+
+  Serialiser *GetThreadSerialiser();
+
+  vector<DebugMessage> m_DebugMessages;
+
   uint32_t m_FrameCounter;
   vector<FetchFrameInfo> m_CapturedFrames;
   FetchFrameRecord m_FrameRecord;
   vector<FetchDrawcall *> m_Drawcalls;
-
-  PerformanceTimer m_FrameTimer;
-  vector<double> m_FrameTimes;
-  double m_TotalTime, m_AvgFrametime, m_MinFrametime, m_MaxFrametime;
 
   Serialiser *m_pSerialiser;
   bool m_AppControlledCapture;
@@ -263,20 +292,27 @@ private:
   D3D12InitParams m_InitParams;
   ID3D12InfoQueue *m_pInfoQueue;
 
-  // ensure all calls in via the D3D wrapped interface are thread safe
-  // protects wrapped resource creation and serialiser access
-  Threading::CriticalSection m_D3DLock;
-
   D3D12ResourceRecord *m_FrameCaptureRecord;
   Chunk *m_HeaderChunk;
 
   ResourceId m_ResourceID;
   D3D12ResourceRecord *m_DeviceRecord;
 
+  Threading::CriticalSection m_DynDescLock;
+  std::vector<DynamicDescriptorCopy> m_DynamicDescriptorCopies;
+  std::vector<DynamicDescriptorWrite> m_DynamicDescriptorWrites;
+  std::vector<D3D12Descriptor> m_DynamicDescriptorRefs;
+
+  GPUAddressRangeTracker m_GPUAddresses;
+
+  void FlushPendingDescriptorWrites();
+
   // used both on capture and replay side to track resource states. Only locked
   // in capture
   map<ResourceId, SubresourceStateVector> m_ResourceStates;
   Threading::CriticalSection m_ResourceStatesLock;
+
+  set<ResourceId> m_Cubemaps;
 
   map<ResourceId, string> m_ResourceNames;
 
@@ -284,12 +320,15 @@ private:
   {
     D3D12_CPU_DESCRIPTOR_HANDLE rtvs[8];
 
+    ID3D12CommandQueue *queue;
+
     int32_t lastPresentedBuffer;
   };
 
-  map<WrappedIDXGISwapChain3 *, SwapPresentInfo> m_SwapChains;
+  map<WrappedIDXGISwapChain4 *, SwapPresentInfo> m_SwapChains;
+  map<ResourceId, DXGI_FORMAT> m_BackbufferFormat;
 
-  WrappedIDXGISwapChain3 *m_LastSwap;
+  WrappedIDXGISwapChain4 *m_LastSwap;
 
   UINT m_DescriptorIncrements[D3D12_DESCRIPTOR_HEAP_TYPE_NUM_TYPES];
 
@@ -315,26 +354,50 @@ public:
   static const char *GetChunkName(uint32_t idx);
   D3D12ResourceManager *GetResourceManager() { return m_ResourceManager; }
   D3D12DebugManager *GetDebugManager() { return m_DebugManager; }
-  Serialiser *GetSerialiser() { return m_pSerialiser; }
+  Serialiser *GetMainSerialiser() { return m_pSerialiser; }
   ResourceId GetResourceID() { return m_ResourceID; }
   Threading::CriticalSection &GetCapTransitionLock() { return m_CapTransitionLock; }
   void ReleaseSwapchainResources(IDXGISwapChain *swap, IUnknown **backbuffers, int numBackbuffers);
-  void FirstFrame(WrappedIDXGISwapChain3 *swap);
+  void FirstFrame(WrappedIDXGISwapChain4 *swap);
   FetchFrameRecord &GetFrameRecord() { return m_FrameRecord; }
   const FetchDrawcall *GetDrawcall(uint32_t eventID);
+
+  void AddDebugMessage(const DebugMessage &msg) { m_DebugMessages.push_back(msg); }
+  vector<DebugMessage> GetDebugMessages();
 
   const string &GetResourceName(ResourceId id) { return m_ResourceNames[id]; }
   vector<D3D12_RESOURCE_STATES> &GetSubresourceStates(ResourceId id)
   {
     return m_ResourceStates[id];
   }
-
+  const map<ResourceId, SubresourceStateVector> &GetSubresourceStates() { return m_ResourceStates; }
+  const map<ResourceId, DXGI_FORMAT> &GetBackbufferFormats() { return m_BackbufferFormat; }
   void SetLogFile(const char *logfile);
   void SetLogVersion(uint32_t fileversion) { m_InitParams.SerialiseVersion = fileversion; }
   D3D12Replay *GetReplay() { return &m_Replay; }
   WrappedID3D12CommandQueue *GetQueue() { return m_Queue; }
   ID3D12CommandAllocator *GetAlloc() { return m_Alloc; }
   void ApplyBarriers(vector<D3D12_RESOURCE_BARRIER> &barriers);
+
+  void GetDynamicDescriptorReferences(std::vector<D3D12Descriptor> &refs)
+  {
+    SCOPED_LOCK(m_DynDescLock);
+    m_DynamicDescriptorRefs.swap(refs);
+  }
+
+  void GetResIDFromAddr(D3D12_GPU_VIRTUAL_ADDRESS addr, ResourceId &id, UINT64 &offs)
+  {
+    m_GPUAddresses.GetResIDFromAddr(addr, id, offs);
+  }
+
+  bool IsCubemap(ResourceId id) { return m_Cubemaps.find(id) != m_Cubemaps.end(); }
+  // returns thread-local temporary memory
+  byte *GetTempMemory(size_t s);
+  template <class T>
+  T *GetTempArray(uint32_t arraycount)
+  {
+    return (T *)GetTempMemory(sizeof(T) * arraycount);
+  }
 
   struct
   {
@@ -353,16 +416,32 @@ public:
     // -> FlushLists()--------back to freecmds--------^
   } m_InternalCmds;
 
-  ID3D12GraphicsCommandList *GetNewList();
-  void ExecuteLists();
-  void FlushLists(bool forceSync = false);
+  // batch this many initial state lists together. Balance between
+  // creating fewer temporary lists and making too bloated lists
+  static const int initialStateMaxBatch = 100;
+  int initStateCurBatch;
+  ID3D12GraphicsCommandList *initStateCurList;
 
-  void GPUSync();
+  ID3D12GraphicsCommandList *GetNewList();
+  ID3D12GraphicsCommandList *GetInitialStateList();
+  void CloseInitialStateList();
+  void ApplyInitialContents();
+
+  void ExecuteList(ID3D12GraphicsCommandList *list, ID3D12CommandQueue *queue = NULL);
+  void ExecuteLists(ID3D12CommandQueue *queue = NULL);
+  void FlushLists(bool forceSync = false, ID3D12CommandQueue *queue = NULL);
+
+  void GPUSync(ID3D12CommandQueue *queue = NULL, ID3D12Fence *fence = NULL);
 
   void StartFrameCapture(void *dev, void *wnd);
   bool EndFrameCapture(void *dev, void *wnd);
 
   bool Serialise_BeginCaptureFrame(bool applyInitialState);
+
+  bool Serialise_DynamicDescriptorWrite(Serialiser *localSerialiser,
+                                        const DynamicDescriptorWrite *write);
+  bool Serialise_DynamicDescriptorCopies(Serialiser *localSerialiser,
+                                         const std::vector<DynamicDescriptorCopy> *copies);
 
   void ReadLogInitialisation();
   void ReplayLog(uint32_t startEventID, uint32_t endEventID, ReplayLogType replayType);
@@ -370,16 +449,45 @@ public:
   // interface for DXGI
   virtual IUnknown *GetRealIUnknown() { return GetReal(); }
   virtual IID GetBackbufferUUID() { return __uuidof(ID3D12Resource); }
-  virtual IID GetDeviceUUID() { return __uuidof(ID3D12Device); }
-  virtual IUnknown *GetDeviceInterface() { return (ID3D12Device *)this; }
+  virtual bool IsDeviceUUID(REFIID iid) { return iid == __uuidof(ID3D12Device) ? true : false; }
+  virtual IUnknown *GetDeviceInterface(REFIID iid)
+  {
+    if(iid == __uuidof(ID3D12Device))
+      return (ID3D12Device *)this;
+
+    RDCERR("Requested unknown device interface %s", ToStr::Get(iid).c_str());
+
+    return NULL;
+  }
   // Swap Chain
-  IMPLEMENT_FUNCTION_SERIALISED(IUnknown *, WrapSwapchainBuffer(WrappedIDXGISwapChain3 *swap,
-                                                                DXGI_SWAP_CHAIN_DESC *desc,
-                                                                UINT buffer, IUnknown *realSurface));
-  HRESULT Present(WrappedIDXGISwapChain3 *swap, UINT SyncInterval, UINT Flags);
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(IUnknown *, WrapSwapchainBuffer,
+                                       WrappedIDXGISwapChain4 *swap, DXGI_SWAP_CHAIN_DESC *desc,
+                                       UINT buffer, IUnknown *realSurface);
+  HRESULT Present(WrappedIDXGISwapChain4 *swap, UINT SyncInterval, UINT Flags);
 
   void NewSwapchainBuffer(IUnknown *backbuffer) {}
-  void ReleaseSwapchainResources(WrappedIDXGISwapChain3 *swap);
+  void ReleaseSwapchainResources(WrappedIDXGISwapChain4 *swap, UINT QueueCount,
+                                 IUnknown *const *ppPresentQueue, IUnknown **unwrappedQueues);
+
+  void Map(WrappedID3D12Resource *Resource, UINT Subresource);
+  void Unmap(WrappedID3D12Resource *Resource, UINT Subresource, byte *mapPtr,
+             const D3D12_RANGE *pWrittenRange);
+
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(void, MapDataWrite, WrappedID3D12Resource *Resource,
+                                       UINT Subresource, byte *mapPtr, D3D12_RANGE range);
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(void, WriteToSubresource, WrappedID3D12Resource *Resource,
+                                       UINT Subresource, const D3D12_BOX *pDstBox,
+                                       const void *pSrcData, UINT SrcRowPitch, UINT SrcDepthPitch);
+
+  vector<MapState> GetMaps()
+  {
+    vector<MapState> ret;
+    {
+      SCOPED_LOCK(m_MapsLock);
+      ret = m_Maps;
+    }
+    return ret;
+  }
 
   void InternalRef() { InterlockedIncrement(&m_InternalRefcount); }
   void InternalRelease() { InterlockedDecrement(&m_InternalRefcount); }
@@ -392,10 +500,11 @@ public:
   void CheckForDeath();
 
   // Resource
-  IMPLEMENT_FUNCTION_SERIALISED(void, SetResourceName(ID3D12DeviceChild *res, const char *name));
-  IMPLEMENT_FUNCTION_SERIALISED(HRESULT,
-                                SetShaderDebugPath(ID3D12DeviceChild *res, const char *name));
-  IMPLEMENT_FUNCTION_SERIALISED(void, ReleaseResource(ID3D12DeviceChild *res));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(void, SetResourceName, ID3D12DeviceChild *res,
+                                       const char *name);
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(HRESULT, SetShaderDebugPath, ID3D12DeviceChild *res,
+                                       const char *name);
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(void, ReleaseResource, ID3D12DeviceChild *res);
 
   //////////////////////////////
   // implement IUnknown
@@ -420,172 +529,188 @@ public:
 
   //////////////////////////////
   // implement ID3D12Device
-  IMPLEMENT_FUNCTION_SERIALISED(virtual UINT STDMETHODCALLTYPE, GetNodeCount());
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual UINT STDMETHODCALLTYPE, GetNodeCount, );
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                CreateCommandQueue(const D3D12_COMMAND_QUEUE_DESC *pDesc,
-                                                   REFIID riid, void **ppCommandQueue));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreateCommandQueue,
+                                       const D3D12_COMMAND_QUEUE_DESC *pDesc, REFIID riid,
+                                       void **ppCommandQueue);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE type, REFIID riid,
-                                                       void **ppCommandAllocator));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreateCommandAllocator,
+                                       D3D12_COMMAND_LIST_TYPE type, REFIID riid,
+                                       void **ppCommandAllocator);
 
-  IMPLEMENT_FUNCTION_SERIALISED(
-      virtual HRESULT STDMETHODCALLTYPE,
-      CreateGraphicsPipelineState(const D3D12_GRAPHICS_PIPELINE_STATE_DESC *pDesc, REFIID riid,
-                                  void **ppPipelineState));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreateGraphicsPipelineState,
+                                       const D3D12_GRAPHICS_PIPELINE_STATE_DESC *pDesc, REFIID riid,
+                                       void **ppPipelineState);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                CreateComputePipelineState(const D3D12_COMPUTE_PIPELINE_STATE_DESC *pDesc,
-                                                           REFIID riid, void **ppPipelineState));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreateComputePipelineState,
+                                       const D3D12_COMPUTE_PIPELINE_STATE_DESC *pDesc, REFIID riid,
+                                       void **ppPipelineState);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                CreateCommandList(UINT nodeMask, D3D12_COMMAND_LIST_TYPE type,
-                                                  ID3D12CommandAllocator *pCommandAllocator,
-                                                  ID3D12PipelineState *pInitialState, REFIID riid,
-                                                  void **ppCommandList));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreateCommandList,
+                                       UINT nodeMask, D3D12_COMMAND_LIST_TYPE type,
+                                       ID3D12CommandAllocator *pCommandAllocator,
+                                       ID3D12PipelineState *pInitialState, REFIID riid,
+                                       void **ppCommandList);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                CheckFeatureSupport(D3D12_FEATURE Feature, void *pFeatureSupportData,
-                                                    UINT FeatureSupportDataSize));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CheckFeatureSupport,
+                                       D3D12_FEATURE Feature, void *pFeatureSupportData,
+                                       UINT FeatureSupportDataSize);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                CreateDescriptorHeap(const D3D12_DESCRIPTOR_HEAP_DESC *pDescriptorHeapDesc,
-                                                     REFIID riid, void **ppvHeap));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreateDescriptorHeap,
+                                       const D3D12_DESCRIPTOR_HEAP_DESC *pDescriptorHeapDesc,
+                                       REFIID riid, void **ppvHeap);
 
-  IMPLEMENT_FUNCTION_SERIALISED(
-      virtual UINT STDMETHODCALLTYPE,
-      GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE DescriptorHeapType));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual UINT STDMETHODCALLTYPE,
+                                       GetDescriptorHandleIncrementSize,
+                                       D3D12_DESCRIPTOR_HEAP_TYPE DescriptorHeapType);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                CreateRootSignature(UINT nodeMask, const void *pBlobWithRootSignature,
-                                                    SIZE_T blobLengthInBytes, REFIID riid,
-                                                    void **ppvRootSignature));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreateRootSignature,
+                                       UINT nodeMask, const void *pBlobWithRootSignature,
+                                       SIZE_T blobLengthInBytes, REFIID riid,
+                                       void **ppvRootSignature);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual void STDMETHODCALLTYPE,
-                                CreateConstantBufferView(const D3D12_CONSTANT_BUFFER_VIEW_DESC *pDesc,
-                                                         D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual void STDMETHODCALLTYPE, CreateConstantBufferView,
+                                       const D3D12_CONSTANT_BUFFER_VIEW_DESC *pDesc,
+                                       D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual void STDMETHODCALLTYPE,
-                                CreateShaderResourceView(ID3D12Resource *pResource,
-                                                         const D3D12_SHADER_RESOURCE_VIEW_DESC *pDesc,
-                                                         D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual void STDMETHODCALLTYPE, CreateShaderResourceView,
+                                       ID3D12Resource *pResource,
+                                       const D3D12_SHADER_RESOURCE_VIEW_DESC *pDesc,
+                                       D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor);
 
-  IMPLEMENT_FUNCTION_SERIALISED(
-      virtual void STDMETHODCALLTYPE,
-      CreateUnorderedAccessView(ID3D12Resource *pResource, ID3D12Resource *pCounterResource,
-                                const D3D12_UNORDERED_ACCESS_VIEW_DESC *pDesc,
-                                D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual void STDMETHODCALLTYPE, CreateUnorderedAccessView,
+                                       ID3D12Resource *pResource, ID3D12Resource *pCounterResource,
+                                       const D3D12_UNORDERED_ACCESS_VIEW_DESC *pDesc,
+                                       D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual void STDMETHODCALLTYPE,
-                                CreateRenderTargetView(ID3D12Resource *pResource,
-                                                       const D3D12_RENDER_TARGET_VIEW_DESC *pDesc,
-                                                       D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual void STDMETHODCALLTYPE, CreateRenderTargetView,
+                                       ID3D12Resource *pResource,
+                                       const D3D12_RENDER_TARGET_VIEW_DESC *pDesc,
+                                       D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual void STDMETHODCALLTYPE,
-                                CreateDepthStencilView(ID3D12Resource *pResource,
-                                                       const D3D12_DEPTH_STENCIL_VIEW_DESC *pDesc,
-                                                       D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual void STDMETHODCALLTYPE, CreateDepthStencilView,
+                                       ID3D12Resource *pResource,
+                                       const D3D12_DEPTH_STENCIL_VIEW_DESC *pDesc,
+                                       D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual void STDMETHODCALLTYPE,
-                                CreateSampler(const D3D12_SAMPLER_DESC *pDesc,
-                                              D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual void STDMETHODCALLTYPE, CreateSampler,
+                                       const D3D12_SAMPLER_DESC *pDesc,
+                                       D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptor);
 
-  IMPLEMENT_FUNCTION_SERIALISED(
-      virtual void STDMETHODCALLTYPE,
-      CopyDescriptors(UINT NumDestDescriptorRanges,
-                      const D3D12_CPU_DESCRIPTOR_HANDLE *pDestDescriptorRangeStarts,
-                      const UINT *pDestDescriptorRangeSizes, UINT NumSrcDescriptorRanges,
-                      const D3D12_CPU_DESCRIPTOR_HANDLE *pSrcDescriptorRangeStarts,
-                      const UINT *pSrcDescriptorRangeSizes,
-                      D3D12_DESCRIPTOR_HEAP_TYPE DescriptorHeapsType));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual void STDMETHODCALLTYPE, CopyDescriptors,
+                                       UINT NumDestDescriptorRanges,
+                                       const D3D12_CPU_DESCRIPTOR_HANDLE *pDestDescriptorRangeStarts,
+                                       const UINT *pDestDescriptorRangeSizes,
+                                       UINT NumSrcDescriptorRanges,
+                                       const D3D12_CPU_DESCRIPTOR_HANDLE *pSrcDescriptorRangeStarts,
+                                       const UINT *pSrcDescriptorRangeSizes,
+                                       D3D12_DESCRIPTOR_HEAP_TYPE DescriptorHeapsType);
 
-  IMPLEMENT_FUNCTION_SERIALISED(
-      virtual void STDMETHODCALLTYPE,
-      CopyDescriptorsSimple(UINT NumDescriptors, D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptorRangeStart,
-                            D3D12_CPU_DESCRIPTOR_HANDLE SrcDescriptorRangeStart,
-                            D3D12_DESCRIPTOR_HEAP_TYPE DescriptorHeapsType));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual void STDMETHODCALLTYPE, CopyDescriptorsSimple,
+                                       UINT NumDescriptors,
+                                       D3D12_CPU_DESCRIPTOR_HANDLE DestDescriptorRangeStart,
+                                       D3D12_CPU_DESCRIPTOR_HANDLE SrcDescriptorRangeStart,
+                                       D3D12_DESCRIPTOR_HEAP_TYPE DescriptorHeapsType);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual D3D12_RESOURCE_ALLOCATION_INFO STDMETHODCALLTYPE,
-                                GetResourceAllocationInfo(UINT visibleMask, UINT numResourceDescs,
-                                                          const D3D12_RESOURCE_DESC *pResourceDescs));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual D3D12_RESOURCE_ALLOCATION_INFO STDMETHODCALLTYPE,
+                                       GetResourceAllocationInfo, UINT visibleMask,
+                                       UINT numResourceDescs,
+                                       const D3D12_RESOURCE_DESC *pResourceDescs);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual D3D12_HEAP_PROPERTIES STDMETHODCALLTYPE,
-                                GetCustomHeapProperties(UINT nodeMask, D3D12_HEAP_TYPE heapType));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual D3D12_HEAP_PROPERTIES STDMETHODCALLTYPE,
+                                       GetCustomHeapProperties, UINT nodeMask,
+                                       D3D12_HEAP_TYPE heapType);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                CreateCommittedResource(const D3D12_HEAP_PROPERTIES *pHeapProperties,
-                                                        D3D12_HEAP_FLAGS HeapFlags,
-                                                        const D3D12_RESOURCE_DESC *pResourceDesc,
-                                                        D3D12_RESOURCE_STATES InitialResourceState,
-                                                        const D3D12_CLEAR_VALUE *pOptimizedClearValue,
-                                                        REFIID riidResource, void **ppvResource));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreateCommittedResource,
+                                       const D3D12_HEAP_PROPERTIES *pHeapProperties,
+                                       D3D12_HEAP_FLAGS HeapFlags, const D3D12_RESOURCE_DESC *pDesc,
+                                       D3D12_RESOURCE_STATES InitialResourceState,
+                                       const D3D12_CLEAR_VALUE *pOptimizedClearValue,
+                                       REFIID riidResource, void **ppvResource);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                CreateHeap(const D3D12_HEAP_DESC *pDesc, REFIID riid, void **ppvHeap));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreateHeap,
+                                       const D3D12_HEAP_DESC *pDesc, REFIID riid, void **ppvHeap);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                CreatePlacedResource(ID3D12Heap *pHeap, UINT64 HeapOffset,
-                                                     const D3D12_RESOURCE_DESC *pDesc,
-                                                     D3D12_RESOURCE_STATES InitialState,
-                                                     const D3D12_CLEAR_VALUE *pOptimizedClearValue,
-                                                     REFIID riid, void **ppvResource));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreatePlacedResource,
+                                       ID3D12Heap *pHeap, UINT64 HeapOffset,
+                                       const D3D12_RESOURCE_DESC *pDesc,
+                                       D3D12_RESOURCE_STATES InitialState,
+                                       const D3D12_CLEAR_VALUE *pOptimizedClearValue, REFIID riid,
+                                       void **ppvResource);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                CreateReservedResource(const D3D12_RESOURCE_DESC *pDesc,
-                                                       D3D12_RESOURCE_STATES InitialState,
-                                                       const D3D12_CLEAR_VALUE *pOptimizedClearValue,
-                                                       REFIID riid, void **ppvResource));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreateReservedResource,
+                                       const D3D12_RESOURCE_DESC *pDesc,
+                                       D3D12_RESOURCE_STATES InitialState,
+                                       const D3D12_CLEAR_VALUE *pOptimizedClearValue, REFIID riid,
+                                       void **ppvResource);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                CreateSharedHandle(ID3D12DeviceChild *pObject,
-                                                   const SECURITY_ATTRIBUTES *pAttributes,
-                                                   DWORD Access, LPCWSTR Name, HANDLE *pHandle));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreateSharedHandle,
+                                       ID3D12DeviceChild *pObject,
+                                       const SECURITY_ATTRIBUTES *pAttributes, DWORD Access,
+                                       LPCWSTR Name, HANDLE *pHandle);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                OpenSharedHandle(HANDLE NTHandle, REFIID riid, void **ppvObj));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, OpenSharedHandle,
+                                       HANDLE NTHandle, REFIID riid, void **ppvObj);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                OpenSharedHandleByName(LPCWSTR Name, DWORD Access, HANDLE *pNTHandle));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, OpenSharedHandleByName,
+                                       LPCWSTR Name, DWORD Access, HANDLE *pNTHandle);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                MakeResident(UINT NumObjects, ID3D12Pageable *const *ppObjects));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, MakeResident,
+                                       UINT NumObjects, ID3D12Pageable *const *ppObjects);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                Evict(UINT NumObjects, ID3D12Pageable *const *ppObjects));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, Evict, UINT NumObjects,
+                                       ID3D12Pageable *const *ppObjects);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                CreateFence(UINT64 InitialValue, D3D12_FENCE_FLAGS Flags,
-                                            REFIID riid, void **ppFence));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreateFence,
+                                       UINT64 InitialValue, D3D12_FENCE_FLAGS Flags, REFIID riid,
+                                       void **ppFence);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, GetDeviceRemovedReason());
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, GetDeviceRemovedReason, );
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual void STDMETHODCALLTYPE,
-                                GetCopyableFootprints(const D3D12_RESOURCE_DESC *pResourceDesc,
-                                                      UINT FirstSubresource, UINT NumSubresources,
-                                                      UINT64 BaseOffset,
-                                                      D3D12_PLACED_SUBRESOURCE_FOOTPRINT *pLayouts,
-                                                      UINT *pNumRows, UINT64 *pRowSizeInBytes,
-                                                      UINT64 *pTotalBytes));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual void STDMETHODCALLTYPE, GetCopyableFootprints,
+                                       const D3D12_RESOURCE_DESC *pResourceDesc,
+                                       UINT FirstSubresource, UINT NumSubresources, UINT64 BaseOffset,
+                                       D3D12_PLACED_SUBRESOURCE_FOOTPRINT *pLayouts, UINT *pNumRows,
+                                       UINT64 *pRowSizeInBytes, UINT64 *pTotalBytes);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                CreateQueryHeap(const D3D12_QUERY_HEAP_DESC *pDesc, REFIID riid,
-                                                void **ppvHeap));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreateQueryHeap,
+                                       const D3D12_QUERY_HEAP_DESC *pDesc, REFIID riid,
+                                       void **ppvHeap);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, SetStablePowerState(BOOL Enable));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, SetStablePowerState,
+                                       BOOL Enable);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
-                                CreateCommandSignature(const D3D12_COMMAND_SIGNATURE_DESC *pDesc,
-                                                       ID3D12RootSignature *pRootSignature,
-                                                       REFIID riid, void **ppvCommandSignature));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreateCommandSignature,
+                                       const D3D12_COMMAND_SIGNATURE_DESC *pDesc,
+                                       ID3D12RootSignature *pRootSignature, REFIID riid,
+                                       void **ppvCommandSignature);
 
-  IMPLEMENT_FUNCTION_SERIALISED(
-      virtual void STDMETHODCALLTYPE,
-      GetResourceTiling(ID3D12Resource *pTiledResource, UINT *pNumTilesForEntireResource,
-                        D3D12_PACKED_MIP_INFO *pPackedMipDesc,
-                        D3D12_TILE_SHAPE *pStandardTileShapeForNonPackedMips,
-                        UINT *pNumSubresourceTilings, UINT FirstSubresourceTilingToGet,
-                        D3D12_SUBRESOURCE_TILING *pSubresourceTilingsForNonPackedMips));
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual void STDMETHODCALLTYPE, GetResourceTiling,
+                                       ID3D12Resource *pTiledResource,
+                                       UINT *pNumTilesForEntireResource,
+                                       D3D12_PACKED_MIP_INFO *pPackedMipDesc,
+                                       D3D12_TILE_SHAPE *pStandardTileShapeForNonPackedMips,
+                                       UINT *pNumSubresourceTilings, UINT FirstSubresourceTilingToGet,
+                                       D3D12_SUBRESOURCE_TILING *pSubresourceTilingsForNonPackedMips);
 
-  IMPLEMENT_FUNCTION_SERIALISED(virtual LUID STDMETHODCALLTYPE, GetAdapterLuid());
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual LUID STDMETHODCALLTYPE, GetAdapterLuid);
+
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, CreatePipelineLibrary,
+                                       _In_reads_(BlobLength) const void *pLibraryBlob,
+                                       SIZE_T BlobLength, REFIID riid,
+                                       _COM_Outptr_ void **ppPipelineLibrary);
+
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE,
+                                       SetEventOnMultipleFenceCompletion,
+                                       _In_reads_(NumFences) ID3D12Fence *const *ppFences,
+                                       _In_reads_(NumFences) const UINT64 *pFenceValues,
+                                       UINT NumFences, D3D12_MULTIPLE_FENCE_WAIT_FLAGS Flags,
+                                       HANDLE hEvent);
+
+  IMPLEMENT_FUNCTION_THREAD_SERIALISED(virtual HRESULT STDMETHODCALLTYPE, SetResidencyPriority,
+                                       UINT NumObjects,
+                                       _In_reads_(NumObjects) ID3D12Pageable *const *ppObjects,
+                                       _In_reads_(NumObjects)
+                                           const D3D12_RESIDENCY_PRIORITY *pPriorities);
 };

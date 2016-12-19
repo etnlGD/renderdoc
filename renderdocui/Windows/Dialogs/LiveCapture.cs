@@ -76,6 +76,8 @@ namespace renderdocui.Windows
             public string api;
             public DateTime timestamp;
 
+            public Image thumb;
+
             public bool saved;
             public bool opened;
 
@@ -117,7 +119,7 @@ namespace renderdocui.Windows
 
             m_ConnectThread = null;
 
-            Text = (m_Host.Length > 0 ? (m_Host + " - ") : "") + "Connecting...";
+            SetText("Connecting...");
             connectionStatus.Text = "Connecting...";
             connectionIcon.Image = global::renderdocui.Properties.Resources.hourglass;
 
@@ -161,20 +163,20 @@ namespace renderdocui.Windows
 
                 if (m_Connection.Connected)
                 {
-                    string api = "...";
+                    string api = "No API detected";
                     if (m_Connection.API.Length > 0) api = m_Connection.API;
                     this.BeginInvoke((MethodInvoker)delegate
                     {
                         if (m_Connection.PID == 0)
                         {
                             connectionStatus.Text = String.Format("Connection established to {0} ({1})", m_Connection.Target, api);
-                            Text = String.Format("{0} ({1})", m_Connection.Target, api);
+                            SetText(String.Format("{0}", m_Connection.Target));
                         }
                         else
                         {
                             connectionStatus.Text = String.Format("Connection established to {0} [PID {1}] ({2})",
                                      m_Connection.Target, m_Connection.PID, api);
-                            Text = String.Format("{0} [PID {1}] ({2})", m_Connection.Target, m_Connection.PID, api);
+                            SetText(String.Format("{0} [PID {1}]", m_Connection.Target, m_Connection.PID));
                         }
                         connectionIcon.Image = global::renderdocui.Properties.Resources.connect;
                     });
@@ -229,8 +231,17 @@ namespace renderdocui.Windows
                     {
                         this.BeginInvoke((MethodInvoker)delegate
                         {
-                            connectionStatus.Text = String.Format("Connection established to {0} ({1})", m_Connection.Target, m_Connection.API);
-                            Text = String.Format("{0} ({1})", m_Connection.Target, m_Connection.API);
+                            if (m_Connection.PID == 0)
+                            {
+                                connectionStatus.Text = String.Format("Connection established to {0} ({1})", m_Connection.Target, m_Connection.API);
+                                SetText(String.Format("{0}", m_Connection.Target));
+                            }
+                            else
+                            {
+                                connectionStatus.Text = String.Format("Connection established to {0} [PID {1}] ({2})",
+                                         m_Connection.Target, m_Connection.PID, m_Connection.API);
+                                SetText(String.Format("{0} [PID {1}]", m_Connection.Target, m_Connection.PID));
+                            }
                             connectionIcon.Image = global::renderdocui.Properties.Resources.connect;
                         });
 
@@ -307,7 +318,7 @@ namespace renderdocui.Windows
             {
                 this.BeginInvoke((MethodInvoker)delegate
                 {
-                    Text = (m_Host.Length > 0 ? (m_Host + " - ") : "") + "Connection failed";
+                    SetText("Connection failed");
                     connectionStatus.Text = "Connection failed";
                     connectionIcon.Image = global::renderdocui.Properties.Resources.delete;
 
@@ -374,7 +385,21 @@ namespace renderdocui.Windows
                 (captures.SelectedItems.Count == 1);
 
             if(captures.SelectedItems.Count == 1)
-                newInstanceToolStripMenuItem.Enabled = (captures.SelectedItems[0].Tag as CaptureLog).local;
+            {
+                CaptureLog cap = captures.SelectedItems[0].Tag as CaptureLog;
+
+                newInstanceToolStripMenuItem.Enabled = cap.local;
+
+                if (cap.thumb != null)
+                {
+                    preview.Image = cap.thumb;
+                }
+                else
+                {
+                    preview.Image = null;
+                    preview.Size = new Size(16, 16);
+                }
+            }
         }
 
         private void captures_MouseDoubleClick(object sender, MouseEventArgs e)
@@ -495,7 +520,7 @@ namespace renderdocui.Windows
 
                 // we either have to save or delete the log. Make sure that if it's remote that we are able
                 // to by having an active connection or replay context on that host.
-                if (suppressRemoteWarning == false && !m_Connection.Connected &&
+                if (suppressRemoteWarning == false && !m_Connection.Connected && !log.local &&
                     (m_Core.Renderer.Remote == null ||
                      m_Core.Renderer.Remote.Hostname != m_Host ||
                      !m_Core.Renderer.Remote.Connected)
@@ -730,6 +755,10 @@ namespace renderdocui.Windows
             {
                 deleteCapture_Click(sender, null);
             }
+            if (e.KeyCode == Keys.Return || e.KeyCode == Keys.Enter)
+            {
+                openCapture_Click(sender, null);
+            }
         }
 
         private void CaptureCopied(uint ID, string localPath)
@@ -771,6 +800,18 @@ namespace renderdocui.Windows
             log.exe = executable;
             log.api = api;
             log.timestamp = timestamp;
+            log.thumb = null;
+            try
+            {
+                if (thumbnail != null && thumbnail.Length != 0)
+                {
+                    using (var ms = new MemoryStream(thumbnail))
+                        log.thumb = Image.FromStream(ms);
+                }
+            }
+            catch (ArgumentException)
+            {
+            }
             log.saved = false;
             log.path = path;
             log.local = local;
@@ -878,35 +919,46 @@ namespace renderdocui.Windows
 
         private void childUpdateTimer_Tick(object sender, EventArgs e)
         {
-            // remove any stale processes
-            for (int i = 0; i < m_Children.Count; i++)
+            if (m_Children.Count > 0)
             {
-                try
+                Process[] processes = Process.GetProcesses();
+
+                // remove any stale processes
+                for (int i = 0; i < m_Children.Count; i++)
                 {
-                    // if this throws an exception the process no longer exists so we'll remove it
-                    Process.GetProcessById(m_Children[i].PID);
+                    bool found = false;
+
+                    foreach (var p in processes)
+                    {
+                        if (p.Id == m_Children[i].PID)
+                        {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found)
+                    {
+                        if (m_Children[i].added)
+                            childProcesses.Items.RemoveByKey(m_Children[i].PID.ToString());
+
+                        // process expired/doesn't exist anymore
+                        m_Children.RemoveAt(i);
+
+                        // don't increment i, check the next element at i (if we weren't at the end
+                        i--;
+                    }
                 }
-                catch (Exception)
+
+                for (int i = 0; i < m_Children.Count; i++)
                 {
-                    if (m_Children[i].added)
-                        childProcesses.Items.RemoveByKey(m_Children[i].PID.ToString());
+                    if (!m_Children[i].added)
+                    {
+                        string text = String.Format("{0} [PID {1}]", m_Children[i].name, m_Children[i].PID);
 
-                    // process expired/doesn't exist anymore
-                    m_Children.RemoveAt(i);
-
-                    // don't increment i, check the next element at i (if we weren't at the end
-                    i--;
-                }
-            }
-
-            for (int i = 0; i < m_Children.Count; i++)
-            {
-                if (!m_Children[i].added)
-                {
-                    string text = String.Format("{0} [PID {1}]", m_Children[i].name, m_Children[i].PID);
-
-                    m_Children[i].added = true;
-                    childProcesses.Items.Add(m_Children[i].PID.ToString(), text, 0).Tag = m_Children[i].ident;
+                        m_Children[i].added = true;
+                        childProcesses.Items.Add(m_Children[i].PID.ToString(), text, 0).Tag = m_Children[i].ident;
+                    }
                 }
             }
 
@@ -928,6 +980,46 @@ namespace renderdocui.Windows
                 var live = new LiveCapture(m_Core, m_Host, ident, m_Main);
                 m_Main.ShowLiveCapture(live);
             }                
+        }
+
+        private void SetText(String title)
+        {
+            Text = (m_Host.Length > 0 ? (m_Host + " - ") : "") + title;
+        }
+
+        private void previewToggle_CheckedChanged(object sender, EventArgs e)
+        {
+            previewSplit.Panel2Collapsed = !previewToggle.Checked;
+        }
+
+        private Point previewDragStart = Point.Empty;
+
+        private void preview_MouseDown(object sender, MouseEventArgs e)
+        {
+            Point mouse = preview.PointToScreen(e.Location);
+            if (e.Button == MouseButtons.Left)
+            {
+                previewDragStart = mouse;
+                preview.Cursor = Cursors.NoMove2D;
+            }
+        }
+
+        private void preview_MouseMove(object sender, MouseEventArgs e)
+        {
+            Point mouse = preview.PointToScreen(e.Location);
+            if (e.Button == MouseButtons.Left)
+            {
+                SuspendLayout();
+                Point p = previewSplit.Panel2.AutoScrollPosition;
+                previewSplit.Panel2.AutoScrollPosition = new Point(-(p.X + mouse.X - previewDragStart.X),
+                                                                   -(p.Y + mouse.Y - previewDragStart.Y));
+                previewDragStart = mouse;
+                ResumeLayout();
+            }
+            else
+            {
+                preview.Cursor = Cursors.Default;
+            }
         }
     }
 }

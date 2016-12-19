@@ -118,10 +118,6 @@ struct VulkanDrawcallTreeNode
 // must be at the start of any function that serialises
 #define CACHE_THREAD_SERIALISER() Serialiser *localSerialiser = GetThreadSerialiser();
 
-// pass the cached serialiser into Serialised_ function
-#undef SERIALISED_PARAMETER
-#define SERIALISED_PARAMETER Serialiser *localSerialiser,
-
 struct VulkanDrawcallCallback
 {
   // the three callbacks are used to allow the callback implementor to either
@@ -147,6 +143,11 @@ struct VulkanDrawcallCallback
   virtual void PreDispatch(uint32_t eid, VkCommandBuffer cmd) = 0;
   virtual bool PostDispatch(uint32_t eid, VkCommandBuffer cmd) = 0;
   virtual void PostRedispatch(uint32_t eid, VkCommandBuffer cmd) = 0;
+
+  // finally, these are for copy/blit/resolve/clear/etc
+  virtual void PreMisc(uint32_t eid, DrawcallFlags flags, VkCommandBuffer cmd) = 0;
+  virtual bool PostMisc(uint32_t eid, DrawcallFlags flags, VkCommandBuffer cmd) = 0;
+  virtual void PostRemisc(uint32_t eid, DrawcallFlags flags, VkCommandBuffer cmd) = 0;
 
   // should we re-record all command buffers? this needs to be true if the range
   // being replayed is larger than one command buffer (which usually means the
@@ -191,6 +192,9 @@ private:
   vector<DebugMessage> m_DebugMessages;
   void Serialise_DebugMessages(Serialiser *localSerialiser, bool isDrawcall);
   vector<DebugMessage> GetDebugMessages();
+  void AddDebugMessage(DebugMessage msg);
+  void AddDebugMessage(DebugMessageCategory c, DebugMessageSeverity sv, DebugMessageSource src,
+                       std::string d);
 
   enum
   {
@@ -243,16 +247,12 @@ private:
 
   // util function to handle fetching the right eventID, calling any
   // aliases then calling PreDraw/PreDispatch.
-  uint32_t HandlePreCallback(VkCommandBuffer commandBuffer, bool dispatch = false,
+  uint32_t HandlePreCallback(VkCommandBuffer commandBuffer, DrawcallFlags type = eDraw_Drawcall,
                              uint32_t multiDrawOffset = 0);
 
   vector<WindowingSystem> m_SupportedWindowSystems;
 
   uint32_t m_FrameCounter;
-
-  PerformanceTimer m_FrameTimer;
-  vector<double> m_FrameTimes;
-  double m_TotalTime, m_AvgFrametime, m_MinFrametime, m_MaxFrametime;
 
   vector<FetchFrameInfo> m_CapturedFrames;
   FetchFrameRecord m_FrameRecord;
@@ -368,11 +368,22 @@ private:
 
   struct BakedCmdBufferInfo
   {
-    BakedCmdBufferInfo() : draw(NULL), eventCount(0), curEventID(0), drawCount(0) {}
+    BakedCmdBufferInfo()
+        : draw(NULL),
+          eventCount(0),
+          curEventID(0),
+          drawCount(0),
+          level(VK_COMMAND_BUFFER_LEVEL_PRIMARY),
+          beginFlags(0)
+    {
+    }
     ~BakedCmdBufferInfo() { SAFE_DELETE(draw); }
     vector<FetchAPIEvent> curEvents;
     vector<DebugMessage> debugMessages;
     list<VulkanDrawcallTreeNode *> drawStack;
+
+    VkCommandBufferLevel level;
+    VkCommandBufferUsageFlags beginFlags;
 
     vector<pair<ResourceId, EventUsage> > resourceUsage;
 
@@ -570,7 +581,12 @@ private:
 
   void FirstFrame(VkSwapchainKHR swap);
 
+  std::vector<VkImageMemoryBarrier> GetImplicitRenderPassBarriers(uint32_t subpass = 0);
   string MakeRenderPassOpString(bool store);
+  void MakeSubpassLoadRP(VkRenderPassCreateInfo &info, const VkRenderPassCreateInfo *origInfo,
+                         uint32_t s);
+
+  bool IsDrawInRenderPass();
 
   void StartFrameCapture(void *dev, void *wnd);
   bool EndFrameCapture(void *dev, void *wnd);
@@ -622,7 +638,7 @@ private:
   void ContextReplayLog(LogState readType, uint32_t startEventID, uint32_t endEventID, bool partial);
   void ContextProcessChunk(uint64_t offset, VulkanChunkType chunk);
   void AddDrawcall(const FetchDrawcall &d, bool hasEvents);
-  void AddEvent(VulkanChunkType type, string description);
+  void AddEvent(string description);
 
   void AddUsage(VulkanDrawcallTreeNode &drawNode, vector<DebugMessage> &debugMessages);
 
@@ -703,6 +719,7 @@ public:
 
   VulkanRenderState &GetRenderState() { return m_RenderState; }
   void SetDrawcallCB(VulkanDrawcallCallback *cb) { m_DrawcallCallback = cb; }
+  bool IsSupportedExtension(const char *extName);
   VkResult FilterDeviceExtensionProperties(VkPhysicalDevice physDev, uint32_t *pPropertyCount,
                                            VkExtensionProperties *pProperties);
   static VkResult GetProvidedExtensionProperties(uint32_t *pPropertyCount,
@@ -1311,6 +1328,10 @@ public:
 
   VkBool32 vkGetPhysicalDeviceWin32PresentationSupportKHR(VkPhysicalDevice physicalDevice,
                                                           uint32_t queueFamilyIndex);
+
+  // VK_NV_external_memory_win32
+  VkResult vkGetMemoryWin32HandleNV(VkDevice device, VkDeviceMemory memory,
+                                    VkExternalMemoryHandleTypeFlagsNV handleType, HANDLE *pHandle);
 #endif
 
 #if defined(VK_USE_PLATFORM_ANDROID_KHR)
@@ -1373,4 +1394,11 @@ public:
                                        const VkSwapchainCreateInfoKHR *pCreateInfos,
                                        const VkAllocationCallbacks *pAllocator,
                                        VkSwapchainKHR *pSwapchains);
+
+  // VK_NV_external_memory_capabilities
+  VkResult vkGetPhysicalDeviceExternalImageFormatPropertiesNV(
+      VkPhysicalDevice physicalDevice, VkFormat format, VkImageType type, VkImageTiling tiling,
+      VkImageUsageFlags usage, VkImageCreateFlags flags,
+      VkExternalMemoryHandleTypeFlagsNV externalHandleType,
+      VkExternalImageFormatPropertiesNV *pExternalImageFormatProperties);
 };

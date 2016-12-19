@@ -90,6 +90,9 @@ class WrappedID3D12CommandQueue : public ID3D12CommandQueue,
 
   vector<D3D12ResourceRecord *> m_CmdListRecords;
 
+  // D3D12 guarantees that queues are thread-safe
+  Threading::CriticalSection m_Lock;
+
   // command recording/replay data shared between queues and lists
   D3D12CommandData m_Cmd;
 
@@ -122,29 +125,41 @@ public:
   void ReplayLog(LogState readType, uint32_t startEventID, uint32_t endEventID, bool partial);
 
   D3D12CommandData *GetCommandData() { return &m_Cmd; }
-  vector<EventUsage> GetUsage(ResourceId id) { return m_Cmd.m_ResourceUses[id]; }
+  const vector<EventUsage> &GetUsage(ResourceId id) { return m_Cmd.m_ResourceUses[id]; }
   // interface for DXGI
   virtual IUnknown *GetRealIUnknown() { return GetReal(); }
   virtual IID GetBackbufferUUID() { return __uuidof(ID3D12Resource); }
-  virtual IID GetDeviceUUID() { return __uuidof(ID3D12CommandQueue); }
-  virtual IUnknown *GetDeviceInterface() { return (ID3D12CommandQueue *)this; }
+  virtual bool IsDeviceUUID(REFIID iid)
+  {
+    return iid == __uuidof(ID3D12CommandQueue) ? true : false;
+  }
+  virtual IUnknown *GetDeviceInterface(REFIID iid)
+  {
+    if(iid == __uuidof(ID3D12CommandQueue))
+      return (ID3D12CommandQueue *)this;
+
+    RDCERR("Requested unknown device interface %s", ToStr::Get(iid).c_str());
+
+    return NULL;
+  }
   // the rest forward to the device
-  virtual void FirstFrame(WrappedIDXGISwapChain3 *swapChain) { m_pDevice->FirstFrame(swapChain); }
+  virtual void FirstFrame(WrappedIDXGISwapChain4 *swapChain) { m_pDevice->FirstFrame(swapChain); }
   virtual void NewSwapchainBuffer(IUnknown *backbuffer)
   {
     m_pDevice->NewSwapchainBuffer(backbuffer);
   }
-  virtual void ReleaseSwapchainResources(WrappedIDXGISwapChain3 *swapChain)
+  virtual void ReleaseSwapchainResources(WrappedIDXGISwapChain4 *swapChain, UINT QueueCount,
+                                         IUnknown *const *ppPresentQueue, IUnknown **unwrappedQueues)
   {
-    m_pDevice->ReleaseSwapchainResources(swapChain);
+    m_pDevice->ReleaseSwapchainResources(swapChain, QueueCount, ppPresentQueue, unwrappedQueues);
   }
-  virtual IUnknown *WrapSwapchainBuffer(WrappedIDXGISwapChain3 *swap, DXGI_SWAP_CHAIN_DESC *swapDesc,
+  virtual IUnknown *WrapSwapchainBuffer(WrappedIDXGISwapChain4 *swap, DXGI_SWAP_CHAIN_DESC *swapDesc,
                                         UINT buffer, IUnknown *realSurface)
   {
     return m_pDevice->WrapSwapchainBuffer(swap, swapDesc, buffer, realSurface);
   }
 
-  virtual HRESULT Present(WrappedIDXGISwapChain3 *swapChain, UINT SyncInterval, UINT Flags)
+  virtual HRESULT Present(WrappedIDXGISwapChain4 *swapChain, UINT SyncInterval, UINT Flags)
   {
     return m_pDevice->Present(swapChain, SyncInterval, Flags);
   }

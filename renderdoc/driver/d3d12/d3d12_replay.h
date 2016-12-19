@@ -28,8 +28,11 @@
 #include "core/core.h"
 #include "replay/replay_driver.h"
 #include "d3d12_common.h"
+#include "d3d12_state.h"
 
 class WrappedID3D12Device;
+
+struct PortableHandle;
 
 class D3D12Replay : public IReplayDriver
 {
@@ -59,13 +62,13 @@ public:
 
   void SavePipelineState() { MakePipelineState(); }
   D3D11PipelineState GetD3D11PipelineState() { return D3D11PipelineState(); }
+  D3D12PipelineState GetD3D12PipelineState() { return m_PipelineState; }
   GLPipelineState GetGLPipelineState() { return GLPipelineState(); }
   VulkanPipelineState GetVulkanPipelineState() { return VulkanPipelineState(); }
   void FreeTargetResource(ResourceId id);
   void FreeCustomShader(ResourceId id);
 
   void ReadLogInitialisation();
-  void SetContextFilter(ResourceId id, uint32_t firstDefEv, uint32_t lastDefEv);
   void ReplayLog(uint32_t endEventID, ReplayLogType replayType);
 
   vector<uint32_t> GetPassEvents(uint32_t eventID);
@@ -101,9 +104,8 @@ public:
   MeshFormat GetPostVSBuffers(uint32_t eventID, uint32_t instID, MeshDataStage stage);
 
   void GetBufferData(ResourceId buff, uint64_t offset, uint64_t len, vector<byte> &retData);
-  byte *GetTextureData(ResourceId tex, uint32_t arrayIdx, uint32_t mip, bool forDiskSave,
-                       FormatComponentType typeHint, bool resolve, bool forceRGBA8unorm,
-                       float blackPoint, float whitePoint, size_t &dataSize);
+  byte *GetTextureData(ResourceId tex, uint32_t arrayIdx, uint32_t mip,
+                       const GetTextureDataParams &params, size_t &dataSize);
 
   void BuildTargetShader(string source, string entry, const uint32_t compileFlags,
                          ShaderStageType type, ResourceId *id, string *errors);
@@ -117,6 +119,7 @@ public:
   ResourceId CreateProxyTexture(const FetchTexture &templateTex);
   void SetProxyTextureData(ResourceId texid, uint32_t arrayIdx, uint32_t mip, byte *data,
                            size_t dataSize);
+  bool IsTextureSupported(const ResourceFormat &format);
 
   ResourceId CreateProxyBuffer(const FetchBuffer &templateBuf);
   void SetProxyBufferData(ResourceId bufid, byte *data, size_t dataSize);
@@ -160,12 +163,29 @@ public:
   bool HasCallstacks();
   Callstack::StackResolver *GetCallstackResolver();
 
+  // called before any device is created, to init any counters
+  static void PreDeviceInitCounters();
+  // called after the device is created, to init any counters
+  void PostDeviceInitCounters();
+
+  // called after any device is destroyed, to do corresponding shutdown of counters
+  static void PostDeviceShutdownCounters();
+  // called before the device is destroyed, to shutdown any counters
+  void PreDeviceShutdownCounters();
+
 private:
-  D3D11PipelineState MakePipelineState();
+  void MakePipelineState();
+
+  void FillRegisterSpaces(const D3D12RenderState::RootSignature &rootSig,
+                          rdctype::array<D3D12PipelineState::ShaderStage::RegisterSpace> &spaces,
+                          D3D12_SHADER_VISIBILITY visibility);
+  void FillResourceView(D3D12PipelineState::ResourceView &view, D3D12Descriptor *desc);
 
   bool m_Proxy;
 
   vector<ID3D12Resource *> m_ProxyResources;
+
+  D3D12PipelineState m_PipelineState;
 
   WrappedID3D12Device *m_pDevice;
 };

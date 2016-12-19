@@ -316,6 +316,9 @@ const char *GLChunkNames[] = {
     "Capture",
     "BeginCapture",
     "EndCapture",
+
+    "wglDXRegisterObjectNV",
+    "wglDXLockObjectsNV",
 };
 
 GLInitParams::GLInitParams()
@@ -331,12 +334,15 @@ GLInitParams::GLInitParams()
 }
 
 // handling for these versions is scattered throughout the code (as relevant to enable/disable bits
-// of serialisation
-// and set some defaults if necessary).
+// of serialisation and set some defaults if necessary).
 // Here we list which non-current versions we support, and what changed
 const uint32_t GLInitParams::GL_OLD_VERSIONS[GLInitParams::GL_NUM_SUPPORTED_OLD_VERSIONS] = {
     0x000010,    // from 0x10 to 0x11, we added a dummy marker value used to identify serialised
                  // data in glUseProgramStages (hack :( )
+    0x000011,    // We added initial contents for buffers in this version, we don't have to do
+                 // anything special to support older logs, just make sure we don't open new logs
+                 // in an older version.
+    0x000012,    // Added support for GL-DX interop
 };
 
 ReplayCreateStatus GLInitParams::Serialise()
@@ -720,11 +726,7 @@ WrappedOpenGL::WrappedOpenGL(const char *logfile, const GLHookSet &funcs) : m_Re
   m_SuccessfulCapture = true;
   m_FailureReason = CaptureSucceeded;
 
-  m_FrameTimer.Restart();
-
   m_AppControlledCapture = false;
-
-  m_TotalTime = m_AvgFrametime = m_MinFrametime = m_MaxFrametime = 0.0;
 
   m_RealDebugFunc = NULL;
   m_RealDebugFuncParam = NULL;
@@ -758,7 +760,9 @@ WrappedOpenGL::WrappedOpenGL(const char *logfile, const GLHookSet &funcs) : m_Re
     if(m_Real.glDebugMessageCallback)
     {
       m_Real.glDebugMessageCallback(&DebugSnoopStatic, this);
+#if ENABLED(RDOC_DEVEL)
       m_Real.glEnable(eGL_DEBUG_OUTPUT_SYNCHRONOUS);
+#endif
     }
   }
   else
@@ -938,6 +942,22 @@ void WrappedOpenGL::Initialise(GLInitParams &params)
     else
       gl.glFramebufferTexture(eGL_FRAMEBUFFER, eGL_DEPTH_ATTACHMENT, m_FakeBB_DepthStencil, 0);
   }
+
+  // give the backbuffer a default clear color
+  gl.glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+  gl.glClear(GL_COLOR_BUFFER_BIT);
+
+  if(params.depthBits > 0)
+  {
+    gl.glClearDepth(1.0f);
+    gl.glClear(GL_DEPTH_BUFFER_BIT);
+  }
+
+  if(params.stencilBits > 0)
+  {
+    gl.glClearStencil(0);
+    gl.glClear(GL_STENCIL_BUFFER_BIT);
+  }
 }
 
 const char *WrappedOpenGL::GetChunkName(uint32_t idx)
@@ -1010,6 +1030,7 @@ WrappedOpenGL::ContextData &WrappedOpenGL::GetCtxData()
 }
 
 // defined in gl_<platform>_hooks.cpp
+Threading::CriticalSection &GetGLLock();
 void MakeContextCurrent(GLWindowingData data);
 
 // for 'backwards compatible' overlay rendering
@@ -2192,33 +2213,6 @@ void WrappedOpenGL::SwapBuffers(void *windowHandle)
 
   if(m_State == WRITING_IDLE)
   {
-    m_FrameTimes.push_back(m_FrameTimer.GetMilliseconds());
-    m_TotalTime += m_FrameTimes.back();
-    m_FrameTimer.Restart();
-
-    // update every second
-    if(m_TotalTime > 1000.0)
-    {
-      m_MinFrametime = 10000.0;
-      m_MaxFrametime = 0.0;
-      m_AvgFrametime = 0.0;
-
-      m_TotalTime = 0.0;
-
-      for(size_t i = 0; i < m_FrameTimes.size(); i++)
-      {
-        m_AvgFrametime += m_FrameTimes[i];
-        if(m_FrameTimes[i] < m_MinFrametime)
-          m_MinFrametime = m_FrameTimes[i];
-        if(m_FrameTimes[i] > m_MaxFrametime)
-          m_MaxFrametime = m_FrameTimes[i];
-      }
-
-      m_AvgFrametime /= double(m_FrameTimes.size());
-
-      m_FrameTimes.clear();
-    }
-
     uint32_t overlay = RenderDoc::Inst().GetOverlayBits();
 
     if(overlay & eRENDERDOC_Overlay_Enabled)
@@ -2227,144 +2221,37 @@ void WrappedOpenGL::SwapBuffers(void *windowHandle)
 
       textState.Push(m_Real, ctxdata.Modern());
 
-      if(activeWindow)
+      int flags = activeWindow ? RenderDoc::eOverlay_ActiveWindow : 0;
+      if(ctxdata.Legacy())
+        flags |= RenderDoc::eOverlay_CaptureDisabled;
+      string overlayText = RenderDoc::Inst().GetOverlayText(RDC_OpenGL, m_FrameCounter, flags);
+
+      if(ctxdata.Legacy())
       {
-        vector<RENDERDOC_InputButton> keys = RenderDoc::Inst().GetCaptureKeys();
-
-        string overlayText = "OpenGL.";
-
-        if(ctxdata.Modern())
-        {
-          if(Keyboard::PlatformHasKeyInput())
-          {
-            overlayText += " ";
-
-            for(size_t i = 0; i < keys.size(); i++)
-            {
-              if(i > 0)
-                overlayText += ", ";
-
-              overlayText += ToStr::Get(keys[i]);
-            }
-
-            if(!keys.empty())
-              overlayText += " to capture.";
-          }
-          else
-          {
-            if(RenderDoc::Inst().IsTargetControlConnected())
-              overlayText += "Connected by " + RenderDoc::Inst().GetTargetControlUsername() + ".";
-            else
-              overlayText += "No remote access connection.";
-          }
-        }
-
-        if(overlay & eRENDERDOC_Overlay_FrameNumber)
-        {
-          overlayText += StringFormat::Fmt(" Frame: %d.", m_FrameCounter);
-        }
-        if(overlay & eRENDERDOC_Overlay_FrameRate)
-        {
-          overlayText += StringFormat::Fmt(" %.2lf ms (%.2lf .. %.2lf) (%.0lf FPS)", m_AvgFrametime,
-                                           m_MinFrametime, m_MaxFrametime,
-                                           m_AvgFrametime <= 0.0f ? 0.0f : 1000.0f / m_AvgFrametime);
-        }
-
-        float y = 0.0f;
-
-        if(!overlayText.empty())
-        {
-          RenderOverlayText(0.0f, y, overlayText.c_str());
-          y += 1.0f;
-        }
-
-        if(ctxdata.Legacy())
-        {
-          if(!ctxdata.attribsCreate)
-          {
-            RenderOverlayText(0.0f, y,
-                              "Context not created via CreateContextAttribs. Capturing disabled.");
-            y += 1.0f;
-          }
-          RenderOverlayText(0.0f, y, "Only OpenGL 3.2+ contexts are supported.");
-          y += 1.0f;
-        }
-        else if(!ctxdata.isCore)
-        {
-          RenderOverlayText(
-              0.0f, y, "WARNING: Non-core context in use. Compatibility profile not supported.");
-          y += 1.0f;
-        }
-
-        if(ctxdata.Modern() && (overlay & eRENDERDOC_Overlay_CaptureList))
-        {
-          RenderOverlayText(0.0f, y, "%d Captures saved.\n", (uint32_t)m_CapturedFrames.size());
-          y += 1.0f;
-
-          uint64_t now = Timing::GetUnixTimestamp();
-          for(size_t i = 0; i < m_CapturedFrames.size(); i++)
-          {
-            if(now - m_CapturedFrames[i].captureTime < 20)
-            {
-              RenderOverlayText(0.0f, y, "Captured frame %d.\n", m_CapturedFrames[i].frameNumber);
-              y += 1.0f;
-            }
-          }
-        }
-
-        if(m_FailedFrame > 0)
-        {
-          const char *reasonString = "Unknown reason";
-          switch(m_FailedReason)
-          {
-            case CaptureFailed_UncappedUnmap: reasonString = "Uncapped Map()/Unmap()"; break;
-            default: break;
-          }
-
-          RenderOverlayText(0.0f, y, "Failed capture at frame %d:\n", m_FailedFrame);
-          y += 1.0f;
-          RenderOverlayText(0.0f, y, "    %s\n", reasonString);
-          y += 1.0f;
-        }
-
-#if !defined(RELEASE)
-        RenderOverlayText(0.0f, y, "%llu chunks - %.2f MB", Chunk::NumLiveChunks(),
-                          float(Chunk::TotalMem()) / 1024.0f / 1024.0f);
-        y += 1.0f;
-#endif
+        if(!ctxdata.attribsCreate)
+          overlayText += "Context not created via CreateContextAttribs. Capturing disabled.\n";
+        overlayText += "Only OpenGL 3.2+ contexts are supported.\n";
       }
-      else
+      else if(!ctxdata.isCore)
       {
-        vector<RENDERDOC_InputButton> keys = RenderDoc::Inst().GetFocusKeys();
-
-        string str = "OpenGL. Inactive window.";
-
-        if(ctxdata.Modern())
-        {
-          for(size_t i = 0; i < keys.size(); i++)
-          {
-            if(i == 0)
-              str += " ";
-            else
-              str += ", ";
-
-            str += ToStr::Get(keys[i]);
-          }
-
-          if(!keys.empty())
-            str += " to cycle between windows.";
-        }
-        else
-        {
-          if(!ctxdata.attribsCreate)
-          {
-            str += "\nContext not created via CreateContextAttribs. Capturing disabled.\n";
-          }
-          str += "Only OpenGL 3.2+ contexts are supported.";
-        }
-
-        RenderOverlayText(0.0f, 0.0f, str.c_str());
+        overlayText += "WARNING: Non-core context in use. Compatibility profile not supported.\n";
       }
+
+      if(activeWindow && m_FailedFrame > 0)
+      {
+        const char *reasonString = "Unknown reason";
+        switch(m_FailedReason)
+        {
+          case CaptureFailed_UncappedUnmap: reasonString = "Uncapped Map()/Unmap()"; break;
+          default: break;
+        }
+
+        overlayText += StringFormat::Fmt("Failed capture at frame %d:\n", m_FailedFrame);
+        overlayText += StringFormat::Fmt("    %s\n", reasonString);
+      }
+
+      if(!overlayText.empty())
+        RenderOverlayText(0.0f, 0.0f, overlayText.c_str());
 
       textState.Pop(m_Real, ctxdata.Modern());
 
@@ -2444,6 +2331,8 @@ void WrappedOpenGL::StartFrameCapture(void *dev, void *wnd)
   if(m_State != WRITING_IDLE)
     return;
 
+  SCOPED_LOCK(GetGLLock());
+
   RenderDoc::Inst().SetCurrentDriver(RDC_OpenGL);
 
   m_State = WRITING_CAPFRAME;
@@ -2499,6 +2388,8 @@ bool WrappedOpenGL::EndFrameCapture(void *dev, void *wnd)
 {
   if(m_State != WRITING_CAPFRAME)
     return true;
+
+  SCOPED_LOCK(GetGLLock());
 
   CaptureFailReason reason = CaptureSucceeded;
 
@@ -2591,7 +2482,7 @@ bool WrappedOpenGL::EndFrameCapture(void *dev, void *wnd)
 
     m_pFileSerialiser->FlushToDisk();
 
-    RenderDoc::Inst().SuccessfullyWrittenLog();
+    RenderDoc::Inst().SuccessfullyWrittenLog(m_FrameCounter);
 
     SAFE_DELETE(m_pFileSerialiser);
 
@@ -2687,7 +2578,7 @@ bool WrappedOpenGL::EndFrameCapture(void *dev, void *wnd)
 
 WrappedOpenGL::BackbufferImage *WrappedOpenGL::SaveBackbufferImage()
 {
-  const uint32_t maxSize = 1024;
+  const uint32_t maxSize = 2048;
 
   byte *thpixels = NULL;
   uint32_t thwidth = 0;
@@ -2800,8 +2691,7 @@ WrappedOpenGL::BackbufferImage *WrappedOpenGL::SaveBackbufferImage()
     jpgbuf = new byte[len];
 
     jpge::params p;
-
-    p.m_quality = 40;
+    p.m_quality = 80;
 
     bool success =
         jpge::compress_image_to_jpeg_file_in_memory(jpgbuf, len, thwidth, thheight, 3, thpixels, p);
@@ -2839,7 +2729,6 @@ void WrappedOpenGL::Serialise_CaptureScope(uint64_t offset)
     m_FrameRecord.frameInfo.fileOffset = offset;
     m_FrameRecord.frameInfo.firstEvent = 1;    // m_pImmediateContext->GetEventID();
     m_FrameRecord.frameInfo.frameNumber = FrameNumber;
-    m_FrameRecord.frameInfo.immContextId = GetResourceManager()->GetOriginalID(m_ContextResourceID);
     RDCEraseEl(m_FrameRecord.frameInfo.stats);
 
     GetResourceManager()->CreateInitialContents();
@@ -3148,7 +3037,7 @@ void WrappedOpenGL::DebugSnoop(GLenum source, GLenum type, GLuint id, GLenum sev
     }
   }
 
-  if(m_RealDebugFunc)
+  if(m_RealDebugFunc && !RenderDoc::Inst().GetCaptureOptions().DebugOutputMute)
     m_RealDebugFunc(source, type, id, severity, length, message, m_RealDebugFuncParam);
 }
 
@@ -3218,7 +3107,7 @@ void WrappedOpenGL::ReadLogInitialisation()
       break;
   }
 
-#if !defined(RELEASE)
+#if ENABLED(RDOC_DEVEL)
   for(auto it = chunkInfos.begin(); it != chunkInfos.end(); ++it)
   {
     double dcount = double(it->second.count);
@@ -3232,7 +3121,8 @@ void WrappedOpenGL::ReadLogInitialisation()
   }
 #endif
 
-  m_FrameRecord.frameInfo.fileSize = m_pSerialiser->GetSize();
+  m_FrameRecord.frameInfo.uncompressedFileSize = m_pSerialiser->GetSize();
+  m_FrameRecord.frameInfo.compressedFileSize = m_pSerialiser->GetFileSize();
   m_FrameRecord.frameInfo.persistentSize = m_pSerialiser->GetSize() - frameOffset;
   m_FrameRecord.frameInfo.initDataSize = chunkInfos[(GLChunkType)INITIAL_CONTENTS].totalsize;
 
@@ -3665,7 +3555,7 @@ void WrappedOpenGL::ProcessChunk(uint64_t offset, GLChunkType context)
 
       if(m_State == READING)
       {
-        AddEvent(CONTEXT_CAPTURE_FOOTER, "SwapBuffers()");
+        AddEvent("SwapBuffers()");
 
         FetchDrawcall draw;
         draw.name = "SwapBuffers()";
@@ -3678,6 +3568,10 @@ void WrappedOpenGL::ProcessChunk(uint64_t offset, GLChunkType context)
       }
     }
     break;
+    case INTEROP_INIT:
+      Serialise_wglDXRegisterObjectNV(GLResource(MakeNullResource), eGL_NONE, NULL);
+      break;
+    case INTEROP_DATA: Serialise_wglDXLockObjectsNV(GLResource(MakeNullResource)); break;
     default:
       // ignore system chunks
       if((int)context == (int)INITIAL_CONTENTS)
@@ -3785,8 +3679,7 @@ void WrappedOpenGL::ContextReplayLog(LogState readType, uint32_t startEventID, u
     GetFrameRecord().drawcallList = m_ParentDrawcall.Bake();
     GetFrameRecord().frameInfo.debugMessages = GetDebugMessages();
 
-    SetupDrawcallPointers(&m_Drawcalls, GetFrameRecord().frameInfo.immContextId,
-                          GetFrameRecord().drawcallList, NULL, NULL);
+    SetupDrawcallPointers(&m_Drawcalls, GetFrameRecord().drawcallList, NULL, NULL);
 
     // it's easier to remove duplicate usages here than check it as we go.
     // this means if textures are bound in multiple places in the same draw
@@ -3832,7 +3725,7 @@ void WrappedOpenGL::ContextProcessChunk(uint64_t offset, GLChunkType chunk)
   else if(m_State == READING)
   {
     if(!m_AddedDrawcall)
-      AddEvent(chunk, m_pSerialiser->GetDebugStr());
+      AddEvent(m_pSerialiser->GetDebugStr());
   }
 
   m_AddedDrawcall = false;
@@ -4125,9 +4018,6 @@ void WrappedOpenGL::AddDrawcall(const FetchDrawcall &d, bool hasEvents)
   draw.eventID = m_CurEventID;
   draw.drawcallID = m_CurDrawcallID;
 
-  if(draw.context == ResourceId())
-    draw.context = GetResourceManager()->GetOriginalID(m_ContextResourceID);
-
   GLuint curCol[8] = {0};
   GLuint curDepth = 0;
 
@@ -4157,22 +4047,8 @@ void WrappedOpenGL::AddDrawcall(const FetchDrawcall &d, bool hasEvents)
 
   if(hasEvents)
   {
-    vector<FetchAPIEvent> evs;
-    evs.reserve(m_CurEvents.size());
-    for(size_t i = 0; i < m_CurEvents.size();)
-    {
-      if(m_CurEvents[i].context == draw.context)
-      {
-        evs.push_back(m_CurEvents[i]);
-        m_CurEvents.erase(m_CurEvents.begin() + i);
-      }
-      else
-      {
-        i++;
-      }
-    }
-
-    draw.events = evs;
+    draw.events = m_CurEvents;
+    m_CurEvents.clear();
   }
 
   AddUsage(draw);
@@ -4190,14 +4066,11 @@ void WrappedOpenGL::AddDrawcall(const FetchDrawcall &d, bool hasEvents)
     RDCERR("Somehow lost drawcall stack!");
 }
 
-void WrappedOpenGL::AddEvent(GLChunkType type, string description, ResourceId ctx)
+void WrappedOpenGL::AddEvent(string description)
 {
-  if(ctx == ResourceId())
-    ctx = GetResourceManager()->GetOriginalID(m_ContextResourceID);
-
   FetchAPIEvent apievent;
 
-  apievent.context = ctx;
+  apievent.context = GetResourceManager()->GetOriginalID(m_ContextResourceID);
   apievent.fileOffset = m_CurChunkOffset;
   apievent.eventID = m_CurEventID;
 

@@ -7,6 +7,7 @@
         <file>Resources/arrow_join.png</file>
         <file>Resources/arrow_undo.png</file>
         <file>Resources/asterisk_orange.png</file>
+        <file>Resources/back.png</file>
         <file>Resources/chart_curve.png</file>
         <file>Resources/cog.png</file>
         <file>Resources/cog_go.png</file>
@@ -16,25 +17,27 @@
         <file>Resources/crosshatch.png</file>
         <file>Resources/delete.png</file>
         <file>Resources/disconnect.png</file>
+        <file>Resources/down_arrow.png</file>
         <file>Resources/find.png</file>
         <file>Resources/fit_window.png</file>
         <file>Resources/flag_green.png</file>
         <file>Resources/flip_y.png</file>
         <file>Resources/folder_page.png</file>
+        <file>Resources/forward.png</file>
         <file>Resources/glsl.xml</file>
         <file>Resources/hlsl.xml</file>
         <file>Resources/hourglass.png</file>
+        <file>Resources/house.png</file>
         <file>Resources/icon.ico</file>
         <file>Resources/information.png</file>
         <file>Resources/new_window.png</file>
+        <file>Resources/page_white_code.png</file>
         <file>Resources/page_white_database.png</file>
         <file>Resources/page_white_delete.png</file>
         <file>Resources/page_white_edit.png</file>
         <file>Resources/page_white_link.png</file>
         <file>Resources/plugin_add.png</file>
         <file>Resources/red_x_16.png</file>
-        <file>Resources/RightArrow_Gray_16x16.png</file>
-        <file>Resources/RightArrow_Green_16x16.png</file>
         <file>Resources/runback.png</file>
         <file>Resources/runcursor.png</file>
         <file>Resources/runfwd.png</file>
@@ -44,6 +47,8 @@
         <file>Resources/tick.png</file>
         <file>Resources/time.png</file>
         <file>Resources/timeline_marker.png</file>
+        <file>Resources/up_arrow.png</file>
+        <file>Resources/upfolder.png</file>
         <file>Resources/wand.png</file>
         <file>Resources/wireframe_mesh.png</file>
         <file>Resources/wrench.png</file>
@@ -58,5 +63,7 @@
         <file>Resources/topologies/topo_trilist_adj.png</file>
         <file>Resources/topologies/topo_tristrip.png</file>
         <file>Resources/topologies/topo_tristrip_adj.png</file>
+        <file>Resources/action.png</file>
+        <file>Resources/action_hover.png</file>
     </qresource>
 </RCC>

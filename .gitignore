@@ -7,6 +7,7 @@ Development64/
 Release32/
 Release64/
 build/
+build-*/
 dist/
 Resources/*.png
 qrenderdoc/Makefile*
@@ -20,6 +21,7 @@ obj/
 .obj/
 *.opensdf
 *.VC.*db
+.vs/
 *.pdb
 *.sln.ide/
 *.so
@@ -33,3 +35,4 @@ symsrv.yes
 ipch/
 renderdoc/driver/vulkan/renderdoc_capture.json
 renderdocui/3rdparty/ironpython/pythonlibs.zip
+qrenderdoc/generated/

@@ -194,8 +194,11 @@ bool WrappedOpenGL::Serialise_glBindTexture(GLenum target, GLuint texture)
   if(m_State == WRITING_IDLE)
   {
     GLResourceRecord *record = GetCtxData().GetActiveTexRecord();
-    RDCASSERT(record);
-    record->datatype = TextureBinding(Target);
+    RDCASSERTMSG("Couldn't identify implicit object at binding. Mismatched or bad GLuint?", record,
+                 target);
+
+    if(record)
+      record->datatype = TextureBinding(Target);
   }
   else if(m_State < WRITING)
   {
@@ -335,7 +338,7 @@ void WrappedOpenGL::glBindTextures(GLuint first, GLsizei count, const GLuint *te
     m_ContextRecord->AddChunk(scope.Get());
 
     for(GLsizei i = 0; i < count; i++)
-      if(textures[i])
+      if(textures != NULL && textures[i] != 0)
         GetResourceManager()->MarkResourceFrameReferenced(TextureRes(GetCtx(), textures[i]),
                                                           eFrameRef_Read);
   }
@@ -557,7 +560,10 @@ bool WrappedOpenGL::Serialise_glBindImageTextures(GLuint first, GLsizei count, c
 
   for(int32_t i = 0; i < Count; i++)
   {
-    SERIALISE_ELEMENT(ResourceId, id, GetResourceManager()->GetID(TextureRes(GetCtx(), textures[i])));
+    SERIALISE_ELEMENT(ResourceId, id,
+                      textures && textures[i]
+                          ? GetResourceManager()->GetID(TextureRes(GetCtx(), textures[i]))
+                          : ResourceId());
 
     if(m_State <= EXECUTING)
     {
@@ -596,7 +602,7 @@ void WrappedOpenGL::glBindImageTextures(GLuint first, GLsizei count, const GLuin
     m_ContextRecord->AddChunk(scope.Get());
 
     for(GLsizei i = 0; i < count; i++)
-      if(textures[i])
+      if(textures != NULL && textures[i] != 0)
         GetResourceManager()->MarkResourceFrameReferenced(TextureRes(GetCtx(), textures[i]),
                                                           eFrameRef_Read);
   }
@@ -628,6 +634,7 @@ bool WrappedOpenGL::Serialise_glTextureView(GLuint texture, GLenum target, GLuin
 
     m_Textures[liveTexId].curType = TextureTarget(Target);
     m_Textures[liveTexId].internalFormat = InternalFormat;
+    m_Textures[liveTexId].view = true;
     m_Textures[liveTexId].width = m_Textures[liveOrigId].width;
     m_Textures[liveTexId].height = m_Textures[liveOrigId].height;
     m_Textures[liveTexId].depth = m_Textures[liveOrigId].depth;
@@ -650,7 +657,13 @@ void WrappedOpenGL::glTextureView(GLuint texture, GLenum target, GLuint origtext
     GLResourceRecord *record = GetResourceManager()->GetResourceRecord(TextureRes(GetCtx(), texture));
     GLResourceRecord *origrecord =
         GetResourceManager()->GetResourceRecord(TextureRes(GetCtx(), origtexture));
-    RDCASSERT(record && origrecord);
+
+    RDCASSERTMSG("Couldn't identify texture object. Unbound or bad GLuint?", record, texture);
+    RDCASSERTMSG("Couldn't identify origtexture object. Unbound or bad GLuint?", origrecord,
+                 origtexture);
+
+    if(record == NULL || origrecord == NULL)
+      return;
 
     SCOPED_SERIALISE_CONTEXT(TEXTURE_VIEW);
     Serialise_glTextureView(texture, target, origtexture, internalformat, minlevel, numlevels,
@@ -658,19 +671,30 @@ void WrappedOpenGL::glTextureView(GLuint texture, GLenum target, GLuint origtext
 
     record->AddChunk(scope.Get());
     record->AddParent(origrecord);
+    origrecord->viewTextures.insert(record->GetResourceID());
 
     // illegal to re-type textures
     record->VerifyDataType(target);
+
+    // mark the underlying resource as dirty to avoid tracking dirty across
+    // aliased resources etc.
+    if(m_State == WRITING_IDLE)
+      GetResourceManager()->MarkDirtyResource(origrecord->GetResourceID());
+    else
+      m_MissingTracks.insert(origrecord->GetResourceID());
   }
-  else
+
   {
     ResourceId texId = GetResourceManager()->GetID(TextureRes(GetCtx(), texture));
-    ResourceId origId = GetResourceManager()->GetID(TextureRes(GetCtx(), origtexture));
+    ResourceId viewedId = GetResourceManager()->GetID(TextureRes(GetCtx(), origtexture));
 
     m_Textures[texId].internalFormat = internalformat;
-    m_Textures[texId].width = m_Textures[origId].width;
-    m_Textures[texId].height = m_Textures[origId].height;
-    m_Textures[texId].depth = m_Textures[origId].depth;
+    m_Textures[texId].view = true;
+    m_Textures[texId].dimension = m_Textures[viewedId].dimension;
+    m_Textures[texId].width = m_Textures[viewedId].width;
+    m_Textures[texId].height = m_Textures[viewedId].height;
+    m_Textures[texId].depth = m_Textures[viewedId].depth;
+    m_Textures[texId].curType = TextureTarget(target);
   }
 }
 
@@ -693,7 +717,7 @@ bool WrappedOpenGL::Serialise_glGenerateTextureMipmapEXT(GLuint texture, GLenum 
 
   if(m_State == READING)
   {
-    AddEvent(GENERATE_MIPMAP, desc);
+    AddEvent(desc);
     string name = "glGenerateMipmap(" + ToStr::Get(id) + ")";
 
     FetchDrawcall draw;
@@ -829,7 +853,7 @@ bool WrappedOpenGL::Serialise_glCopyImageSubData(GLuint srcName, GLenum srcTarge
 
   if(m_State == READING)
   {
-    AddEvent(COPY_SUBIMAGE, desc);
+    AddEvent(desc);
     string name = "glCopyImageSubData(" + ToStr::Get(srcid) + ", " + ToStr::Get(dstid) + ")";
 
     FetchDrawcall draw;
@@ -874,7 +898,12 @@ void WrappedOpenGL::glCopyImageSubData(GLuint srcName, GLenum srcTarget, GLint s
         GetResourceManager()->GetResourceRecord(TextureRes(GetCtx(), srcName));
     GLResourceRecord *dstrecord =
         GetResourceManager()->GetResourceRecord(TextureRes(GetCtx(), dstName));
-    RDCASSERT(srcrecord && dstrecord);
+
+    RDCASSERTMSG("Couldn't identify src texture. Unbound or bad GLuint?", srcrecord, srcName);
+    RDCASSERTMSG("Couldn't identify dst texture. Unbound or bad GLuint?", dstrecord, dstName);
+
+    if(srcrecord == NULL || dstrecord == NULL)
+      return;
 
     SCOPED_SERIALISE_CONTEXT(COPY_SUBIMAGE);
     Serialise_glCopyImageSubData(srcName, srcTarget, srcLevel, srcX, srcY, srcZ, dstName, dstTarget,
@@ -4299,12 +4328,20 @@ bool WrappedOpenGL::Serialise_glTextureSubImage1DEXT(GLuint texture, GLenum targ
 
   if(m_State <= EXECUTING)
   {
-    GLint align = 1;
-    if(!UnpackBufBound && m_State == READING && m_CurEventID == 0)
+    PixelUnpackState unpack;
+
+    // during capture if there was any significant unpack state we decomposed it
+    // before serialising, so we need to set an empty unpack state.
+    // Note that if we're unpacking from a buffer, we did nothing so we should
+    // preserve the state.
+    if(!UnpackBufBound)
     {
       m_Real.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
-      m_Real.glGetIntegerv(eGL_UNPACK_ALIGNMENT, &align);
-      m_Real.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+
+      unpack.Fetch(&m_Real, false);
+      PixelUnpackState empty = {};
+      empty.alignment = 1;
+      empty.Apply(&m_Real, false);
     }
 
     if(Format == eGL_LUMINANCE)
@@ -4330,10 +4367,11 @@ bool WrappedOpenGL::Serialise_glTextureSubImage1DEXT(GLuint texture, GLenum targ
       m_Real.glTextureSubImage1D(GetResourceManager()->GetLiveResource(id).name, Level, xoff, Width,
                                  Format, Type, buf ? buf : (const void *)bufoffs);
 
-    if(!UnpackBufBound && m_State == READING && m_CurEventID == 0)
+    // restore pixel unpack state
+    if(!UnpackBufBound)
     {
       m_Real.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, unpackbuf);
-      m_Real.glPixelStorei(eGL_UNPACK_ALIGNMENT, align);
+      unpack.Apply(&m_Real, false);
     }
 
     SAFE_DELETE_ARRAY(buf);
@@ -4484,12 +4522,20 @@ bool WrappedOpenGL::Serialise_glTextureSubImage2DEXT(GLuint texture, GLenum targ
 
   if(m_State <= EXECUTING)
   {
-    GLint align = 1;
-    if(!UnpackBufBound && m_State == READING && m_CurEventID == 0)
+    PixelUnpackState unpack;
+
+    // during capture if there was any significant unpack state we decomposed it
+    // before serialising, so we need to set an empty unpack state.
+    // Note that if we're unpacking from a buffer, we did nothing so we should
+    // preserve the state.
+    if(!UnpackBufBound)
     {
       m_Real.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
-      m_Real.glGetIntegerv(eGL_UNPACK_ALIGNMENT, &align);
-      m_Real.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+
+      unpack.Fetch(&m_Real, false);
+      PixelUnpackState empty = {};
+      empty.alignment = 1;
+      empty.Apply(&m_Real, false);
     }
 
     if(Format == eGL_LUMINANCE)
@@ -4516,10 +4562,11 @@ bool WrappedOpenGL::Serialise_glTextureSubImage2DEXT(GLuint texture, GLenum targ
       m_Real.glTextureSubImage2D(GetResourceManager()->GetLiveResource(id).name, Level, xoff, yoff,
                                  Width, Height, Format, Type, buf ? buf : (const void *)bufoffs);
 
-    if(!UnpackBufBound && m_State == READING && m_CurEventID == 0)
+    // restore pixel unpack state
+    if(!UnpackBufBound)
     {
       m_Real.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, unpackbuf);
-      m_Real.glPixelStorei(eGL_UNPACK_ALIGNMENT, align);
+      unpack.Apply(&m_Real, false);
     }
 
     SAFE_DELETE_ARRAY(buf);
@@ -4677,12 +4724,20 @@ bool WrappedOpenGL::Serialise_glTextureSubImage3DEXT(GLuint texture, GLenum targ
 
   if(m_State <= EXECUTING)
   {
-    GLint align = 1;
-    if(!UnpackBufBound && m_State == READING && m_CurEventID == 0)
+    PixelUnpackState unpack;
+
+    // during capture if there was any significant unpack state we decomposed it
+    // before serialising, so we need to set an empty unpack state.
+    // Note that if we're unpacking from a buffer, we did nothing so we should
+    // preserve the state.
+    if(!UnpackBufBound)
     {
       m_Real.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
-      m_Real.glGetIntegerv(eGL_UNPACK_ALIGNMENT, &align);
-      m_Real.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+
+      unpack.Fetch(&m_Real, false);
+      PixelUnpackState empty = {};
+      empty.alignment = 1;
+      empty.Apply(&m_Real, false);
     }
 
     if(Format == eGL_LUMINANCE)
@@ -4710,10 +4765,11 @@ bool WrappedOpenGL::Serialise_glTextureSubImage3DEXT(GLuint texture, GLenum targ
                                  zoff, Width, Height, Depth, Format, Type,
                                  buf ? buf : (const void *)bufoffs);
 
-    if(!UnpackBufBound && m_State == READING && m_CurEventID == 0)
+    // restore pixel unpack state
+    if(!UnpackBufBound)
     {
       m_Real.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, unpackbuf);
-      m_Real.glPixelStorei(eGL_UNPACK_ALIGNMENT, align);
+      unpack.Apply(&m_Real, false);
     }
 
     SAFE_DELETE_ARRAY(buf);
@@ -4871,12 +4927,20 @@ bool WrappedOpenGL::Serialise_glCompressedTextureSubImage1DEXT(GLuint texture, G
 
   if(m_State <= EXECUTING)
   {
-    GLint align = 1;
-    if(!UnpackBufBound && m_State == READING && m_CurEventID == 0)
+    PixelUnpackState unpack;
+
+    // during capture if there was any significant unpack state we decomposed it
+    // before serialising, so we need to set an empty unpack state.
+    // Note that if we're unpacking from a buffer, we did nothing so we should
+    // preserve the state.
+    if(!UnpackBufBound)
     {
       m_Real.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
-      m_Real.glGetIntegerv(eGL_UNPACK_ALIGNMENT, &align);
-      m_Real.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+
+      unpack.Fetch(&m_Real, true);
+      PixelUnpackState empty = {};
+      empty.alignment = 1;
+      empty.Apply(&m_Real, true);
     }
 
     if(Target != eGL_NONE)
@@ -4888,10 +4952,11 @@ bool WrappedOpenGL::Serialise_glCompressedTextureSubImage1DEXT(GLuint texture, G
                                            xoff, Width, fmt, byteSize,
                                            buf ? buf : (const void *)bufoffs);
 
-    if(!UnpackBufBound && m_State == READING && m_CurEventID == 0)
+    // restore pixel unpack state
+    if(!UnpackBufBound)
     {
       m_Real.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, unpackbuf);
-      m_Real.glPixelStorei(eGL_UNPACK_ALIGNMENT, align);
+      unpack.Apply(&m_Real, true);
     }
 
     SAFE_DELETE_ARRAY(buf);
@@ -5047,12 +5112,20 @@ bool WrappedOpenGL::Serialise_glCompressedTextureSubImage2DEXT(GLuint texture, G
 
   if(m_State <= EXECUTING)
   {
-    GLint align = 1;
-    if(!UnpackBufBound && m_State == READING && m_CurEventID == 0)
+    PixelUnpackState unpack;
+
+    // during capture if there was any significant unpack state we decomposed it
+    // before serialising, so we need to set an empty unpack state.
+    // Note that if we're unpacking from a buffer, we did nothing so we should
+    // preserve the state.
+    if(!UnpackBufBound)
     {
       m_Real.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
-      m_Real.glGetIntegerv(eGL_UNPACK_ALIGNMENT, &align);
-      m_Real.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+
+      unpack.Fetch(&m_Real, true);
+      PixelUnpackState empty = {};
+      empty.alignment = 1;
+      empty.Apply(&m_Real, true);
     }
 
     if(Target != eGL_NONE)
@@ -5064,10 +5137,11 @@ bool WrappedOpenGL::Serialise_glCompressedTextureSubImage2DEXT(GLuint texture, G
                                            xoff, yoff, Width, Height, fmt, byteSize,
                                            buf ? buf : (const void *)bufoffs);
 
-    if(!UnpackBufBound && m_State == READING && m_CurEventID == 0)
+    // restore pixel unpack state
+    if(!UnpackBufBound)
     {
       m_Real.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, unpackbuf);
-      m_Real.glPixelStorei(eGL_UNPACK_ALIGNMENT, align);
+      unpack.Apply(&m_Real, true);
     }
 
     SAFE_DELETE_ARRAY(buf);
@@ -5233,12 +5307,20 @@ bool WrappedOpenGL::Serialise_glCompressedTextureSubImage3DEXT(GLuint texture, G
 
   if(m_State <= EXECUTING)
   {
-    GLint align = 1;
-    if(!UnpackBufBound && m_State == READING && m_CurEventID == 0)
+    PixelUnpackState unpack;
+
+    // during capture if there was any significant unpack state we decomposed it
+    // before serialising, so we need to set an empty unpack state.
+    // Note that if we're unpacking from a buffer, we did nothing so we should
+    // preserve the state.
+    if(!UnpackBufBound)
     {
       m_Real.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, 0);
-      m_Real.glGetIntegerv(eGL_UNPACK_ALIGNMENT, &align);
-      m_Real.glPixelStorei(eGL_UNPACK_ALIGNMENT, 1);
+
+      unpack.Fetch(&m_Real, true);
+      PixelUnpackState empty = {};
+      empty.alignment = 1;
+      empty.Apply(&m_Real, true);
     }
 
     if(Target != eGL_NONE)
@@ -5250,10 +5332,11 @@ bool WrappedOpenGL::Serialise_glCompressedTextureSubImage3DEXT(GLuint texture, G
                                            xoff, yoff, zoff, Width, Height, Depth, fmt, byteSize,
                                            buf ? buf : (const void *)bufoffs);
 
-    if(!UnpackBufBound && m_State == READING && m_CurEventID == 0)
+    // restore pixel unpack state
+    if(!UnpackBufBound)
     {
       m_Real.glBindBuffer(eGL_PIXEL_UNPACK_BUFFER, unpackbuf);
-      m_Real.glPixelStorei(eGL_UNPACK_ALIGNMENT, align);
+      unpack.Apply(&m_Real, true);
     }
 
     SAFE_DELETE_ARRAY(buf);
@@ -5408,14 +5491,17 @@ bool WrappedOpenGL::Serialise_glTextureBufferRangeEXT(GLuint texture, GLenum tar
       m_Textures[liveId].internalFormat = fmt;
     }
 
+    GLuint buf = 0;
+
+    if(GetResourceManager()->HasLiveResource(bufid))
+      buf = GetResourceManager()->GetLiveResource(bufid).name;
+
     if(Target != eGL_NONE)
       m_Real.glTextureBufferRangeEXT(GetResourceManager()->GetLiveResource(texid).name, Target, fmt,
-                                     GetResourceManager()->GetLiveResource(bufid).name,
-                                     (GLintptr)offs, (GLsizeiptr)Size);
+                                     buf, (GLintptr)offs, (GLsizeiptr)Size);
     else
-      m_Real.glTextureBufferRange(GetResourceManager()->GetLiveResource(texid).name, fmt,
-                                  GetResourceManager()->GetLiveResource(bufid).name, (GLintptr)offs,
-                                  (GLsizei)Size);
+      m_Real.glTextureBufferRange(GetResourceManager()->GetLiveResource(texid).name, fmt, buf,
+                                  (GLintptr)offs, (GLsizei)Size);
   }
 
   return true;
@@ -5435,11 +5521,29 @@ void WrappedOpenGL::Common_glTextureBufferRangeEXT(ResourceId texId, GLenum targ
     GLResourceRecord *record = GetResourceManager()->GetResourceRecord(texId);
     RDCASSERT(record);
 
+    ResourceId bufid = GetResourceManager()->GetID(BufferRes(GetCtx(), buffer));
+
     if(record->datatype == eGL_TEXTURE_BINDING_BUFFER &&
        m_Textures[texId].internalFormat == internalformat && m_State == WRITING_IDLE)
     {
       GetResourceManager()->MarkDirtyResource(texId);
-      GetResourceManager()->MarkDirtyResource(BufferRes(GetCtx(), buffer));
+
+      if(bufid != ResourceId())
+      {
+        GetResourceManager()->MarkDirtyResource(bufid);
+
+        // this will lead to an accumulation of parents if the texture is continually rebound, but
+        // this is unavoidable as we don't want to add tons of infrastructure just to track this
+        // edge case.
+        GLResourceRecord *bufRecord = GetResourceManager()->GetResourceRecord(bufid);
+
+        if(bufRecord)
+        {
+          record->AddParent(bufRecord);
+          bufRecord->viewTextures.insert(record->GetResourceID());
+        }
+      }
+
       return;
     }
 
@@ -5449,18 +5553,27 @@ void WrappedOpenGL::Common_glTextureBufferRangeEXT(ResourceId texId, GLenum targ
 
     if(m_State == WRITING_CAPFRAME)
     {
-      ResourceId bufid = GetResourceManager()->GetID(BufferRes(GetCtx(), buffer));
-
       m_ContextRecord->AddChunk(scope.Get());
       m_MissingTracks.insert(record->GetResourceID());
-      m_MissingTracks.insert(bufid);
       GetResourceManager()->MarkResourceFrameReferenced(record->GetResourceID(), eFrameRef_Read);
-      GetResourceManager()->MarkResourceFrameReferenced(bufid, eFrameRef_Read);
+
+      if(bufid != ResourceId())
+      {
+        m_MissingTracks.insert(bufid);
+        GetResourceManager()->MarkResourceFrameReferenced(bufid, eFrameRef_Read);
+      }
     }
     else
     {
       record->AddChunk(scope.Get());
-      record->AddParent(GetResourceManager()->GetResourceRecord(BufferRes(GetCtx(), buffer)));
+
+      GLResourceRecord *bufRecord = GetResourceManager()->GetResourceRecord(bufid);
+
+      if(bufRecord)
+      {
+        record->AddParent(bufRecord);
+        bufRecord->viewTextures.insert(record->GetResourceID());
+      }
     }
   }
 
@@ -5574,11 +5687,29 @@ void WrappedOpenGL::Common_glTextureBufferEXT(ResourceId texId, GLenum target,
     GLResourceRecord *record = GetResourceManager()->GetResourceRecord(texId);
     RDCASSERT(record);
 
+    ResourceId bufid = GetResourceManager()->GetID(BufferRes(GetCtx(), buffer));
+
     if(record->datatype == eGL_TEXTURE_BINDING_BUFFER &&
        m_Textures[texId].internalFormat == internalformat && m_State == WRITING_IDLE)
     {
       GetResourceManager()->MarkDirtyResource(texId);
-      GetResourceManager()->MarkDirtyResource(BufferRes(GetCtx(), buffer));
+
+      if(bufid != ResourceId())
+      {
+        GetResourceManager()->MarkDirtyResource(bufid);
+
+        // this will lead to an accumulation of parents if the texture is continually rebound, but
+        // this is unavoidable as we don't want to add tons of infrastructure just to track this
+        // edge case.
+        GLResourceRecord *bufRecord = GetResourceManager()->GetResourceRecord(bufid);
+
+        if(bufRecord)
+        {
+          record->AddParent(bufRecord);
+          bufRecord->viewTextures.insert(record->GetResourceID());
+        }
+      }
+
       return;
     }
 
@@ -5589,27 +5720,44 @@ void WrappedOpenGL::Common_glTextureBufferEXT(ResourceId texId, GLenum target,
 
     if(m_State == WRITING_CAPFRAME)
     {
-      ResourceId bufid = GetResourceManager()->GetID(BufferRes(GetCtx(), buffer));
-
       m_ContextRecord->AddChunk(chunk);
       m_MissingTracks.insert(record->GetResourceID());
-      m_MissingTracks.insert(bufid);
       GetResourceManager()->MarkResourceFrameReferenced(record->GetResourceID(), eFrameRef_Read);
-      GetResourceManager()->MarkResourceFrameReferenced(bufid, eFrameRef_Read);
+
+      if(bufid != ResourceId())
+      {
+        m_MissingTracks.insert(bufid);
+        GetResourceManager()->MarkResourceFrameReferenced(bufid, eFrameRef_Read);
+      }
     }
     else
     {
       record->AddChunk(chunk);
-      record->AddParent(GetResourceManager()->GetResourceRecord(BufferRes(GetCtx(), buffer)));
+
+      GLResourceRecord *bufRecord = GetResourceManager()->GetResourceRecord(bufid);
+
+      if(bufRecord)
+      {
+        record->AddParent(bufRecord);
+        bufRecord->viewTextures.insert(record->GetResourceID());
+      }
     }
   }
 
   {
-    uint32_t size = 1;
-    m_Real.glGetNamedBufferParameterivEXT(buffer, eGL_BUFFER_SIZE, (GLint *)&size);
-    m_Textures[texId].width =
-        uint32_t(size) /
-        uint32_t(GetByteSize(1, 1, 1, GetBaseFormat(internalformat), GetDataType(internalformat)));
+    if(buffer != 0)
+    {
+      uint32_t size = 1;
+      m_Real.glGetNamedBufferParameterivEXT(buffer, eGL_BUFFER_SIZE, (GLint *)&size);
+      m_Textures[texId].width =
+          uint32_t(size) /
+          uint32_t(GetByteSize(1, 1, 1, GetBaseFormat(internalformat), GetDataType(internalformat)));
+    }
+    else
+    {
+      m_Textures[texId].width = 1;
+    }
+
     m_Textures[texId].height = 1;
     m_Textures[texId].depth = 1;
     if(target != eGL_NONE)

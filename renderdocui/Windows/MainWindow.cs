@@ -180,6 +180,7 @@ namespace renderdocui.Windows
 
             Thread remoteStatusThread = Helpers.NewThread(new ThreadStart(() =>
             {
+                m_Core.Config.AddAndroidHosts();
                 for (int i = 0; i < m_Core.Config.RemoteHosts.Count; i++)
                     m_Core.Config.RemoteHosts[i].CheckStatus();
             }));
@@ -826,7 +827,7 @@ namespace renderdocui.Windows
                         }
                         catch (Exception)
                         {
-                            MessageBox.Show("Couldn't copy " + filename + " to remote host for replaying", "Error copying to remote",
+                            MessageBox.Show("Couldn't copy " + origFilename + " to remote host for replaying", "Error copying to remote",
                                                             MessageBoxButtons.OK, MessageBoxIcon.Error);
                             return;
                         }
@@ -961,12 +962,42 @@ namespace renderdocui.Windows
             saveLogToolStripMenuItem.Enabled = false;
         }
 
+        private string lastSaveCapturePath = "";
+
         public string GetSavePath()
         {
+            if(m_Core.Config.DefaultCaptureSaveDirectory != "")
+            {
+                try
+                {
+                    if (lastSaveCapturePath == "")
+                        saveDialog.InitialDirectory = m_Core.Config.DefaultCaptureSaveDirectory;
+                    else
+                        saveDialog.InitialDirectory = lastSaveCapturePath;
+                }
+                catch (Exception)
+                {
+                }
+            }
+
+            saveDialog.FileName = "";
+
             DialogResult res = saveDialog.ShowDialog();
 
             if (res == DialogResult.OK)
+            {
+                try
+                {
+                    string dir = Path.GetDirectoryName(saveDialog.FileName);
+                    if(Directory.Exists(dir))
+                        lastSaveCapturePath = dir;
+                }
+                catch (Exception)
+                {
+                }
+
                 return saveDialog.FileName;
+            }
 
             return "";
         }
@@ -992,14 +1023,14 @@ namespace renderdocui.Windows
             return live;
         }
 
-        private LiveCapture OnInjectTrigger(UInt32 PID, string name, CaptureOptions opts)
+        private LiveCapture OnInjectTrigger(UInt32 PID, EnvironmentModification[] env, string name, CaptureOptions opts)
         {
             if (!PromptCloseLog())
                 return null;
 
             string logfile = m_Core.TempLogFilename(name);
 
-            UInt32 ret = StaticExports.InjectIntoProcess(PID, logfile, opts);
+            UInt32 ret = StaticExports.InjectIntoProcess(PID, env, logfile, opts);
 
             if (ret == 0)
             {
@@ -1137,7 +1168,7 @@ namespace renderdocui.Windows
                 // allow live captures to this host to stay open, that way
                 // we can connect to a live capture, then switch into that
                 // context
-                if (live.Hostname == host.Hostname)
+                if (host != null && live.Hostname == host.Hostname)
                     continue;
 
                 if (live.CheckAllowClose() == false)
@@ -1152,7 +1183,7 @@ namespace renderdocui.Windows
                 // allow live captures to this host to stay open, that way
                 // we can connect to a live capture, then switch into that
                 // context
-                if (live.Hostname == host.Hostname)
+                if (host != null && live.Hostname == host.Hostname)
                     continue;
 
                 live.CleanItems();
@@ -1558,17 +1589,9 @@ namespace renderdocui.Windows
 
         private bool PromptSaveLog()
         {
-            try
-            {
-                saveDialog.InitialDirectory = m_Core.Config.DefaultCaptureSaveDirectory;
-            }
-            catch (Exception)
-            {
-            }
+            string saveFilename = GetSavePath();
 
-            DialogResult res = saveDialog.ShowDialog();
-
-            if (res == DialogResult.OK)
+            if (saveFilename != "")
             {
                 if (m_Core.IsLogLocal && !File.Exists(m_Core.LogFileName))
                 {
@@ -1631,6 +1654,26 @@ namespace renderdocui.Windows
                             return true;
                         }
                     }
+                }
+
+                if (keyData == (Keys.Control | Keys.Left))
+                {
+                    FetchDrawcall draw = m_Core.CurDrawcall;
+
+                    if (draw != null && draw.previous != null)
+                        m_Core.SetEventID(null, draw.previous.eventID);
+
+                    return true;
+                }
+
+                if (keyData == (Keys.Control | Keys.Right))
+                {
+                    FetchDrawcall draw = m_Core.CurDrawcall;
+
+                    if (draw != null && draw.next != null)
+                        m_Core.SetEventID(null, draw.next.eventID);
+
+                    return true;
                 }
             }
             return base.ProcessCmdKey(ref msg, keyData);
@@ -1921,5 +1964,10 @@ namespace renderdocui.Windows
         }
 
     #endregion
+
+        private void startAndroidRemoteServerToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            StaticExports.StartAndroidRemoteServer();
+        }
     }
 }

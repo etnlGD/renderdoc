@@ -30,13 +30,13 @@
 #include "core/core.h"
 #include "serialise/string_utils.h"
 
-#ifdef _MSC_VER
-#pragma warning( \
-    disable : 4422)    // warning C4422: 'snprintf' : too many arguments passed for format string
-                       // false positive as VS is trying to parse renderdoc's custom format strings
+#if ENABLED(RDOC_MSVS)
+// warning C4422: 'snprintf' : too many arguments passed for format string
+// false positive as VS is trying to parse renderdoc's custom format strings
+#pragma warning(disable : 4422)
 #endif
 
-#if !defined(RELEASE)
+#if ENABLED(RDOC_DEVEL)
 
 int64_t Chunk::m_LiveChunks = 0;
 int64_t Chunk::m_TotalMem = 0;
@@ -180,7 +180,7 @@ struct CompressedFileIO
     int32_t compSize = 0;
 
     FileIO::fread(&compSize, sizeof(compSize), 1, m_F);
-    FileIO::fread(m_CompressBuf, 1, compSize, m_F);
+    size_t numRead = FileIO::fread(m_CompressBuf, 1, compSize, m_F);
 
     m_CompressedSize += compSize;
 
@@ -191,7 +191,7 @@ struct CompressedFileIO
 
     if(decompSize < 0)
     {
-      RDCERR("Error decompressing: %i", decompSize);
+      RDCERR("Error decompressing: %i (%i / %i)", decompSize, int(numRead), compSize);
       return;
     }
 
@@ -265,7 +265,7 @@ Chunk::Chunk(Serialiser *ser, uint32_t chunkType, bool temporary)
 
   ser->Rewind();
 
-#if !defined(RELEASE)
+#if ENABLED(RDOC_DEVEL)
   int64_t newval = Atomic::Inc64(&m_LiveChunks);
   Atomic::ExchAdd64(&m_TotalMem, m_Length);
 
@@ -279,9 +279,41 @@ Chunk::Chunk(Serialiser *ser, uint32_t chunkType, bool temporary)
 #endif
 }
 
+Chunk *Chunk::Duplicate()
+{
+  Chunk *ret = new Chunk();
+  ret->m_DebugStr = m_DebugStr;
+  ret->m_Length = m_Length;
+  ret->m_ChunkType = m_ChunkType;
+  ret->m_Temporary = m_Temporary;
+  ret->m_AlignedData = m_AlignedData;
+
+  if(m_AlignedData)
+    ret->m_Data = Serialiser::AllocAlignedBuffer(m_Length);
+  else
+    ret->m_Data = new byte[m_Length];
+
+  memcpy(ret->m_Data, m_Data, m_Length);
+
+#if ENABLED(RDOC_DEVEL)
+  int64_t newval = Atomic::Inc64(&m_LiveChunks);
+  Atomic::ExchAdd64(&m_TotalMem, m_Length);
+
+  if(newval > m_MaxChunks)
+  {
+    int breakpointme = 0;
+    (void)breakpointme;
+  }
+
+  m_MaxChunks = RDCMAX(newval, m_MaxChunks);
+#endif
+
+  return ret;
+}
+
 Chunk::~Chunk()
 {
-#if !defined(RELEASE)
+#if ENABLED(RDOC_DEVEL)
   Atomic::Dec64(&m_LiveChunks);
   Atomic::ExchAdd64(&m_TotalMem, -int64_t(m_Length));
 #endif
@@ -420,6 +452,8 @@ Serialiser::Serialiser(size_t length, const byte *memoryBuf, bool fileheader)
 
   m_Mode = READING;
   m_DebugEnabled = false;
+
+  m_FileSize = 0;
 
   if(!fileheader)
   {
@@ -600,7 +634,7 @@ Serialiser::Serialiser(size_t length, const byte *memoryBuf, bool fileheader)
   }
 }
 
-Serialiser::Serialiser(const char *path, Mode mode, bool debugMode)
+Serialiser::Serialiser(const char *path, Mode mode, bool debugMode, uint64_t sizeHint)
     : m_pCallstack(NULL), m_pResolver(NULL), m_Buffer(NULL)
 {
   m_ResolverThread = 0;
@@ -611,6 +645,8 @@ Serialiser::Serialiser(const char *path, Mode mode, bool debugMode)
 
   m_Mode = mode;
   m_DebugEnabled = debugMode;
+
+  m_FileSize = 0;
 
   FileHeader header;
 
@@ -625,6 +661,12 @@ Serialiser::Serialiser(const char *path, Mode mode, bool debugMode)
       m_HasError = true;
       return;
     }
+
+    FileIO::fseek64(m_ReadFileHandle, 0, SEEK_END);
+
+    m_FileSize = FileIO::ftell64(m_ReadFileHandle);
+
+    FileIO::fseek64(m_ReadFileHandle, 0, SEEK_SET);
 
     RDCDEBUG("Opened capture file for read");
 
@@ -893,7 +935,7 @@ Serialiser::Serialiser(const char *path, Mode mode, bool debugMode)
     }
     else
     {
-      m_BufferSize = 128 * 1024;
+      m_BufferSize = sizeHint;
       m_BufferHead = m_Buffer = AllocAlignedBuffer((size_t)m_BufferSize);
     }
   }
@@ -1286,7 +1328,19 @@ void Serialiser::FlushToDisk()
       }
       else
       {
-        FileIO::fwrite(m_DebugText.c_str(), 1, m_DebugText.length(), dbgFile);
+        const char *str = m_DebugText.c_str();
+        size_t len = m_DebugText.length();
+        const size_t chunkSize = 10 * 1024 * 1024;
+        while(len > 0)
+        {
+          size_t writeSize = RDCMIN(len, chunkSize);
+          size_t written = FileIO::fwrite(str, 1, writeSize, dbgFile);
+
+          RDCASSERT(written == writeSize);
+
+          str += writeSize;
+          len -= writeSize;
+        }
 
         FileIO::fclose(dbgFile);
       }
@@ -1861,24 +1915,17 @@ void Serialiser::SerialiseBuffer(const char *name, byte *&buf, size_t &len)
   {
     const char *ellipsis = "...";
 
-    float *fbuf = new float[4];
-    fbuf[0] = fbuf[1] = fbuf[2] = fbuf[3] = 0.0f;
-    uint32_t *lbuf = (uint32_t *)fbuf;
+    uint32_t lbuf[4];
 
-    memcpy(fbuf, buf, RDCMIN(len, 4 * sizeof(float)));
+    memcpy(lbuf, buf, RDCMIN(len, 4 * sizeof(uint32_t)));
 
     if(bufLen <= 16)
     {
       ellipsis = "   ";
     }
 
-    DebugPrint(
-        "%s: RawBuffer % 5d:< 0x%08x 0x%08x 0x%08x 0x%08x %s   %  8.4ff %  8.4ff %  8.4ff %  8.4ff "
-        "%s >\n",
-        name, bufLen, lbuf[0], lbuf[1], lbuf[2], lbuf[3], ellipsis, fbuf[0], fbuf[1], fbuf[2],
-        fbuf[3], ellipsis);
-
-    SAFE_DELETE_ARRAY(fbuf);
+    DebugPrint("%s: RawBuffer % 5d:< 0x%08x 0x%08x 0x%08x 0x%08x %s>\n", name, bufLen, lbuf[0],
+               lbuf[1], lbuf[2], lbuf[3], ellipsis);
   }
 }
 
@@ -1932,7 +1979,7 @@ string ToStrHelper<false, int64_t>::Get(const int64_t &el)
 // platforms size_t is typedef'd in such a way that the uint32_t or
 // uint64_t specialisation will kick in. On apple, we need a
 // specific size_t overload
-#if defined(RENDERDOC_PLATFORM_APPLE)
+#if ENABLED(RDOC_APPLE)
 template <>
 string ToStrHelper<false, size_t>::Get(const size_t &el)
 {

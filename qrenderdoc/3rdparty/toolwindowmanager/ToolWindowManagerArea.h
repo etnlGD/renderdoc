@@ -52,10 +52,17 @@ public:
    */
   void addToolWindows(const QList<QWidget*>& toolWindows);
 
+  void enableUserDrop() { m_userCanDrop = true; }
+  void disableUserDrop() { m_userCanDrop = false; }
+
+  bool allowUserDrop() { return m_userCanDrop; }
+
   /*!
    * Returns a list of all tool windows in this area.
    */
   QList<QWidget*> toolWindows();
+
+  ToolWindowManager* manager() { return m_manager; }
 
   /*!
    * Updates the \a toolWindow to its current properties and title.
@@ -81,6 +88,8 @@ private:
   bool m_tabDragCanStart; // indicates that user has started mouse movement on QTabWidget
                           // that can be considered as dragging current tab
                           // if the cursor will leave the tab bar area
+
+  bool m_userCanDrop; // indictes the user is allowed to drop things on this area
 
   bool m_inTabMoved; // if we're in the tabMoved() function (so if we call tabMove to cancel
                      // the movement, we shouldn't re-check the tabMoved behaviour)

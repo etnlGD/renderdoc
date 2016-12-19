@@ -46,12 +46,10 @@ public:
     m_FrameRecord.frameInfo.fileOffset = 0;
     m_FrameRecord.frameInfo.firstEvent = 1;
     m_FrameRecord.frameInfo.frameNumber = 1;
-    m_FrameRecord.frameInfo.immContextId = ResourceId();
     RDCEraseEl(m_FrameRecord.frameInfo.stats);
 
     create_array_uninit(m_FrameRecord.drawcallList, 1);
     FetchDrawcall &d = m_FrameRecord.drawcallList[0];
-    d.context = ResourceId();
     d.drawcallID = 1;
     d.eventID = 1;
     d.name = filename;
@@ -140,12 +138,10 @@ public:
   }
   vector<ResourceId> GetTextures() { return m_Proxy->GetTextures(); }
   FetchTexture GetTexture(ResourceId id) { return m_Proxy->GetTexture(m_TextureID); }
-  byte *GetTextureData(ResourceId tex, uint32_t arrayIdx, uint32_t mip, bool forDiskSave,
-                       FormatComponentType typeHint, bool resolve, bool forceRGBA8unorm,
-                       float blackPoint, float whitePoint, size_t &dataSize)
+  byte *GetTextureData(ResourceId tex, uint32_t arrayIdx, uint32_t mip,
+                       const GetTextureDataParams &params, size_t &dataSize)
   {
-    return m_Proxy->GetTextureData(m_TextureID, arrayIdx, mip, forDiskSave, typeHint, resolve,
-                                   forceRGBA8unorm, blackPoint, whitePoint, dataSize);
+    return m_Proxy->GetTextureData(m_TextureID, arrayIdx, mip, params, dataSize);
   }
 
   // handle a couple of operations ourselves to return a simple fake log
@@ -166,9 +162,9 @@ public:
     return ret;
   }
   void SavePipelineState() {}
+  D3D12PipelineState GetD3D12PipelineState() { return D3D12PipelineState(); }
   GLPipelineState GetGLPipelineState() { return GLPipelineState(); }
   VulkanPipelineState GetVulkanPipelineState() { return VulkanPipelineState(); }
-  void SetContextFilter(ResourceId id, uint32_t firstDefEv, uint32_t lastDefEv) {}
   void ReplayLog(uint32_t endEventID, ReplayLogType replayType) {}
   vector<uint32_t> GetPassEvents(uint32_t eventID) { return vector<uint32_t>(); }
   vector<EventUsage> GetUsage(ResourceId id) { return vector<EventUsage>(); }
@@ -252,7 +248,7 @@ public:
   {
     RDCERR("Calling proxy-render functions on an image viewer");
   }
-
+  bool IsTextureSupported(const ResourceFormat &format) { return true; }
   ResourceId CreateProxyBuffer(const FetchBuffer &templateBuf)
   {
     RDCERR("Calling proxy-render functions on an image viewer");
@@ -434,7 +430,6 @@ void ImageViewer::RefreshFile()
   texDetails.format = rgba8_unorm;
 
   // reasonable defaults
-  texDetails.numSubresources = 1;
   texDetails.dimension = 2;
   texDetails.arraysize = 1;
   texDetails.width = 1;
@@ -460,8 +455,6 @@ void ImageViewer::RefreshFile()
 
     FileIO::fread(&buffer[0], 1, buffer.size(), f);
 
-    FileIO::fclose(f);
-
     EXRImage exrImage;
     InitEXRImage(&exrImage);
 
@@ -474,6 +467,7 @@ void ImageViewer::RefreshFile()
       RDCERR(
           "EXR file detected, but couldn't load with ParseMultiChannelEXRHeaderFromMemory %d: '%s'",
           ret, err);
+      FileIO::fclose(f);
       return;
     }
 
@@ -523,6 +517,7 @@ void ImageViewer::RefreshFile()
     {
       free(data);
       RDCERR("EXR file detected, but couldn't load with LoadEXRFromMemory %d: '%s'", ret, err);
+      FileIO::fclose(f);
       return;
     }
   }
@@ -571,7 +566,7 @@ void ImageViewer::RefreshFile()
 
   m_FrameRecord.frameInfo.initDataSize = 0;
   m_FrameRecord.frameInfo.persistentSize = 0;
-  m_FrameRecord.frameInfo.fileSize = datasize;
+  m_FrameRecord.frameInfo.uncompressedFileSize = datasize;
 
   dds_data read_data = {0};
 
@@ -592,7 +587,6 @@ void ImageViewer::RefreshFile()
     texDetails.height = read_data.height;
     texDetails.depth = read_data.depth;
     texDetails.mips = read_data.mips;
-    texDetails.numSubresources = texDetails.arraysize * texDetails.mips;
     texDetails.format = read_data.format;
     texDetails.dimension = 1;
     if(texDetails.width > 1)
@@ -600,10 +594,12 @@ void ImageViewer::RefreshFile()
     if(texDetails.depth > 1)
       texDetails.dimension = 3;
 
-    m_FrameRecord.frameInfo.fileSize = 0;
-    for(uint32_t i = 0; i < texDetails.numSubresources; i++)
-      m_FrameRecord.frameInfo.fileSize += read_data.subsizes[i];
+    m_FrameRecord.frameInfo.uncompressedFileSize = 0;
+    for(uint32_t i = 0; i < texDetails.arraysize * texDetails.mips; i++)
+      m_FrameRecord.frameInfo.uncompressedFileSize += read_data.subsizes[i];
   }
+
+  m_FrameRecord.frameInfo.compressedFileSize = m_FrameRecord.frameInfo.uncompressedFileSize;
 
   // recreate proxy texture if necessary.
   // we rewrite the texture IDs so that the
@@ -632,7 +628,7 @@ void ImageViewer::RefreshFile()
   }
   else
   {
-    for(uint32_t i = 0; i < texDetails.numSubresources; i++)
+    for(uint32_t i = 0; i < texDetails.arraysize * texDetails.mips; i++)
     {
       m_Proxy->SetProxyTextureData(m_TextureID, i / texDetails.mips, i % texDetails.mips,
                                    read_data.subdata[i], (size_t)read_data.subsizes[i]);

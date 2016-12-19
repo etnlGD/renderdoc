@@ -71,10 +71,15 @@ namespace renderdocui.Windows.PipelineState
             {
                 view = v;
                 tex = t;
+
+                DepthReadOnly = false;
+                StencilReadOnly = false;
             }
 
             public D3D11PipelineState.ShaderStage.ResourceView view;
             public FetchTexture tex;
+
+            public bool DepthReadOnly, StencilReadOnly;
         };
 
         private class ViewBufTag
@@ -418,7 +423,7 @@ namespace renderdocui.Windows.PipelineState
                                 name = bufs[t].name;
                                 typename = "Buffer";
 
-                                if (r.Flags.HasFlag(D3D11BufferViewFlags.Raw))
+                                if (r.Flags.HasFlag(D3DBufferViewFlags.Raw))
                                 {
                                     typename = "ByteAddressBuffer";
                                 }
@@ -428,7 +433,7 @@ namespace renderdocui.Windows.PipelineState
                                     typename = "StructuredBuffer[" + (bufs[t].length / r.ElementSize) + "]";
                                 }
 
-                                if (r.Flags.HasFlag(D3D11BufferViewFlags.Append) || r.Flags.HasFlag(D3D11BufferViewFlags.Counter))
+                                if (r.Flags.HasFlag(D3DBufferViewFlags.Append) || r.Flags.HasFlag(D3DBufferViewFlags.Counter))
                                 {
                                     typename += " (Count: " + r.BufferStructCount + ")";
                                 }
@@ -590,8 +595,17 @@ namespace renderdocui.Windows.PipelineState
                 {
                     ConstantBlock shaderCBuf = null;
 
-                    if (shaderDetails != null && i < shaderDetails.ConstantBlocks.Length && shaderDetails.ConstantBlocks[i].name.Length > 0)
-                        shaderCBuf = shaderDetails.ConstantBlocks[i];
+                    if (shaderDetails != null)
+                    {
+                        foreach (var cb in shaderDetails.ConstantBlocks)
+                        {
+                            if (cb.bindPoint == i)
+                            {
+                                shaderCBuf = cb;
+                                break;
+                            }
+                        }
+                    }
 
                     bool filledSlot = (b.Buffer != ResourceId.Null);
                     bool usedSlot = (shaderCBuf != null);
@@ -1144,7 +1158,7 @@ namespace renderdocui.Windows.PipelineState
                                 name = bufs[t].name;
                                 typename = "Buffer";
 
-                                if (r.Flags.HasFlag(D3D11BufferViewFlags.Raw))
+                                if (r.Flags.HasFlag(D3DBufferViewFlags.Raw))
                                 {
                                     typename = "RWByteAddressBuffer";
                                 }
@@ -1154,7 +1168,7 @@ namespace renderdocui.Windows.PipelineState
                                     typename = "RWStructuredBuffer[" + (bufs[t].length / r.ElementSize) + "]";
                                 }
 
-                                if (r.Flags.HasFlag(D3D11BufferViewFlags.Append) || r.Flags.HasFlag(D3D11BufferViewFlags.Counter))
+                                if (r.Flags.HasFlag(D3DBufferViewFlags.Append) || r.Flags.HasFlag(D3DBufferViewFlags.Counter))
                                 {
                                     typename += " (Count: " + r.BufferStructCount + ")";
                                 }
@@ -1518,7 +1532,7 @@ namespace renderdocui.Windows.PipelineState
                                 name = bufs[t].name;
                                 typename = "Buffer";
 
-                                if (r.Flags.HasFlag(D3D11BufferViewFlags.Raw))
+                                if (r.Flags.HasFlag(D3DBufferViewFlags.Raw))
                                 {
                                     typename = "RWByteAddressBuffer";
                                 }
@@ -1528,7 +1542,7 @@ namespace renderdocui.Windows.PipelineState
                                     typename = "RWStructuredBuffer[" + (bufs[t].length / r.ElementSize) + "]";
                                 }
 
-                                if (r.Flags.HasFlag(D3D11BufferViewFlags.Append) || r.Flags.HasFlag(D3D11BufferViewFlags.Counter))
+                                if (r.Flags.HasFlag(D3DBufferViewFlags.Append) || r.Flags.HasFlag(D3DBufferViewFlags.Counter))
                                 {
                                     typename += " (Count: " + r.BufferStructCount + ")";
                                 }
@@ -1614,10 +1628,16 @@ namespace renderdocui.Windows.PipelineState
                             format = "Viewed as " + state.m_OM.DepthTarget.Format.ToString();
                         }
 
-                        if (HasImportantViewParams(state.m_OM.DepthTarget, texs[t]))
+                        if (HasImportantViewParams(state.m_OM.DepthTarget, texs[t]) ||
+                            state.m_OM.DepthReadOnly || state.m_OM.StencilReadOnly)
                             viewDetails = true;
 
-                        tag = new ViewTexTag(state.m_OM.DepthTarget, texs[t]);
+                        ViewTexTag textag = new ViewTexTag(state.m_OM.DepthTarget, texs[t]);
+
+                        textag.DepthReadOnly = state.m_OM.DepthReadOnly;
+                        textag.StencilReadOnly = state.m_OM.StencilReadOnly;
+
+                        tag = textag;
                     }
                 }
 
@@ -1823,6 +1843,12 @@ namespace renderdocui.Windows.PipelineState
                         if (tex.tex.format != tex.view.Format)
                             text += String.Format("The texture is format {0}, the view treats it as {1}.\n",
                                 tex.tex.format, tex.view.Format);
+
+                        if (tex.DepthReadOnly)
+                            text += "Depth component is read-only\n";
+
+                        if (tex.StencilReadOnly)
+                            text += "Stencil component is read-only\n";
 
                         if (tex.tex.mips > 1 && (tex.tex.mips != tex.view.NumMipLevels || tex.view.HighestMip > 0))
                         {
@@ -2053,7 +2079,7 @@ namespace renderdocui.Windows.PipelineState
                                             }
                                         }
 
-                                        if (view.Flags.HasFlag(D3D11BufferViewFlags.Raw))
+                                        if (view.Flags.HasFlag(D3DBufferViewFlags.Raw))
                                             format = "xint";
 
                                         format += view.Format.compCount;
@@ -2108,7 +2134,9 @@ namespace renderdocui.Windows.PipelineState
                 }
                 else if (sender is TreelistView.TreeListView)
                 {
-                    TreelistView.NodesSelection sel = ((TreelistView.TreeListView)sender).NodesSelection;
+                    TreelistView.TreeListView view = (TreelistView.TreeListView)sender;
+                    view.SortNodesSelection();
+                    TreelistView.NodesSelection sel = view.NodesSelection;
 
                     if (sel.Count > 0)
                     {
@@ -2341,7 +2369,7 @@ namespace renderdocui.Windows.PipelineState
 
             if (stage.Shader == ResourceId.Null || shaderDetails == null) return;
 
-            var entryFunc = String.Format("EditedShader{0}S", stage.stage.ToString()[0]);
+            var entryFunc = String.Format("EditedShader{0}S", stage.stage.Str(GraphicsAPI.D3D11)[0]);
 
             string mainfile = "";
 
@@ -2417,7 +2445,7 @@ namespace renderdocui.Windows.PipelineState
                 {
                     if (cbuf.name.Length > 0 && cbuf.variables.Length > 0)
                     {
-                        cbuffers += String.Format("cbuffer {0} : register(b{1}) {{", cbuf.name, cbufIdx) + nl;
+                        cbuffers += String.Format("cbuffer {0} : register(b{1}) {{", cbuf.name, cbuf.bindPoint) + nl;
                         MakeShaderVariablesHLSL(true, cbuf.variables, ref cbuffers, ref hlsl);
                         cbuffers += "};" + nl2;
                     }
@@ -2428,12 +2456,12 @@ namespace renderdocui.Windows.PipelineState
 
                 hlsl += String.Format("struct {0}Input{1}{{{1}", shType, nl);
                 foreach(var sig in shaderDetails.InputSig)
-                    hlsl += String.Format("\t{0} {1} : {2};" + nl, sig.TypeString, sig.varName.Length > 0 ? sig.varName : ("param" + sig.regIndex), sig.D3D11SemanticString);
+                    hlsl += String.Format("\t{0} {1} : {2};" + nl, sig.TypeString, sig.varName.Length > 0 ? sig.varName : ("param" + sig.regIndex), sig.D3DSemanticString);
                 hlsl += "};" + nl2;
 
                 hlsl += String.Format("struct {0}Output{1}{{{1}", shType, nl);
                 foreach (var sig in shaderDetails.OutputSig)
-                    hlsl += String.Format("\t{0} {1} : {2};" + nl, sig.TypeString, sig.varName.Length > 0 ? sig.varName : ("param" + sig.regIndex), sig.D3D11SemanticString);
+                    hlsl += String.Format("\t{0} {1} : {2};" + nl, sig.TypeString, sig.varName.Length > 0 ? sig.varName : ("param" + sig.regIndex), sig.D3DSemanticString);
                 hlsl += "};" + nl2;
 
                 hlsl += String.Format("{0}Output {1}(in {0}Input IN){2}{{{2}\t{0}Output OUT = ({0}Output)0;{2}{2}\t// ...{2}{2}\treturn OUT;{2}}}{2}", shType, entryFunc, nl);
@@ -2583,20 +2611,36 @@ namespace renderdocui.Windows.PipelineState
             sv.Show(m_DockContent.DockPanel);
         }
 
-        private void ShowCBuffer(D3D11PipelineState.ShaderStage stage, UInt32 slot)
+        private void ShowCBuffer(D3D11PipelineState.ShaderStage stage, UInt32 bindPoint)
         {
-            if (stage.ShaderDetails != null &&
-                (stage.ShaderDetails.ConstantBlocks.Length <= slot ||
-                 stage.ShaderDetails.ConstantBlocks[slot].name.Length == 0)
-               )
+            bool found = false;
+            UInt32 slot = UInt32.MaxValue;
+
+            if (stage.ShaderDetails != null)
+            {
+                UInt32 i = 0;
+                foreach (var cb in stage.ShaderDetails.ConstantBlocks)
+                {
+                    if (cb.bindPoint == bindPoint)
+                    {
+                        slot = i;
+                        found = true;
+                        break;
+                    }
+
+                    i++;
+                }
+            }
+
+            if (!found)
             {
                 // unused cbuffer, open regular buffer viewer
                 var viewer = new BufferViewer(m_Core, false);
 
-                if (stage.ConstantBuffers.Length < slot)
+                if (stage.ConstantBuffers.Length < bindPoint)
                     return;
 
-                var buf = stage.ConstantBuffers[slot];
+                var buf = stage.ConstantBuffers[bindPoint];
                 viewer.ViewRawBuffer(true, buf.VecOffset * 4 * sizeof(float), buf.VecCount * 4 * sizeof(float), buf.Buffer);
                 viewer.Show(m_DockContent.DockPanel);
 
@@ -3060,7 +3104,7 @@ namespace renderdocui.Windows.PipelineState
                     name = bufs[t].name;
                     typename = "Buffer";
 
-                    if (view.Flags.HasFlag(D3D11BufferViewFlags.Raw))
+                    if (view.Flags.HasFlag(D3DBufferViewFlags.Raw))
                     {
                         typename = rw ? "RWByteAddressBuffer" : "ByteAddressBuffer";
                     }
@@ -3070,7 +3114,7 @@ namespace renderdocui.Windows.PipelineState
                         typename = (rw ? "RWStructuredBuffer" : "StructuredBuffer") + "[" + (bufs[t].length / view.ElementSize) + "]";
                     }
 
-                    if (view.Flags.HasFlag(D3D11BufferViewFlags.Append) || view.Flags.HasFlag(D3D11BufferViewFlags.Counter))
+                    if (view.Flags.HasFlag(D3DBufferViewFlags.Append) || view.Flags.HasFlag(D3DBufferViewFlags.Counter))
                     {
                         typename += " (Count: " + view.BufferStructCount + ")";
                     }

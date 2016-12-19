@@ -57,6 +57,7 @@ enum ResourceType
 
   Resource_DeviceContext,
   Resource_CommandList,
+  Resource_DeviceState,
 };
 
 ResourceType IdentifyTypeByPtr(IUnknown *ptr);
@@ -332,14 +333,14 @@ private:
   unsigned int m_ViewRefcount;    // refcount from views (invisible to the end-user)
 
 protected:
-#if !defined(RELEASE)
+#if ENABLED(RDOC_DEVEL)
   DescType m_Desc;
 #endif
 
   WrappedResource11(NestedType *real, WrappedID3D11Device *device)
       : WrappedDeviceChild11(real, device), m_ViewRefcount(0)
   {
-#if !defined(RELEASE)
+#if ENABLED(RDOC_DEVEL)
     real->GetDesc(&m_Desc);
 #endif
 
@@ -1253,6 +1254,9 @@ class WrappedID3D11CommandList : public WrappedDeviceChild11<ID3D11CommandList>
   WrappedID3D11DeviceContext *m_pContext;
   bool m_Successful;    // indicates whether we have all of the commands serialised for this command
                         // list
+
+  set<ResourceId> m_Dirty;
+
 public:
   ALLOCATE_WITH_WRAPPED_POOL(WrappedID3D11CommandList);
 
@@ -1270,8 +1274,33 @@ public:
 
   WrappedID3D11DeviceContext *GetContext() { return m_pContext; }
   bool IsCaptured() { return m_Successful; }
+  void SetDirtyResources(set<ResourceId> &dirty) { m_Dirty.swap(dirty); }
+  void MarkDirtyResources(D3D11ResourceManager *manager)
+  {
+    for(auto it = m_Dirty.begin(); it != m_Dirty.end(); ++it)
+      manager->MarkDirtyResource(*it);
+  }
+  void MarkDirtyResources(set<ResourceId> &missingTracks)
+  {
+    for(auto it = m_Dirty.begin(); it != m_Dirty.end(); ++it)
+      missingTracks.insert(*it);
+  }
+
   //////////////////////////////
   // implement ID3D11CommandList
 
   virtual UINT STDMETHODCALLTYPE GetContextFlags(void) { return m_pReal->GetContextFlags(); }
+};
+
+class WrappedID3DDeviceContextState : public WrappedDeviceChild11<ID3DDeviceContextState>
+{
+public:
+  ALLOCATE_WITH_WRAPPED_POOL(WrappedID3DDeviceContextState);
+
+  static std::vector<WrappedID3DDeviceContextState *> m_List;
+  static Threading::CriticalSection m_Lock;
+  D3D11RenderState *state;
+
+  WrappedID3DDeviceContextState(ID3DDeviceContextState *real, WrappedID3D11Device *device);
+  virtual ~WrappedID3DDeviceContextState();
 };

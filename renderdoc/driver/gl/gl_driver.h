@@ -53,10 +53,10 @@ struct GLInitParams : public RDCInitParams
   uint32_t width;
   uint32_t height;
 
-  static const uint32_t GL_SERIALISE_VERSION = 0x0000011;
+  static const uint32_t GL_SERIALISE_VERSION = 0x0000013;
 
   // backwards compatibility for old logs described at the declaration of this array
-  static const uint32_t GL_NUM_SUPPORTED_OLD_VERSIONS = 1;
+  static const uint32_t GL_NUM_SUPPORTED_OLD_VERSIONS = 3;
   static const uint32_t GL_OLD_VERSIONS[GL_NUM_SUPPORTED_OLD_VERSIONS];
 
   // version number internal to opengl stream
@@ -178,10 +178,6 @@ private:
   CaptureFailReason m_FailureReason;
   bool m_SuccessfulCapture;
 
-  PerformanceTimer m_FrameTimer;
-  vector<double> m_FrameTimes;
-  double m_TotalTime, m_AvgFrametime, m_MinFrametime, m_MaxFrametime;
-
   set<ResourceId> m_HighTrafficResources;
 
   // we store two separate sets of maps, since for an explicit glMemoryBarrier
@@ -243,10 +239,12 @@ private:
         : curType(eGL_NONE),
           dimension(0),
           emulated(false),
+          view(false),
           width(0),
           height(0),
           depth(0),
           samples(0),
+          mips(1),
           creationFlags(0),
           internalFormat(eGL_NONE),
           renderbufferReadTex(0)
@@ -256,8 +254,8 @@ private:
     GLResource resource;
     GLenum curType;
     GLint dimension;
-    bool emulated;
-    GLint width, height, depth, samples;
+    bool emulated, view;
+    GLint width, height, depth, samples, mips;
     uint32_t creationFlags;
     GLenum internalFormat;
 
@@ -329,14 +327,13 @@ private:
 
   ResourceId m_FakeVAOID;
 
-  Serialiser *GetSerialiser() { return m_pSerialiser; }
   uint32_t GetLogVersion() { return m_InitParams.SerialiseVersion; }
   void ProcessChunk(uint64_t offset, GLChunkType context);
   void ContextReplayLog(LogState readType, uint32_t startEventID, uint32_t endEventID, bool partial);
   void ContextProcessChunk(uint64_t offset, GLChunkType chunk);
   void AddUsage(const FetchDrawcall &d);
   void AddDrawcall(const FetchDrawcall &d, bool hasEvents);
-  void AddEvent(GLChunkType type, string description, ResourceId ctx = ResourceId());
+  void AddEvent(string description);
 
   void Serialise_CaptureScope(uint64_t offset);
   bool HasSuccessfulCapture(CaptureFailReason &reason)
@@ -503,6 +500,7 @@ public:
   void ReplayLog(uint32_t startEventID, uint32_t endEventID, ReplayLogType replayType);
   void ReadLogInitialisation();
 
+  Serialiser *GetSerialiser() { return m_pSerialiser; }
   GLuint GetFakeBBFBO() { return m_FakeBB_FBO; }
   GLuint GetFakeVAO() { return m_FakeVAO; }
   FetchFrameRecord &GetFrameRecord() { return m_FrameRecord; }
@@ -2370,6 +2368,19 @@ public:
                                                                  GLsizei count, const GLuint *buffers,
                                                                  const GLintptr *offsets,
                                                                  const GLsizei *strides));
+
+  bool Serialise_wglDXRegisterObjectNV(GLResource res, GLenum type, void *dxObject);
+  bool Serialise_wglDXLockObjectsNV(GLResource res);
+
+  BOOL wglDXSetResourceShareHandleNV(void *dxObject, HANDLE shareHandle);
+  HANDLE wglDXOpenDeviceNV(void *dxDevice);
+  BOOL wglDXCloseDeviceNV(HANDLE hDevice);
+  HANDLE wglDXRegisterObjectNV(HANDLE hDevice, void *dxObject, GLuint name, GLenum type,
+                               GLenum access);
+  BOOL wglDXUnregisterObjectNV(HANDLE hDevice, HANDLE hObject);
+  BOOL wglDXObjectAccessNV(HANDLE hObject, GLenum access);
+  BOOL wglDXLockObjectsNV(HANDLE hDevice, GLint count, HANDLE *hObjects);
+  BOOL wglDXUnlockObjectsNV(HANDLE hDevice, GLint count, HANDLE *hObjects);
 };
 
 class ScopedDebugContext

@@ -38,7 +38,7 @@ struct ShaderVariable
   {
     name = "";
     rows = columns = 0;
-    isStruct = false;
+    displayAsHex = isStruct = false;
     type = eVar_Float;
     for(int i = 0; i < 16; i++)
       value.uv[i] = 0;
@@ -48,7 +48,7 @@ struct ShaderVariable
     name = n;
     rows = 1;
     columns = 4;
-    isStruct = false;
+    displayAsHex = isStruct = false;
     for(int i = 0; i < 16; i++)
       value.uv[i] = 0;
     type = eVar_Float;
@@ -62,7 +62,7 @@ struct ShaderVariable
     name = n;
     rows = 1;
     columns = 4;
-    isStruct = false;
+    displayAsHex = isStruct = false;
     for(int i = 0; i < 16; i++)
       value.uv[i] = 0;
     type = eVar_Int;
@@ -76,7 +76,7 @@ struct ShaderVariable
     name = n;
     rows = 1;
     columns = 4;
-    isStruct = false;
+    displayAsHex = isStruct = false;
     for(int i = 0; i < 16; i++)
       value.uv[i] = 0;
     type = eVar_UInt;
@@ -90,6 +90,8 @@ struct ShaderVariable
   rdctype::str name;
 
   VarType type;
+
+  bool32 displayAsHex;
 
   union
   {
@@ -253,11 +255,10 @@ struct ShaderReflection
   rdctype::array<SigParameter> InputSig;
   rdctype::array<SigParameter> OutputSig;
 
-  rdctype::array<ConstantBlock> ConstantBlocks;    // sparse - index indicates bind point
+  rdctype::array<ConstantBlock> ConstantBlocks;
 
-  rdctype::array<ShaderResource> ReadOnlyResources;    // non-sparse, since bind points can overlap.
-  rdctype::array<ShaderResource>
-      ReadWriteResources;    // non-sparse, since bind points can overlap.
+  rdctype::array<ShaderResource> ReadOnlyResources;
+  rdctype::array<ShaderResource> ReadWriteResources;
 
   // TODO expand this to encompass shader subroutines.
   rdctype::array<rdctype::str> Interfaces;
@@ -265,6 +266,31 @@ struct ShaderReflection
 
 struct BindpointMap
 {
+#ifdef __cplusplus
+  BindpointMap()
+  {
+    bindset = 0;
+    bind = 0;
+    used = false;
+    arraySize = 1;
+  }
+
+  BindpointMap(int32_t s, int32_t b)
+  {
+    bindset = s;
+    bind = b;
+    used = false;
+    arraySize = 1;
+  }
+
+  bool operator<(const BindpointMap &o) const
+  {
+    if(bindset != o.bindset)
+      return bindset < o.bindset;
+    return bind < o.bind;
+  }
+#endif
+
   int32_t bindset;
   int32_t bind;
   bool32 used;

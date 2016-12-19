@@ -35,6 +35,8 @@
 #include <QVariant>
 #include <QLabel>
 
+#include <functional>
+
 class ToolWindowManagerArea;
 class ToolWindowManagerWrapper;
 
@@ -111,6 +113,8 @@ public:
     HideCloseButton = 0x2,
     //! Disable the user being able to drag this tab in the tab bar, to rearrange
     DisableDraggableTab = 0x4,
+    //! When the tool window is closed, hide it instead of removing it
+    HideOnClose = 0x8,
   };
 
   //! Type of AreaReference.
@@ -144,7 +148,7 @@ public:
      * Creates an area reference of the given \a type. If \a type requires specifying
      * area, it should be given in \a area argument. Otherwise \a area should have default value (0).
      */
-    AreaReference(AreaReferenceType type = NoArea, ToolWindowManagerArea* area = 0);
+    AreaReference(AreaReferenceType type = NoArea, ToolWindowManagerArea* area = 0, float percentage = 0.5f);
     //! Returns type of the reference.
     AreaReferenceType type() const { return m_type; }
     //! Returns area of the reference, or 0 if it was not specified.
@@ -153,7 +157,9 @@ public:
   private:
     AreaReferenceType m_type;
     QWidget* m_widget;
+    float m_percentage;
     QWidget* widget() const { return m_widget; }
+    float percentage() const { return m_percentage; }
     AreaReference(AreaReferenceType type, QWidget* widget);
     void setWidget(QWidget* widget);
 
@@ -227,17 +233,27 @@ public:
    * \a toolWindow must be added to the manager prior to calling this function.
    */
   void hideToolWindow(QWidget* toolWindow) { moveToolWindow(toolWindow, NoArea); }
+  
+  static ToolWindowManager* managerOf(QWidget* toolWindow);
+  static void closeToolWindow(QWidget *toolWindow);
+  static void raiseToolWindow(QWidget *toolWindow);
 
   /*!
    * \brief saveState
    */
-  QVariant saveState();
+  QVariantMap saveState();
 
   /*!
    * \brief restoreState
    */
-  void restoreState(const QVariant& data);
+  void restoreState(const QVariantMap& data);
 
+  typedef std::function<QWidget*(const QString &)> CreateCallback;
+
+  void setToolWindowCreateCallback(const CreateCallback &cb) { m_createCallback = cb; }
+  QWidget *createToolWindow(const QString& objectName);
+
+  bool checkValidSplitter(QWidget *w);
 
   /*! \cond PRIVATE */
   void setSuggestionSwitchInterval(int msec);
@@ -286,6 +302,8 @@ private:
   int m_dropCurrentSuggestionIndex; // index of currently displayed drop suggestion
                                     // (e.g. always 0 if there is only one possible drop location)
   QTimer m_dropSuggestionSwitchTimer; // used for switching drop suggestions
+
+  CreateCallback m_createCallback;
 
   // last widget used for adding tool windows, or 0 if there isn't one
   // (warning: may contain pointer to deleted object)

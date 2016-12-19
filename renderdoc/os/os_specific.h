@@ -80,9 +80,15 @@ void RegisterEnvironmentModification(EnvironmentModification modif);
 void ApplyEnvironmentModification();
 
 void StartGlobalHook(const char *pathmatch, const char *logfile, const CaptureOptions *opts);
-uint32_t InjectIntoProcess(uint32_t pid, const char *logfile, const CaptureOptions *opts,
-                           bool waitForExit);
-uint32_t LaunchProcess(const char *app, const char *workingDir, const char *cmdLine);
+uint32_t InjectIntoProcess(uint32_t pid, EnvironmentModification *env, const char *logfile,
+                           const CaptureOptions *opts, bool waitForExit);
+struct ProcessResult
+{
+  string strStdout, strStderror;
+  int retCode;
+};
+uint32_t LaunchProcess(const char *app, const char *workingDir, const char *cmdLine,
+                       ProcessResult *result = NULL);
 uint32_t LaunchAndInjectIntoProcess(const char *app, const char *workingDir, const char *cmdLine,
                                     EnvironmentModification *env, const char *logfile,
                                     const CaptureOptions *opts, bool waitForExit);
@@ -204,6 +210,7 @@ int32_t Dec32(volatile int32_t *i);
 int64_t Inc64(volatile int64_t *i);
 int64_t Dec64(volatile int64_t *i);
 int64_t ExchAdd64(volatile int64_t *i, int64_t a);
+int32_t CmpExch32(volatile int32_t *dest, int32_t oldVal, int32_t newVal);
 };
 
 namespace Callstack
@@ -299,6 +306,12 @@ void fseek64(FILE *f, uint64_t offset, int origin);
 bool feof(FILE *f);
 
 int fclose(FILE *f);
+
+// functions for atomically appending to a log that may be in use in multiple
+// processes
+void *logfile_open(const char *filename);
+void logfile_append(void *handle, const char *msg, size_t length);
+void logfile_close(void *handle);
 
 // utility functions
 inline bool dump(const char *filename, const void *buffer, size_t size)
@@ -417,7 +430,7 @@ string MakeMachineIdentString(uint64_t ident);
 namespace Bits
 {
 inline uint32_t CountLeadingZeroes(uint32_t value);
-#if RDC64BIT
+#if ENABLED(RDOC_X64)
 inline uint64_t CountLeadingZeroes(uint64_t value);
 #endif
 };
@@ -429,10 +442,17 @@ inline uint64_t CountLeadingZeroes(uint64_t value);
 // OS_DEBUG_BREAK() - instruction that debugbreaks the debugger - define instead of function to
 // preserve callstacks
 
-#if defined(RENDERDOC_PLATFORM_WIN32)
+#if ENABLED(RDOC_WIN32)
 #include "win32/win32_specific.h"
-#elif defined(RENDERDOC_PLATFORM_POSIX)
+#elif ENABLED(RDOC_POSIX)
 #include "posix/posix_specific.h"
 #else
 #error Undefined Platform!
 #endif
+
+namespace Android
+{
+bool IsHostADB(const char *hostname);
+uint32_t StartAndroidPackageForCapture(const char *package);
+string adbExecCommand(const string &args);
+}

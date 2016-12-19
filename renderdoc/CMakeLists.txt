@@ -24,7 +24,6 @@ elseif(APPLE)
     list(APPEND RDOC_LIBRARIES
         PRIVATE m
         PRIVATE dl
-        PRIVATE log
         PRIVATE ${CMAKE_THREAD_LIBS_INIT})
 elseif(UNIX)
     find_package(PkgConfig REQUIRED)
@@ -71,6 +70,7 @@ set(sources
     api/replay/replay_enums.h
     api/replay/shader_types.h
     api/replay/vk_pipestate.h
+    api/replay/version.h
     common/common.cpp
     common/common.h
     common/custom_assert.h
@@ -98,7 +98,6 @@ set(sources
     data/glsl/gl_texsample.h
     data/glsl_shaders.cpp
     data/glsl_shaders.h
-    data/version.h
     hooks/hooks.cpp
     hooks/hooks.h
     maths/camera.cpp
@@ -134,6 +133,7 @@ set(sources
     3rdparty/lz4/lz4.h
     3rdparty/stb/stb_image.h
     3rdparty/stb/stb_image_write.h
+    3rdparty/stb/stb_image_resize.h
     3rdparty/stb/stb_impl.c
     3rdparty/stb/stb_truetype.h
     3rdparty/tinyexr/tinyexr.cpp
@@ -146,7 +146,7 @@ if(ANDROID)
         os/posix/android/android_callstack.cpp
         os/posix/android/android_process.cpp
         os/posix/android/android_threading.cpp
-        os/posix/posix_hook.cpp
+        os/posix/android/android_hook.cpp
         os/posix/posix_hook.h
         os/posix/posix_network.cpp
         os/posix/posix_process.cpp
@@ -163,7 +163,7 @@ elseif(APPLE)
         os/posix/apple/apple_callstack.cpp
         os/posix/apple/apple_process.cpp
         os/posix/apple/apple_threading.cpp
-        os/posix/posix_hook.cpp
+        os/posix/apple/apple_hook.cpp
         os/posix/posix_hook.h
         os/posix/posix_network.cpp
         os/posix/posix_process.cpp
@@ -180,7 +180,9 @@ elseif(UNIX)
         os/posix/linux/linux_callstack.cpp
         os/posix/linux/linux_process.cpp
         os/posix/linux/linux_threading.cpp
-        os/posix/posix_hook.cpp
+        os/posix/linux/linux_hook.cpp
+        3rdparty/plthook/plthook.h
+        3rdparty/plthook/plthook_elf.c
         os/posix/posix_hook.h
         os/posix/posix_network.cpp
         os/posix/posix_process.cpp
@@ -228,6 +230,10 @@ set(data
     data/glsl/text.vert
     data/glsl/array2ms.comp
     data/glsl/ms2array.comp
+    data/glsl/trisize.frag
+    data/glsl/trisize.geom
+    data/glsl/deptharr2ms.frag
+    data/glsl/depthms2arr.frag
     data/sourcecodepro.ttf
     driver/vulkan/renderdoc.json)
 
@@ -294,3 +300,8 @@ target_include_directories(renderdoc ${RDOC_INCLUDES})
 target_link_libraries(renderdoc ${RDOC_LIBRARIES})
 
 install (TARGETS renderdoc DESTINATION lib)
+
+add_custom_command(TARGET renderdoc POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/bin/)
+add_custom_command(TARGET renderdoc POST_BUILD
+	COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:renderdoc> ${CMAKE_SOURCE_DIR}/bin/)

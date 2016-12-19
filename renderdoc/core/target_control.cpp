@@ -127,15 +127,12 @@ void RenderDoc::TargetControlClientThread(void *s)
       ser.Serialise("", captures.back().timestamp);
       ser.Serialise("", path);
 
-      uint32_t len = 0;
-      RENDERDOC_GetThumbnail(captures.back().path.c_str(), NULL, len);
-      byte *thumb = new byte[len];
-      RENDERDOC_GetThumbnail(captures.back().path.c_str(), thumb, len);
+      rdctype::array<byte> buf;
+      RENDERDOC_GetThumbnail(captures.back().path.c_str(), eFileType_JPG, 0, &buf);
 
-      size_t l = len;
-      ser.Serialise("", len);
-      ser.SerialiseBuffer("", thumb, l);
-      delete[] thumb;
+      size_t sz = buf.size();
+      ser.Serialise("", buf.count);
+      ser.SerialiseBuffer("", buf.elems, sz);
     }
     else if(childprocs.size() != children.size())
     {
@@ -376,6 +373,8 @@ public:
     PacketType type;
     vector<byte> payload;
 
+    m_PID = 0;
+
     {
       Serialiser ser("", Serialiser::WRITING, false);
 
@@ -391,8 +390,6 @@ public:
 
     Serialiser *ser = NULL;
     GetPacket(type, ser);
-
-    m_PID = 0;
 
     // failed handshaking
     if(m_Socket == NULL || ser == NULL)
@@ -596,7 +593,7 @@ public:
         msg->NewCapture.path = path;
         msg->NewCapture.local = m_Local;
 
-        uint32_t thumblen = 0;
+        int32_t thumblen = 0;
         ser->Serialise("", thumblen);
 
         create_array_uninit(msg->NewCapture.thumbnail, thumblen);
@@ -705,12 +702,22 @@ extern "C" RENDERDOC_API TargetControl *RENDERDOC_CC RENDERDOC_CreateTargetContr
   if(host != NULL && host[0] != '\0')
     s = host;
 
+  bool android = false;
+
+  if(host != NULL && Android::IsHostADB(host))
+  {
+    android = true;
+    s = "127.0.0.1";
+
+    // could parse out an (optional) device name from host+4 here.
+  }
+
   Network::Socket *sock = Network::CreateClientSocket(s.c_str(), ident & 0xffff, 750);
 
   if(sock == NULL)
     return NULL;
 
-  bool localhost = Network::GetIPOctet(sock->GetRemoteIP(), 0) == 127;
+  bool localhost = !android && (Network::GetIPOctet(sock->GetRemoteIP(), 0) == 127);
 
   TargetControl *remote = new TargetControl(sock, clientName, forceConnection != 0, localhost);
 

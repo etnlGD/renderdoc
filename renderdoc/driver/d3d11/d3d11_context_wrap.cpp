@@ -2353,7 +2353,7 @@ void WrappedID3D11DeviceContext::SOSetTargets(UINT NumBuffers, ID3D11Buffer *con
         if(m_State == WRITING_CAPFRAME)
           m_MissingTracks.insert(GetIDForResource(ppSOTargets[i]));
         if(m_State == WRITING_IDLE)
-          m_pDevice->GetResourceManager()->MarkDirtyResource(GetIDForResource(ppSOTargets[i]));
+          MarkDirtyResource(GetIDForResource(ppSOTargets[i]));
       }
       bufs[i] = UNWRAP(WrappedID3D11Buffer, ppSOTargets[i]);
     }
@@ -3232,7 +3232,7 @@ void WrappedID3D11DeviceContext::OMSetRenderTargets(UINT NumViews,
         // to avoid having to track "possibly" dirty resources.
         // Besides, it's unlikely an application will set an output then not draw to it
         if(m_State == WRITING_IDLE)
-          m_pDevice->GetResourceManager()->MarkDirtyResource(GetIDForResource(res));
+          MarkDirtyResource(GetIDForResource(res));
         SAFE_RELEASE(res);
       }
 
@@ -3246,7 +3246,7 @@ void WrappedID3D11DeviceContext::OMSetRenderTargets(UINT NumViews,
     pDepthStencilView->GetResource(&res);
 
     if(m_State == WRITING_IDLE)
-      m_pDevice->GetResourceManager()->MarkDirtyResource(GetIDForResource(res));
+      MarkDirtyResource(GetIDForResource(res));
     SAFE_RELEASE(res);
   }
 
@@ -3467,7 +3467,7 @@ void WrappedID3D11DeviceContext::OMSetRenderTargetsAndUnorderedAccessViews(
       // to avoid having to track "possibly" dirty resources.
       // Besides, it's unlikely an application will set an output then not draw to it
       if(m_State == WRITING_IDLE)
-        m_pDevice->GetResourceManager()->MarkDirtyResource(GetIDForResource(res));
+        MarkDirtyResource(GetIDForResource(res));
       SAFE_RELEASE(res);
     }
 
@@ -3481,7 +3481,7 @@ void WrappedID3D11DeviceContext::OMSetRenderTargetsAndUnorderedAccessViews(
       ID3D11Resource *res = NULL;
       ppUnorderedAccessViews[i]->GetResource(&res);
       if(m_State == WRITING_IDLE)
-        m_pDevice->GetResourceManager()->MarkDirtyResource(GetIDForResource(res));
+        MarkDirtyResource(GetIDForResource(res));
       SAFE_RELEASE(res);
     }
 
@@ -3494,7 +3494,7 @@ void WrappedID3D11DeviceContext::OMSetRenderTargetsAndUnorderedAccessViews(
     pDepthStencilView->GetResource(&res);
 
     if(m_State == WRITING_IDLE)
-      m_pDevice->GetResourceManager()->MarkDirtyResource(GetIDForResource(res));
+      MarkDirtyResource(GetIDForResource(res));
     SAFE_RELEASE(res);
   }
 
@@ -3710,9 +3710,6 @@ void WrappedID3D11DeviceContext::Serialise_DebugMessages()
       msg.messageID = ID;
       msg.description = Description;
 
-      if(GetType() == D3D11_DEVICE_CONTEXT_DEFERRED)
-        msg.eventID = m_pDevice->GetImmediateContext()->GetEventID();
-
       m_pDevice->AddDebugMessage(msg);
     }
   }
@@ -3745,7 +3742,7 @@ bool WrappedID3D11DeviceContext::Serialise_DrawIndexedInstanced(UINT IndexCountP
 
   if(m_State == READING)
   {
-    AddEvent(DRAW_INDEXED_INST, desc);
+    AddEvent(desc);
     string name = "DrawIndexedInstanced(" + ToStr::Get(IndexCountPerInstance) + ", " +
                   ToStr::Get(InstanceCount) + ")";
 
@@ -3789,7 +3786,7 @@ void WrappedID3D11DeviceContext::DrawIndexedInstanced(UINT IndexCountPerInstance
   }
   else if(m_State == WRITING_IDLE)
   {
-    m_CurrentPipelineState->MarkDirty(m_pDevice->GetResourceManager());
+    m_CurrentPipelineState->MarkDirty(this);
   }
 }
 
@@ -3818,7 +3815,7 @@ bool WrappedID3D11DeviceContext::Serialise_DrawInstanced(UINT VertexCountPerInst
 
   if(m_State == READING)
   {
-    AddEvent(DRAW_INST, desc);
+    AddEvent(desc);
     string name = "DrawInstanced(" + ToStr::Get(VertexCountPerInstance) + ", " +
                   ToStr::Get(InstanceCount) + ")";
 
@@ -3860,7 +3857,7 @@ void WrappedID3D11DeviceContext::DrawInstanced(UINT VertexCountPerInstance, UINT
   }
   else if(m_State == WRITING_IDLE)
   {
-    m_CurrentPipelineState->MarkDirty(m_pDevice->GetResourceManager());
+    m_CurrentPipelineState->MarkDirty(this);
   }
 }
 
@@ -3885,7 +3882,7 @@ bool WrappedID3D11DeviceContext::Serialise_DrawIndexed(UINT IndexCount_, UINT St
 
   if(m_State == READING)
   {
-    AddEvent(DRAW_INDEXED, desc);
+    AddEvent(desc);
     string name = "DrawIndexed(" + ToStr::Get(IndexCount) + ")";
 
     FetchDrawcall draw;
@@ -3923,7 +3920,7 @@ void WrappedID3D11DeviceContext::DrawIndexed(UINT IndexCount, UINT StartIndexLoc
   }
   else if(m_State == WRITING_IDLE)
   {
-    m_CurrentPipelineState->MarkDirty(m_pDevice->GetResourceManager());
+    m_CurrentPipelineState->MarkDirty(this);
   }
 }
 
@@ -3946,7 +3943,7 @@ bool WrappedID3D11DeviceContext::Serialise_Draw(UINT VertexCount_, UINT StartVer
 
   if(m_State == READING)
   {
-    AddEvent(DRAW, desc);
+    AddEvent(desc);
     string name = "Draw(" + ToStr::Get(VertexCount) + ")";
 
     FetchDrawcall draw;
@@ -3982,7 +3979,7 @@ void WrappedID3D11DeviceContext::Draw(UINT VertexCount, UINT StartVertexLocation
   }
   else if(m_State == WRITING_IDLE)
   {
-    m_CurrentPipelineState->MarkDirty(m_pDevice->GetResourceManager());
+    m_CurrentPipelineState->MarkDirty(this);
   }
 }
 
@@ -4052,7 +4049,7 @@ bool WrappedID3D11DeviceContext::Serialise_DrawAuto()
 
   if(m_State == READING)
   {
-    AddEvent(DRAW_AUTO, desc);
+    AddEvent(desc);
     string name = "DrawAuto(<" + ToStr::Get(numVerts) + ">)";
 
     FetchDrawcall draw;
@@ -4090,7 +4087,7 @@ void WrappedID3D11DeviceContext::DrawAuto()
   }
   else if(m_State == WRITING_IDLE)
   {
-    m_CurrentPipelineState->MarkDirty(m_pDevice->GetResourceManager());
+    m_CurrentPipelineState->MarkDirty(this);
   }
 }
 
@@ -4113,7 +4110,7 @@ bool WrappedID3D11DeviceContext::Serialise_DrawIndexedInstancedIndirect(ID3D11Bu
 
   if(m_State == READING)
   {
-    AddEvent(DRAW, desc);
+    AddEvent(desc);
 
     FetchDrawcall draw;
 
@@ -4149,6 +4146,8 @@ bool WrappedID3D11DeviceContext::Serialise_DrawIndexedInstancedIndirect(ID3D11Bu
 
       name = "DrawIndexedInstancedIndirect(<" + ToStr::Get(draw.numIndices) + ", " +
              ToStr::Get(draw.numInstances) + ">)";
+
+      m_ResourceUses[GetIDForResource(argBuffer)].push_back(EventUsage(m_CurEventID, eUsage_Indirect));
     }
 
     draw.name = name;
@@ -4183,7 +4182,7 @@ void WrappedID3D11DeviceContext::DrawIndexedInstancedIndirect(ID3D11Buffer *pBuf
   }
   else if(m_State == WRITING_IDLE)
   {
-    m_CurrentPipelineState->MarkDirty(m_pDevice->GetResourceManager());
+    m_CurrentPipelineState->MarkDirty(this);
   }
 
   if(pBufferForArgs && m_State >= WRITING_CAPFRAME)
@@ -4209,7 +4208,7 @@ bool WrappedID3D11DeviceContext::Serialise_DrawInstancedIndirect(ID3D11Buffer *p
 
   if(m_State == READING)
   {
-    AddEvent(DRAW, desc);
+    AddEvent(desc);
 
     FetchDrawcall draw;
 
@@ -4232,6 +4231,8 @@ bool WrappedID3D11DeviceContext::Serialise_DrawInstancedIndirect(ID3D11Buffer *p
       draw.instanceOffset = uargs[3];
 
       RecordDrawStats(true, true, draw.numInstances);
+
+      m_ResourceUses[GetIDForResource(argBuffer)].push_back(EventUsage(m_CurEventID, eUsage_Indirect));
     }
 
     draw.name = name;
@@ -4266,7 +4267,7 @@ void WrappedID3D11DeviceContext::DrawInstancedIndirect(ID3D11Buffer *pBufferForA
   }
   else if(m_State == WRITING_IDLE)
   {
-    m_CurrentPipelineState->MarkDirty(m_pDevice->GetResourceManager());
+    m_CurrentPipelineState->MarkDirty(this);
   }
 
   if(pBufferForArgs && m_State >= WRITING_CAPFRAME)
@@ -4623,7 +4624,7 @@ void WrappedID3D11DeviceContext::CSSetUnorderedAccessViews(
       ppUnorderedAccessViews[i]->GetResource(&res);
 
       if(m_State == WRITING_IDLE)
-        m_pDevice->GetResourceManager()->MarkDirtyResource(GetIDForResource(res));
+        MarkDirtyResource(GetIDForResource(res));
       SAFE_RELEASE(res);
     }
 
@@ -4787,26 +4788,15 @@ bool WrappedID3D11DeviceContext::Serialise_ExecuteCommandList(ID3D11CommandList 
   SERIALISE_ELEMENT(uint8_t, RestoreContextState, RestoreContextState_ == TRUE);
   SERIALISE_ELEMENT(ResourceId, cmdList, GetIDForResource(pCommandList));
 
-  RDCASSERT(GetType() == D3D11_DEVICE_CONTEXT_IMMEDIATE);
-
-  if(m_State <= EXECUTING)
-  {
-    if(m_pDevice->GetResourceManager()->HasLiveResource(cmdList))
-      m_pRealContext->ExecuteCommandList(
-          UNWRAP(WrappedID3D11CommandList, m_pDevice->GetResourceManager()->GetLiveResource(cmdList)),
-          RestoreContextState);
-    else
-      RDCERR("Don't have command list serialised for %llu", cmdList);
-
-    if(!RestoreContextState)
-      m_CurrentPipelineState->Clear();
-
-    VerifyState();
-  }
-
   const string desc = m_pSerialiser->GetDebugStr();
 
   Serialise_DebugMessages();
+
+  if(m_State <= EXECUTING && RestoreContextState)
+  {
+    SAFE_DELETE(m_DeferredSavedState);
+    m_DeferredSavedState = new D3D11RenderState(this);
+  }
 
   if(m_State == READING)
   {
@@ -4814,21 +4804,9 @@ bool WrappedID3D11DeviceContext::Serialise_ExecuteCommandList(ID3D11CommandList 
 
     FetchDrawcall draw;
     draw.name = name;
-    draw.flags |= eDraw_CmdList | eDraw_PushMarker;
+    draw.flags |= eDraw_CmdList;
 
     AddDrawcall(draw, true);
-
-    auto cmdDrawChildren = m_CmdLists.find(cmdList);
-
-    if(!m_DrawcallStack.empty() && !m_DrawcallStack.back()->children.empty() &&
-       cmdDrawChildren != m_CmdLists.end())
-    {
-      m_DrawcallStack.back()->children.back().children = cmdDrawChildren->second.children;
-
-      // assign new drawcall IDs so that we don't get duplicates if this commandlist is executed
-      // again
-      RefreshDrawcallIDs(cmdDrawChildren->second);
-    }
   }
 
   return true;
@@ -4848,11 +4826,12 @@ void WrappedID3D11DeviceContext::ExecuteCommandList(ID3D11CommandList *pCommandL
 
   if(m_State == WRITING_CAPFRAME)
   {
-    SCOPED_SERIALISE_CONTEXT(EXECUTE_CMD_LIST);
-    m_pSerialiser->Serialise("context", m_ResourceID);
-    Serialise_ExecuteCommandList(pCommandList, RestoreContextState);
-
-    m_ContextRecord->AddChunk(scope.Get());
+    {
+      SCOPED_SERIALISE_CONTEXT(EXECUTE_CMD_LIST);
+      m_pSerialiser->Serialise("context", m_ResourceID);
+      Serialise_ExecuteCommandList(pCommandList, RestoreContextState);
+      m_ContextRecord->AddChunk(scope.Get());
+    }
 
     WrappedID3D11CommandList *wrapped = (WrappedID3D11CommandList *)pCommandList;
 
@@ -4872,20 +4851,32 @@ void WrappedID3D11DeviceContext::ExecuteCommandList(ID3D11CommandList *pCommandL
       D3D11ResourceRecord *cmdListRecord =
           m_pDevice->GetResourceManager()->GetResourceRecord(contextId);
 
-      if(m_DeferredRecords.find(cmdListRecord) == m_DeferredRecords.end())
-      {
-        m_DeferredRecords.insert(cmdListRecord);
-        cmdListRecord->AddRef();
-      }
-
+      // insert all the deferred chunks immediately following the execute chunk.
+      m_ContextRecord->AppendFrom(cmdListRecord);
       cmdListRecord->AddResourceReferences(m_pDevice->GetResourceManager());
+    }
+
+    // still update dirty resources for subsequent captures
+    wrapped->MarkDirtyResources(m_MissingTracks);
+
+    if(RestoreContextState)
+    {
+      // insert a chunk to let us know on replay that we finished the command list's
+      // chunks and we can restore the state
+      SCOPED_SERIALISE_CONTEXT(RESTORE_STATE_AFTER_EXEC);
+      m_pSerialiser->Serialise("context", m_ResourceID);
+      m_ContextRecord->AddChunk(scope.Get());
     }
 
     m_CurrentPipelineState->MarkReferenced(this, false);
   }
   else if(m_State == WRITING_IDLE)
   {
-    m_CurrentPipelineState->MarkDirty(m_pDevice->GetResourceManager());
+    m_CurrentPipelineState->MarkDirty(this);
+
+    WrappedID3D11CommandList *wrapped = (WrappedID3D11CommandList *)pCommandList;
+
+    wrapped->MarkDirtyResources(m_pDevice->GetResourceManager());
   }
 
   if(!RestoreContextState)
@@ -4915,7 +4906,7 @@ bool WrappedID3D11DeviceContext::Serialise_Dispatch(UINT ThreadGroupCountX_,
 
   if(m_State == READING)
   {
-    AddEvent(DISPATCH, desc);
+    AddEvent(desc);
     string name = "Dispatch(" + ToStr::Get(ThreadGroupCountX) + ", " +
                   ToStr::Get(ThreadGroupCountY) + ", " + ToStr::Get(ThreadGroupCountZ) + ")";
 
@@ -4970,7 +4961,7 @@ void WrappedID3D11DeviceContext::Dispatch(UINT ThreadGroupCountX, UINT ThreadGro
   }
   else if(m_State == WRITING_IDLE)
   {
-    m_CurrentPipelineState->MarkDirty(m_pDevice->GetResourceManager());
+    m_CurrentPipelineState->MarkDirty(this);
   }
 }
 
@@ -4996,7 +4987,7 @@ bool WrappedID3D11DeviceContext::Serialise_DispatchIndirect(ID3D11Buffer *pBuffe
 
   if(m_State == READING)
   {
-    AddEvent(DISPATCH_INDIRECT, desc);
+    AddEvent(desc);
 
     FetchDrawcall draw;
 
@@ -5017,6 +5008,8 @@ bool WrappedID3D11DeviceContext::Serialise_DispatchIndirect(ID3D11Buffer *pBuffe
       draw.dispatchDimension[0] = uargs[0];
       draw.dispatchDimension[1] = uargs[1];
       draw.dispatchDimension[2] = uargs[2];
+
+      m_ResourceUses[GetIDForResource(argBuffer)].push_back(EventUsage(m_CurEventID, eUsage_Indirect));
     }
 
     draw.name = name;
@@ -5050,7 +5043,7 @@ void WrappedID3D11DeviceContext::DispatchIndirect(ID3D11Buffer *pBufferForArgs,
   }
   else if(m_State == WRITING_IDLE)
   {
-    m_CurrentPipelineState->MarkDirty(m_pDevice->GetResourceManager());
+    m_CurrentPipelineState->MarkDirty(this);
   }
 
   if(pBufferForArgs && m_State >= WRITING_CAPFRAME)
@@ -5063,36 +5056,13 @@ bool WrappedID3D11DeviceContext::Serialise_FinishCommandList(BOOL RestoreDeferre
   SERIALISE_ELEMENT(uint8_t, RestoreDeferredContextState, RestoreDeferredContextState_ == TRUE);
   SERIALISE_ELEMENT(ResourceId, cmdList, GetIDForResource(*ppCommandList));
 
-  if(m_State <= EXECUTING && GetType() == D3D11_DEVICE_CONTEXT_DEFERRED)
-  {
-    ID3D11CommandList *ret = NULL;
-    HRESULT hr = m_pRealContext->FinishCommandList(RestoreDeferredContextState, &ret);
-
-    if(!RestoreDeferredContextState)
-      m_CurrentPipelineState->Clear();
-
-    VerifyState();
-
-    if(FAILED(hr))
-      RDCERR("Failed on finishing command list, HRESULT: 0x%08x", hr);
-
-    RDCASSERT(SUCCEEDED(hr) && ret);
-
-    ret = new WrappedID3D11CommandList(ret, m_pDevice, this, true);
-
-    if(ret)
-    {
-      m_pDevice->GetResourceManager()->AddLiveResource(cmdList, ret);
-    }
-  }
-
   const string desc = m_pSerialiser->GetDebugStr();
 
   Serialise_DebugMessages();
 
   if(m_State == READING)
   {
-    AddEvent(FINISH_CMD_LIST, desc);
+    AddEvent(desc);
     string name = "FinishCommandList() -> " + ToStr::Get(cmdList);
 
     FetchDrawcall draw;
@@ -5100,9 +5070,6 @@ bool WrappedID3D11DeviceContext::Serialise_FinishCommandList(BOOL RestoreDeferre
     draw.flags |= eDraw_CmdList;
 
     AddDrawcall(draw, true);
-
-    m_pDevice->GetImmediateContext()->m_CmdLists[cmdList] = m_ParentDrawcall;
-    m_ParentDrawcall.children.clear();
   }
 
   return true;
@@ -5154,17 +5121,30 @@ HRESULT WrappedID3D11DeviceContext::FinishCommandList(BOOL RestoreDeferredContex
 
     ID3D11CommandList *w = wrapped;
 
-    SCOPED_SERIALISE_CONTEXT(FINISH_CMD_LIST);
-    m_pSerialiser->Serialise("context", m_ResourceID);
-    Serialise_FinishCommandList(RestoreDeferredContextState, &w);
-
-    m_ContextRecord->AddChunk(scope.Get());
+    {
+      SCOPED_SERIALISE_CONTEXT(FINISH_CMD_LIST);
+      m_pSerialiser->Serialise("context", m_ResourceID);
+      Serialise_FinishCommandList(RestoreDeferredContextState, &w);
+      m_ContextRecord->AddChunk(scope.Get());
+    }
 
     D3D11ResourceRecord *r =
         m_pDevice->GetResourceManager()->GetResourceRecord(wrapped->GetResourceID());
     RDCASSERT(r);
 
     m_ContextRecord->SwapChunks(r);
+    wrapped->SetDirtyResources(m_DeferredDirty);
+
+    // if we're supposed to restore, save the state to restore to now
+    if(RestoreDeferredContextState)
+    {
+      SCOPED_SERIALISE_CONTEXT(RESTORE_STATE_AFTER_FINISH);
+      m_pSerialiser->Serialise("context", m_ResourceID);
+      D3D11RenderState rs(*m_CurrentPipelineState);
+      rs.SetSerialiser(m_pSerialiser);
+      rs.Serialise(m_State, m_pDevice);
+      m_ContextRecord->AddChunk(scope.Get());
+    }
   }
   else if(m_State == WRITING_CAPFRAME && !m_SuccessfulCapture)
   {
@@ -5192,6 +5172,9 @@ HRESULT WrappedID3D11DeviceContext::FinishCommandList(BOOL RestoreDeferredContex
     // mark that this command list is empty so that if we immediately try and capture
     // we pick up on that.
     m_EmptyCommandList = true;
+
+    // still need to propagate up dirty resources to the immediate context
+    wrapped->SetDirtyResources(m_DeferredDirty);
 
     RDCDEBUG(
         "Deferred Context %llu not capturing at the moment, Produced unsuccessful command list "
@@ -5235,7 +5218,7 @@ void WrappedID3D11DeviceContext::Flush()
   }
   else if(m_State == WRITING_IDLE)
   {
-    m_CurrentPipelineState->MarkDirty(m_pDevice->GetResourceManager());
+    m_CurrentPipelineState->MarkDirty(this);
   }
 
   m_pRealContext->Flush();
@@ -5291,7 +5274,7 @@ bool WrappedID3D11DeviceContext::Serialise_CopySubresourceRegion(
     if(srcName == "")
       srcName = ToStr::Get(Source);
 
-    AddEvent(COPY_SUBRESOURCE_REGION, desc);
+    AddEvent(desc);
     string name = "CopySubresourceRegion(" + dstName + ", " + srcName + ")";
 
     FetchDrawcall draw;
@@ -5368,7 +5351,7 @@ void WrappedID3D11DeviceContext::CopySubresourceRegion(ID3D11Resource *pDstResou
 
     if(m_pDevice->GetResourceManager()->IsResourceDirty(GetIDForResource(pSrcResource)))
     {
-      m_pDevice->GetResourceManager()->MarkDirtyResource(GetIDForResource(pDstResource));
+      MarkDirtyResource(GetIDForResource(pDstResource));
     }
     else if(WrappedID3D11Buffer::IsAlloc(pDstResource) && WrappedID3D11Buffer::IsAlloc(pSrcResource))
     {
@@ -5399,7 +5382,7 @@ void WrappedID3D11DeviceContext::CopySubresourceRegion(ID3D11Resource *pDstResou
     {
       // GPU dirty. Just let initial state handle this.
 
-      m_pDevice->GetResourceManager()->MarkDirtyResource(GetIDForResource(pDstResource));
+      MarkDirtyResource(GetIDForResource(pDstResource));
     }
   }
 
@@ -5440,7 +5423,7 @@ bool WrappedID3D11DeviceContext::Serialise_CopyResource(ID3D11Resource *pDstReso
     if(srcName == "")
       srcName = ToStr::Get(Source);
 
-    AddEvent(COPY_RESOURCE, desc);
+    AddEvent(desc);
     string name = "CopyResource(" + dstName + ", " + srcName + ")";
 
     FetchDrawcall draw;
@@ -5512,7 +5495,7 @@ void WrappedID3D11DeviceContext::CopyResource(ID3D11Resource *pDstResource,
 
     if(m_pDevice->GetResourceManager()->IsResourceDirty(GetIDForResource(pSrcResource)))
     {
-      m_pDevice->GetResourceManager()->MarkDirtyResource(GetIDForResource(pDstResource));
+      MarkDirtyResource(GetIDForResource(pDstResource));
     }
     else if(WrappedID3D11Buffer::IsAlloc(pDstResource) && WrappedID3D11Buffer::IsAlloc(pSrcResource))
     {
@@ -5540,6 +5523,8 @@ void WrappedID3D11DeviceContext::CopyResource(ID3D11Resource *pDstResource,
         m_pSerialiser->Serialise("context", m_ResourceID);
         Serialise_CopyResource(pDstResource, pSrcResource);
 
+        m_pDevice->LockForChunkRemoval();
+
         record->LockChunks();
         for(;;)
         {
@@ -5559,6 +5544,8 @@ void WrappedID3D11DeviceContext::CopyResource(ID3D11Resource *pDstResource,
           break;
         }
         record->UnlockChunks();
+
+        m_pDevice->UnlockForChunkRemoval();
 
         record->AddChunk(scope.Get());
         record->AddParent(srcRecord);
@@ -5925,7 +5912,7 @@ void WrappedID3D11DeviceContext::CopyStructureCount(ID3D11Buffer *pDstBuffer,
     ID3D11Resource *res = NULL;
     pSrcView->GetResource(&res);
 
-    m_pDevice->GetResourceManager()->MarkDirtyResource(GetIDForResource(pDstBuffer));
+    MarkDirtyResource(GetIDForResource(pDstBuffer));
 
     SAFE_RELEASE(res);
   }
@@ -5976,7 +5963,7 @@ bool WrappedID3D11DeviceContext::Serialise_ResolveSubresource(ID3D11Resource *pD
     if(srcName == "")
       srcName = ToStr::Get(SourceResource);
 
-    AddEvent(RESOLVE_SUBRESOURCE, desc);
+    AddEvent(desc);
     string name = "ResolveSubresource(" + dstName + ", " + srcName + ")";
 
     FetchDrawcall draw;
@@ -6045,41 +6032,50 @@ void WrappedID3D11DeviceContext::ResolveSubresource(ID3D11Resource *pDstResource
         m_pDevice->GetResourceManager()->GetResourceRecord(GetIDForResource(pSrcResource));
     RDCASSERT(srcRecord);
 
-    record->AddParent(srcRecord);
-
-    if(m_pDevice->GetResourceManager()->IsResourceDirty(GetIDForResource(pSrcResource)))
-      m_pDevice->GetResourceManager()->MarkDirtyResource(GetIDForResource(pDstResource));
-
-    SCOPED_SERIALISE_CONTEXT(RESOLVE_SUBRESOURCE);
-    m_pSerialiser->Serialise("context", m_ResourceID);
-    Serialise_ResolveSubresource(pDstResource, DstSubresource, pSrcResource, SrcSubresource, Format);
-
     // resolve subresource only really 'clears' if it's the only subresource.
     // This is usually the case for render target textures though.
-    if(record->NumSubResources == 1)
+    if(m_pDevice->GetResourceManager()->IsResourceDirty(GetIDForResource(pSrcResource)) ||
+       record->NumSubResources > 1)
     {
-      record->LockChunks();
-      for(;;)
-      {
-        Chunk *end = record->GetLastChunk();
-
-        if(end->GetChunkType() == CLEAR_RTV || end->GetChunkType() == CLEAR_DSV ||
-           end->GetChunkType() == CLEAR_UAV_FLOAT || end->GetChunkType() == CLEAR_UAV_INT ||
-           end->GetChunkType() == RESOLVE_SUBRESOURCE || end->GetChunkType() == COPY_RESOURCE)
-        {
-          SAFE_DELETE(end);
-
-          record->PopChunk();
-
-          continue;
-        }
-
-        break;
-      }
-      record->UnlockChunks();
+      MarkDirtyResource(GetIDForResource(pDstResource));
     }
+    else
+    {
+      record->AddParent(srcRecord);
 
-    record->AddChunk(scope.Get());
+      SCOPED_SERIALISE_CONTEXT(RESOLVE_SUBRESOURCE);
+      m_pSerialiser->Serialise("context", m_ResourceID);
+      Serialise_ResolveSubresource(pDstResource, DstSubresource, pSrcResource, SrcSubresource,
+                                   Format);
+
+      {
+        m_pDevice->LockForChunkRemoval();
+
+        record->LockChunks();
+        for(;;)
+        {
+          Chunk *end = record->GetLastChunk();
+
+          if(end->GetChunkType() == CLEAR_RTV || end->GetChunkType() == CLEAR_DSV ||
+             end->GetChunkType() == CLEAR_UAV_FLOAT || end->GetChunkType() == CLEAR_UAV_INT ||
+             end->GetChunkType() == RESOLVE_SUBRESOURCE || end->GetChunkType() == COPY_RESOURCE)
+          {
+            SAFE_DELETE(end);
+
+            record->PopChunk();
+
+            continue;
+          }
+
+          break;
+        }
+        record->UnlockChunks();
+
+        m_pDevice->UnlockForChunkRemoval();
+      }
+
+      record->AddChunk(scope.Get());
+    }
   }
 
   m_pRealContext->ResolveSubresource(
@@ -6123,7 +6119,7 @@ bool WrappedID3D11DeviceContext::Serialise_GenerateMips(ID3D11ShaderResourceView
     if(resName == "")
       resName = ToStr::Get(id);
 
-    AddEvent(GENERATE_MIPS, desc);
+    AddEvent(desc);
     string name = "GenerateMips(" + resName + ")";
 
     FetchDrawcall draw;
@@ -6168,7 +6164,7 @@ void WrappedID3D11DeviceContext::GenerateMips(ID3D11ShaderResourceView *pShaderR
     ID3D11Resource *res = NULL;
     pShaderResourceView->GetResource(&res);
     ResourceId id = GetIDForResource(res);
-    m_pDevice->GetResourceManager()->MarkDirtyResource(id);
+    MarkDirtyResource(id);
     SAFE_RELEASE(res);
   }
 
@@ -6282,7 +6278,7 @@ bool WrappedID3D11DeviceContext::Serialise_ClearRenderTargetView(
 
   if(m_State == READING)
   {
-    AddEvent(CLEAR_RTV, desc);
+    AddEvent(desc);
     string name = "ClearRenderTargetView(" + ToStr::Get(Color[0]) + ", " + ToStr::Get(Color[1]) +
                   ", " + ToStr::Get(Color[2]) + ", " + ToStr::Get(Color[3]) + ")";
 
@@ -6346,6 +6342,8 @@ void WrappedID3D11DeviceContext::ClearRenderTargetView(ID3D11RenderTargetView *p
     D3D11ResourceRecord *record = m_pDevice->GetResourceManager()->GetResourceRecord(id);
     RDCASSERT(record);
 
+    m_pDevice->LockForChunkRemoval();
+
     record->LockChunks();
     for(;;)
     {
@@ -6365,6 +6363,8 @@ void WrappedID3D11DeviceContext::ClearRenderTargetView(ID3D11RenderTargetView *p
       break;
     }
     record->UnlockChunks();
+
+    m_pDevice->UnlockForChunkRemoval();
 
     record->AddChunk(scope.Get());
   }
@@ -6458,7 +6458,7 @@ bool WrappedID3D11DeviceContext::Serialise_ClearUnorderedAccessViewUint(
 
   if(m_State == READING)
   {
-    AddEvent(CLEAR_UAV_INT, desc);
+    AddEvent(desc);
     string name = "ClearUnorderedAccessViewUint(" + ToStr::Get(Values[0]) + ", " +
                   ToStr::Get(Values[1]) + ", " + ToStr::Get(Values[2]) + ", " +
                   ToStr::Get(Values[3]) + ")";
@@ -6512,6 +6512,8 @@ void WrappedID3D11DeviceContext::ClearUnorderedAccessViewUint(
         m_pDevice->GetResourceManager()->GetResourceRecord(GetIDForResource(pUnorderedAccessView));
     RDCASSERT(record);
 
+    m_pDevice->LockForChunkRemoval();
+
     record->LockChunks();
     for(;;)
     {
@@ -6531,6 +6533,8 @@ void WrappedID3D11DeviceContext::ClearUnorderedAccessViewUint(
       break;
     }
     record->UnlockChunks();
+
+    m_pDevice->UnlockForChunkRemoval();
 
     record->AddChunk(scope.Get());
   }
@@ -6627,7 +6631,7 @@ bool WrappedID3D11DeviceContext::Serialise_ClearUnorderedAccessViewFloat(
 
   if(m_State == READING)
   {
-    AddEvent(CLEAR_UAV_FLOAT, desc);
+    AddEvent(desc);
     string name = "ClearUnorderedAccessViewFloat(" + ToStr::Get(Values[0]) + ", " +
                   ToStr::Get(Values[1]) + ", " + ToStr::Get(Values[2]) + ", " +
                   ToStr::Get(Values[3]) + ", " + ")";
@@ -6680,6 +6684,8 @@ void WrappedID3D11DeviceContext::ClearUnorderedAccessViewFloat(
         m_pDevice->GetResourceManager()->GetResourceRecord(GetIDForResource(pUnorderedAccessView));
     RDCASSERT(record);
 
+    m_pDevice->LockForChunkRemoval();
+
     record->LockChunks();
     for(;;)
     {
@@ -6699,6 +6705,8 @@ void WrappedID3D11DeviceContext::ClearUnorderedAccessViewFloat(
       break;
     }
     record->UnlockChunks();
+
+    m_pDevice->UnlockForChunkRemoval();
 
     record->AddChunk(scope.Get());
   }
@@ -6783,7 +6791,7 @@ bool WrappedID3D11DeviceContext::Serialise_ClearDepthStencilView(
 
   if(m_State == READING)
   {
-    AddEvent(CLEAR_DSV, desc);
+    AddEvent(desc);
     string name = "ClearDepthStencilView(" + ToStr::Get(Depth) + ", " + ToStr::Get(Stencil) + ")";
 
     FetchDrawcall draw;
@@ -6842,6 +6850,8 @@ void WrappedID3D11DeviceContext::ClearDepthStencilView(ID3D11DepthStencilView *p
         m_pDevice->GetResourceManager()->GetResourceRecord(GetIDForResource(pDepthStencilView));
     RDCASSERT(record);
 
+    m_pDevice->LockForChunkRemoval();
+
     record->LockChunks();
     for(;;)
     {
@@ -6861,6 +6871,8 @@ void WrappedID3D11DeviceContext::ClearDepthStencilView(ID3D11DepthStencilView *p
       break;
     }
     record->UnlockChunks();
+
+    m_pDevice->UnlockForChunkRemoval();
 
     record->AddChunk(scope.Get());
   }
@@ -7555,7 +7567,7 @@ HRESULT WrappedID3D11DeviceContext::Map(ID3D11Resource *pResource, UINT Subresou
     directMap = true;
     m_HighTrafficResources.insert(id);
     if(m_State != WRITING_CAPFRAME)
-      m_pDevice->GetResourceManager()->MarkDirtyResource(id);
+      MarkDirtyResource(id);
   }
 
   if(directMap && m_State == WRITING_IDLE)
@@ -7610,7 +7622,7 @@ HRESULT WrappedID3D11DeviceContext::Map(ID3D11Resource *pResource, UINT Subresou
       if(record->UpdateCount > 60 && RenderDoc::Inst().GetCaptureOptions().VerifyMapWrites == 0)
       {
         m_HighTrafficResources.insert(Id);
-        m_pDevice->GetResourceManager()->MarkDirtyResource(Id);
+        MarkDirtyResource(Id);
 
         return ret;
       }
@@ -7931,6 +7943,8 @@ void WrappedID3D11DeviceContext::Unmap(ID3D11Resource *pResource, UINT Subresour
             m_pDevice->GetResourceManager()->GetResourceRecord(GetIDForResource(pResource));
         RDCASSERT(record);
 
+        D3D11ResourceRecord *baserecord = record;
+
         if(record->NumSubResources > (int)Subresource)
           record = (D3D11ResourceRecord *)record->SubResources[Subresource];
 
@@ -7946,7 +7960,7 @@ void WrappedID3D11DeviceContext::Unmap(ID3D11Resource *pResource, UINT Subresour
 
           Chunk *chunk = scope.Get();
 
-          record->AddChunk(chunk);
+          baserecord->AddChunk(chunk);
           record->SetDataPtr(chunk->GetData());
 
           record->DataInSerialiser = true;

@@ -197,7 +197,13 @@ struct ThumbCommand : public Command
   virtual void AddOptions(cmdline::parser &parser)
   {
     parser.set_footer("<filename.rdc>");
-    parser.add<string>("out", 'o', "The output filename to save the jpg to", false, "filename.jpg");
+    parser.add<string>("out", 'o', "The output filename to save the file to", true, "filename.jpg");
+    parser.add<string>("format", 'f',
+                       "The format of the output file. If empty, detected from filename", false, "",
+                       cmdline::oneof<string>("jpg", "png", "bmp", "tga"));
+    parser.add<uint32_t>(
+        "max-size", 's',
+        "The maximum dimension of the thumbnail. Default is 0, which is unlimited.", false, 0);
   }
   virtual const char *Description() { return "Saves a capture's embedded thumbnail to disk."; }
   virtual bool IsInternalOnly() { return false; }
@@ -214,33 +220,42 @@ struct ThumbCommand : public Command
 
     string filename = parser.rest()[0];
 
-    string jpgname;
+    string outfile = parser.get<string>("out");
 
-    if(parser.exist("out"))
+    string format = parser.get<string>("format");
+
+    FileType type = eFileType_JPG;
+
+    if(format == "png")
     {
-      jpgname = parser.get<string>("out");
+      type = eFileType_PNG;
+    }
+    else if(format == "tga")
+    {
+      type = eFileType_TGA;
+    }
+    else if(format == "bmp")
+    {
+      type = eFileType_BMP;
     }
     else
     {
-      jpgname = filename;
+      const char *dot = strrchr(outfile.c_str(), '.');
 
-      if(jpgname[jpgname.length() - 4] == '.' && jpgname[jpgname.length() - 3] == 'r' &&
-         jpgname[jpgname.length() - 2] == 'd' && jpgname[jpgname.length() - 1] == 'c')
-      {
-        jpgname.pop_back();
-        jpgname.pop_back();
-        jpgname.pop_back();
-
-        jpgname += "jpg";
-      }
+      if(dot != NULL && strstr(dot, "png"))
+        type = eFileType_PNG;
+      else if(dot != NULL && strstr(dot, "tga"))
+        type = eFileType_TGA;
+      else if(dot != NULL && strstr(dot, "bmp"))
+        type = eFileType_BMP;
       else
-      {
-        jpgname += ".jpg";
-      }
+        std::cerr << "Couldn't guess format from '" << outfile << "', defaulting to jpg."
+                  << std::endl;
     }
 
-    uint32_t len = 0;
-    bool32 ret = RENDERDOC_GetThumbnail(filename.c_str(), NULL, len);
+    rdctype::array<byte> buf;
+    bool32 ret =
+        RENDERDOC_GetThumbnail(filename.c_str(), type, parser.get<uint32_t>("max-size"), &buf);
 
     if(!ret)
     {
@@ -248,24 +263,19 @@ struct ThumbCommand : public Command
     }
     else
     {
-      byte *jpgbuf = new byte[len];
-      RENDERDOC_GetThumbnail(filename.c_str(), jpgbuf, len);
-
-      FILE *f = fopen(jpgname.c_str(), "wb");
+      FILE *f = fopen(outfile.c_str(), "wb");
 
       if(!f)
       {
-        std::cerr << "Couldn't open destination file '" << jpgname << "'" << std::endl;
+        std::cerr << "Couldn't open destination file '" << outfile << "'" << std::endl;
       }
       else
       {
-        fwrite(jpgbuf, 1, len, f);
+        fwrite(buf.elems, 1, buf.count, f);
         fclose(f);
 
-        std::cout << "Wrote thumbnail from '" << filename << "' to '" << jpgname << "'." << std::endl;
+        std::cout << "Wrote thumbnail from '" << filename << "' to '" << outfile << "'." << std::endl;
       }
-
-      delete[] jpgbuf;
     }
 
     return 0;
@@ -374,8 +384,8 @@ struct InjectCommand : public Command
 
     std::cout << "Injecting into PID " << PID << std::endl;
 
-    uint32_t ident = RENDERDOC_InjectIntoProcess(PID, logFile.empty() ? "" : logFile.c_str(), &opts,
-                                                 parser.exist("wait-for-exit"));
+    uint32_t ident = RENDERDOC_InjectIntoProcess(PID, NULL, logFile.empty() ? "" : logFile.c_str(),
+                                                 &opts, parser.exist("wait-for-exit"));
 
     if(ident == 0)
     {
@@ -532,13 +542,15 @@ struct ReplayCommand : public Command
   }
 };
 
-struct Cap32For64Command : public Command
+struct CapAltBitCommand : public Command
 {
   virtual void AddOptions(cmdline::parser &parser)
   {
     parser.add<uint32_t>("pid", 0, "");
     parser.add<string>("log", 0, "");
+    parser.add<string>("debuglog", 0, "");
     parser.add<string>("capopts", 0, "");
+    parser.stop_at_rest(true);
   }
   virtual const char *Description() { return "Internal use only!"; }
   virtual bool IsInternalOnly() { return true; }
@@ -548,8 +560,91 @@ struct Cap32For64Command : public Command
     CaptureOptions cmdopts;
     readCapOpts(parser.get<string>("capopts").c_str(), &cmdopts);
 
-    return RENDERDOC_InjectIntoProcess(parser.get<uint32_t>("pid"),
-                                       parser.get<string>("log").c_str(), &cmdopts, false);
+    std::vector<std::string> rest = parser.rest();
+
+    if(rest.size() % 3 != 0)
+    {
+      std::cerr << "Invalid generated capaltbit command rest.size() == " << rest.size() << std::endl;
+      return 0;
+    }
+
+    int numEnvs = int(rest.size() / 3);
+
+    void *env = RENDERDOC_MakeEnvironmentModificationList(numEnvs);
+
+    for(int i = 0; i < numEnvs; i++)
+    {
+      string typeString = rest[i * 3 + 0];
+
+      EnvironmentModificationType type = eEnvMod_Set;
+      EnvironmentSeparator sep = eEnvSep_None;
+
+      if(typeString == "+env-replace")
+      {
+        type = eEnvMod_Set;
+        sep = eEnvSep_None;
+      }
+      else if(typeString == "+env-append-platform")
+      {
+        type = eEnvMod_Append;
+        sep = eEnvSep_Platform;
+      }
+      else if(typeString == "+env-append-semicolon")
+      {
+        type = eEnvMod_Append;
+        sep = eEnvSep_SemiColon;
+      }
+      else if(typeString == "+env-append-colon")
+      {
+        type = eEnvMod_Append;
+        sep = eEnvSep_Colon;
+      }
+      else if(typeString == "+env-append")
+      {
+        type = eEnvMod_Append;
+        sep = eEnvSep_None;
+      }
+      else if(typeString == "+env-prepend-platform")
+      {
+        type = eEnvMod_Prepend;
+        sep = eEnvSep_Platform;
+      }
+      else if(typeString == "+env-prepend-semicolon")
+      {
+        type = eEnvMod_Prepend;
+        sep = eEnvSep_SemiColon;
+      }
+      else if(typeString == "+env-prepend-colon")
+      {
+        type = eEnvMod_Prepend;
+        sep = eEnvSep_Colon;
+      }
+      else if(typeString == "+env-prepend")
+      {
+        type = eEnvMod_Prepend;
+        sep = eEnvSep_None;
+      }
+      else
+      {
+        std::cerr << "Invalid generated capaltbit env '" << rest[i * 3 + 0] << std::endl;
+        RENDERDOC_FreeEnvironmentModificationList(env);
+        return 0;
+      }
+
+      RENDERDOC_SetEnvironmentModification(env, i, rest[i * 3 + 1].c_str(), rest[i * 3 + 2].c_str(),
+                                           type, sep);
+    }
+
+    string debuglog = parser.get<string>("debuglog");
+
+    RENDERDOC_SetDebugLogFile(debuglog.c_str());
+
+    int ret = RENDERDOC_InjectIntoProcess(parser.get<uint32_t>("pid"), env,
+                                          parser.get<string>("log").c_str(), &cmdopts, false);
+
+    RENDERDOC_FreeEnvironmentModificationList(env);
+
+    return ret;
   }
 };
 
@@ -583,7 +678,7 @@ int renderdoccmd(std::vector<std::string> &argv)
     add_command("inject", new InjectCommand());
     add_command("remoteserver", new RemoteServerCommand());
     add_command("replay", new ReplayCommand());
-    add_command("cap32for64", new Cap32For64Command());
+    add_command("capaltbit", new CapAltBitCommand());
 
     if(argv.size() <= 1)
     {

@@ -705,6 +705,8 @@ private:
 
     if(w != NULL && glhooks.m_HaveContextCreation)
     {
+      SCOPED_LOCK(glLock);
+
       RECT r;
       GetClientRect(w, &r);
 
@@ -811,16 +813,15 @@ private:
       glhooks.wglGetPixelFormatAttribivARB_realfunc = (PFNWGLGETPIXELFORMATATTRIBIVARBPROC)realFunc;
       return (PROC)&wglGetPixelFormatAttribivARB_hooked;
     }
-    if(!strncmp(func, "wgl", 3))    // assume wgl functions are safe to just pass straight through
-    {
-      return realFunc;
-    }
 
     HookCheckGLExtensions();
 
+    // assume wgl functions are safe to just pass straight through
+    if(!strncmp(func, "wgl", 3))
+      return realFunc;
+
     // at the moment the unsupported functions are all lowercase (as their name is generated from
-    // the
-    // typedef name).
+    // the typedef name).
     string lowername = strlower(string(func));
 
     CheckUnsupported();
@@ -1306,6 +1307,11 @@ OpenGLHook OpenGLHook::glhooks;
 const GLHookSet &GetRealGLFunctions()
 {
   return OpenGLHook::glhooks.GetRealGLFunctions();
+}
+
+Threading::CriticalSection &GetGLLock()
+{
+  return glLock;
 }
 
 void MakeContextCurrent(GLWindowingData data)

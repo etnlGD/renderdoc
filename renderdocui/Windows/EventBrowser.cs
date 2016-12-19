@@ -47,10 +47,6 @@ namespace renderdocui.Windows
             public UInt32 eventID = 0;
 
             public bool marker = false;
-
-            public ResourceId defCtx = ResourceId.Null;
-            public UInt32 firstDefEv = 0;
-            public UInt32 lastDefEv = 0;
         }
 
         private TreelistView.Node m_FrameNode = null;
@@ -235,14 +231,16 @@ namespace renderdocui.Windows
             return new TreelistView.Node(new object[] { "", "", text, -1.0 });
         }
 
-        private TreelistView.Node MakeNode(UInt32 minEID, UInt32 maxEID, UInt32 draw, string text, double duration)
+        private TreelistView.Node MakeNode(UInt32 minEID, UInt32 maxEID, UInt32 minDraw, UInt32 maxDraw, string text, double duration)
         {
-            return new TreelistView.Node(new object[] { String.Format("{0}-{1}", minEID, maxEID), draw, text, duration });
+            string eidString = (maxEID == minEID) ? maxEID.ToString() : String.Format("{0}-{1}", minEID, maxEID);
+            string drawString = (maxDraw == minDraw) ? maxDraw.ToString() : String.Format("{0}-{1}", minDraw, maxDraw);
+            return new TreelistView.Node(new object[] {eidString, drawString, text.Replace("&", "&&"), duration });
         }
 
         private TreelistView.Node MakeNode(UInt32 EID, UInt32 draw, string text, double duration)
         {
-            return new TreelistView.Node(new object[] { EID, draw, text, duration });
+            return new TreelistView.Node(new object[] { EID, draw, text.Replace("&", "&&"), duration });
         }
 
         private uint GetEndEventID(FetchDrawcall drawcall)
@@ -251,6 +249,14 @@ namespace renderdocui.Windows
                 return drawcall.eventID;
 
             return GetEndEventID(drawcall.children.Last());
+        }
+
+        private uint GetEndDrawID(FetchDrawcall drawcall)
+        {
+            if (drawcall.children.Length == 0)
+                return drawcall.drawcallID;
+
+            return GetEndDrawID(drawcall.children.Last());
         }
 
         private TreelistView.Node AddDrawcall(FetchDrawcall drawcall, TreelistView.Node root)
@@ -265,7 +271,7 @@ namespace renderdocui.Windows
             TreelistView.Node drawNode = null;
             
             if(drawcall.children.Length > 0)
-                drawNode = MakeNode(eventNum, GetEndEventID(drawcall), drawcall.drawcallID, drawcall.name, 0.0);
+                drawNode = MakeNode(eventNum, GetEndEventID(drawcall), drawcall.drawcallID, GetEndDrawID(drawcall), drawcall.name, 0.0);
             else
                 drawNode = MakeNode(eventNum, drawcall.drawcallID, drawcall.name, 0.0);
 
@@ -293,22 +299,6 @@ namespace renderdocui.Windows
             DeferredEvent def = new DeferredEvent();
             def.eventID = eventNum;
             def.marker = (drawcall.flags & DrawcallFlags.SetMarker) != 0;
-
-            if (drawcall.context != m_Core.FrameInfo.immContextId)
-            {
-                def.defCtx = drawcall.context;
-                def.lastDefEv = drawcall.eventID;
-
-                FetchDrawcall parent = drawcall.parent;
-                while(!parent.name.Contains("ExecuteCommand"))
-                    parent = parent.parent;
-
-                def.eventID = parent.eventID-1;
-
-                def.firstDefEv = parent.children[0].eventID;
-                if(parent.children[0].events.Length > 0)
-                    def.firstDefEv = parent.children[0].events[0].eventID;
-            }
 
             drawNode.Tag = def;
 
@@ -422,6 +412,9 @@ namespace renderdocui.Windows
             m_FrameNode = null;
             eventView.EndUpdate();
 
+            prevDraw.Enabled = false;
+            nextDraw.Enabled = false;
+
             ClearBookmarks();
 
             findEventButton.Enabled = false;
@@ -438,6 +431,9 @@ namespace renderdocui.Windows
             timeDraws.Enabled = true;
             toggleBookmark.Enabled = true;
             export.Enabled = true;
+
+            prevDraw.Enabled = false;
+            nextDraw.Enabled = false;
 
             ClearBookmarks();
 
@@ -624,8 +620,8 @@ namespace renderdocui.Windows
 
         private int FindEvent(TreelistView.NodeCollection nodes, string filter, UInt32 after, bool forward)
         {
-			if(nodes == null) return -1;
-		
+            if(nodes == null) return -1;
+        
             for (int i = forward ? 0 : nodes.Count - 1;
                  i >= 0 && i < nodes.Count;
                  i += forward ? 1 : -1)
@@ -673,14 +669,20 @@ namespace renderdocui.Windows
 
         private void eventView_AfterSelect(object sender, TreeViewEventArgs e)
         {
+            prevDraw.Enabled = false;
+            nextDraw.Enabled = false;
+
             if (eventView.SelectedNode.Tag != null)
             {
                 DeferredEvent def = eventView.SelectedNode.Tag as DeferredEvent;
+                m_Core.SetEventID(this, def.eventID);
 
-                if (def.defCtx != ResourceId.Null)
-                    m_Core.SetContextFilter(this, def.eventID, def.defCtx, def.firstDefEv, def.lastDefEv);
-                else
-                    m_Core.SetEventID(this, def.eventID);
+                FetchDrawcall draw = m_Core.CurDrawcall;
+
+                if (draw != null && draw.previous != null)
+                    prevDraw.Enabled = true;
+                if (draw != null && draw.next != null)
+                    nextDraw.Enabled = true;
             }
 
             HighlightBookmarks();
@@ -699,12 +701,12 @@ namespace renderdocui.Windows
 
         private void ShowFind()
         {
-            HideJumpAndFind();
+            if(!findStrip.Visible)
+                HideJumpAndFind();
 
             jumpStrip.Visible = false;
             findStrip.Visible = true;
 
-            findEvent.Text = "";
             findEvent.Focus();
             findEvent.BackColor = SystemColors.Window;
         }
@@ -712,18 +714,22 @@ namespace renderdocui.Windows
         private void HideJumpAndFind()
         {
             jumpStrip.Visible = false;
+            findStrip.Visible = false;
 
-            if (findEvent.Text.Length == 0)
-            {
-                findStrip.Visible = false;
-
-                ClearFindIcons();
-            }
+            ClearFindIcons();
         }
 
         private void eventView_KeyDown(object sender, KeyEventArgs e)
         {
             if (!m_Core.LogLoaded) return;
+
+            if (e.KeyCode == Keys.F3)
+            {
+                if(e.Shift)
+                    Find(false);
+                else
+                    Find(true);
+            }
 
             if(e.Control)
             {
@@ -844,7 +850,10 @@ namespace renderdocui.Windows
         }
         private void jumpFind_Leave(object sender, EventArgs e)
         {
-            HideJumpAndFind();
+            if (findEvent.Text == "")
+            {
+                HideJumpAndFind();
+            }
         }
 
         private void jumpToEID_TextChanged(object sender, EventArgs e)
@@ -894,13 +903,30 @@ namespace renderdocui.Windows
             findHighlight.Enabled = false;
         }
 
+        private void findEvent_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.F3)
+            {
+                if (findHighlight.Enabled)
+                    findHighlight.Enabled = false;
+
+                findHighlight_Tick(sender, null);
+
+                if (findEvent.Text.Length > 0)
+                {
+                    Find(e.Shift ? false : true);
+                }
+
+                e.Handled = true;
+            }
+        }
+
         private void findEvent_KeyPress(object sender, KeyPressEventArgs e)
         {
             // escape key
             if (e.KeyChar == '\0')
             {
                 findHighlight.Enabled = false;
-                findEvent.Text = "";
 
                 HideJumpAndFind();
 
@@ -911,10 +937,9 @@ namespace renderdocui.Windows
             if (e.KeyChar == '\n' || e.KeyChar == '\r')
             {
                 if (findHighlight.Enabled)
-                {
                     findHighlight.Enabled = false;
-                    findHighlight_Tick(sender, null);
-                }
+
+                findHighlight_Tick(sender, null);
 
                 if (findEvent.Text.Length > 0)
                 {
@@ -952,8 +977,6 @@ namespace renderdocui.Windows
 
         private void closeFind_Click(object sender, EventArgs e)
         {
-            findEvent.Text = "";
-
             HideJumpAndFind();
 
             eventView.Focus();
@@ -972,6 +995,22 @@ namespace renderdocui.Windows
         private void findPrev_Click(object sender, EventArgs e)
         {
             Find(false);
+        }
+
+        private void prevDraw_Click(object sender, EventArgs e)
+        {
+            FetchDrawcall draw = m_Core.CurDrawcall;
+
+            if (draw != null && draw.previous != null)
+                SelectEvent(draw.previous.eventID);
+        }
+
+        private void nextDraw_Click(object sender, EventArgs e)
+        {
+            FetchDrawcall draw = m_Core.CurDrawcall;
+
+            if (draw != null && draw.next != null)
+                SelectEvent(draw.next.eventID);
         }
 
         private void Find(bool forward)

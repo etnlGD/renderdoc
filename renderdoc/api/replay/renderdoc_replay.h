@@ -39,7 +39,8 @@ typedef uint32_t bool32;
 #endif
 #define RENDERDOC_CC __cdecl
 
-#elif defined(RENDERDOC_PLATFORM_POSIX)
+#elif defined(RENDERDOC_PLATFORM_LINUX) || defined(RENDERDOC_PLATFORM_APPLE) || \
+    defined(RENDERDOC_PLATFORM_ANDROID)
 
 #ifdef RENDERDOC_EXPORTS
 #define RENDERDOC_API __attribute__((visibility("default")))
@@ -65,9 +66,10 @@ typedef uint32_t bool32;
 
 #if defined(RENDERDOC_WINDOWING_XLIB)
 
-#include <X11/Xlib.h>
-
-#undef None
+// can't include xlib.h here as it defines a ton of crap like None
+// and Bool etc which can interfere with other headers
+typedef struct _XDisplay Display;
+typedef unsigned long Drawable;
 
 struct XlibWindowData
 {
@@ -79,9 +81,8 @@ struct XlibWindowData
 
 #if defined(RENDERDOC_WINDOWING_XCB)
 
-#include <xcb/xcb.h>
-
-#undef None
+struct xcb_connection_t;
+typedef uint32_t xcb_window_t;
 
 struct XCBWindowData
 {
@@ -136,6 +137,7 @@ struct ResourceId
 #include "capture_options.h"
 #include "control_types.h"
 #include "d3d11_pipestate.h"
+#include "d3d12_pipestate.h"
 #include "data_types.h"
 #include "gl_pipestate.h"
 #include "replay_enums.h"
@@ -161,8 +163,14 @@ struct IReplayOutput
   virtual bool SetPixelContextLocation(uint32_t x, uint32_t y) = 0;
   virtual void DisablePixelContext() = 0;
 
+  virtual bool GetMinMax(PixelValue *minval, PixelValue *maxval) = 0;
+  virtual bool GetHistogram(float minval, float maxval, bool channels[4],
+                            rdctype::array<uint32_t> *histogram) = 0;
+
+  virtual ResourceId GetCustomShaderTexID() = 0;
   virtual bool PickPixel(ResourceId texID, bool customShader, uint32_t x, uint32_t y,
                          uint32_t sliceFace, uint32_t mip, uint32_t sample, PixelValue *val) = 0;
+  virtual uint32_t PickVertex(uint32_t eventID, uint32_t x, uint32_t y) = 0;
 };
 
 #endif
@@ -204,6 +212,13 @@ extern "C" RENDERDOC_API void RENDERDOC_CC ReplayOutput_DisablePixelContext(Repl
 extern "C" RENDERDOC_API void RENDERDOC_CC ReplayOutput_GetCustomShaderTexID(ReplayOutput *output,
                                                                              ResourceId *id);
 
+extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayOutput_GetMinMax(ReplayOutput *output,
+                                                                    PixelValue *minval,
+                                                                    PixelValue *maxval);
+extern "C" RENDERDOC_API bool32 RENDERDOC_CC
+ReplayOutput_GetHistogram(ReplayOutput *output, float minval, float maxval, bool32 channels[4],
+                          rdctype::array<uint32_t> *histogram);
+
 extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayOutput_PickPixel(
     ReplayOutput *output, ResourceId texID, bool32 customShader, uint32_t x, uint32_t y,
     uint32_t sliceFace, uint32_t mip, uint32_t sample, PixelValue *val);
@@ -229,9 +244,9 @@ struct IReplayRenderer
   virtual bool HasCallstacks() = 0;
   virtual bool InitResolver() = 0;
 
-  virtual bool SetContextFilter(ResourceId id, uint32_t firstDefEv, uint32_t lastDefEv) = 0;
   virtual bool SetFrameEvent(uint32_t eventID, bool force) = 0;
   virtual bool GetD3D11PipelineState(D3D11PipelineState *state) = 0;
+  virtual bool GetD3D12PipelineState(D3D12PipelineState *state) = 0;
   virtual bool GetGLPipelineState(GLPipelineState *state) = 0;
   virtual bool GetVulkanPipelineState(VulkanPipelineState *state) = 0;
 
@@ -278,12 +293,6 @@ struct IReplayRenderer
 
   virtual bool GetPostVSData(uint32_t instID, MeshDataStage stage, MeshFormat *data) = 0;
 
-  virtual bool GetMinMax(ResourceId tex, uint32_t sliceFace, uint32_t mip, uint32_t sample,
-                         FormatComponentType typeHint, PixelValue *minval, PixelValue *maxval) = 0;
-  virtual bool GetHistogram(ResourceId tex, uint32_t sliceFace, uint32_t mip, uint32_t sample,
-                            FormatComponentType typeHint, float minval, float maxval,
-                            bool channels[4], rdctype::array<uint32_t> *histogram) = 0;
-
   virtual bool GetBufferData(ResourceId buff, uint64_t offset, uint64_t len,
                              rdctype::array<byte> *data) = 0;
   virtual bool GetTextureData(ResourceId tex, uint32_t arrayIdx, uint32_t mip,
@@ -321,15 +330,13 @@ extern "C" RENDERDOC_API void RENDERDOC_CC ReplayRenderer_FileChanged(ReplayRend
 extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayRenderer_HasCallstacks(ReplayRenderer *rend);
 extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayRenderer_InitResolver(ReplayRenderer *rend);
 
-extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayRenderer_SetContextFilter(ReplayRenderer *rend,
-                                                                             ResourceId id,
-                                                                             uint32_t firstDefEv,
-                                                                             uint32_t lastDefEv);
 extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayRenderer_SetFrameEvent(ReplayRenderer *rend,
                                                                           uint32_t eventID,
                                                                           bool32 force);
 extern "C" RENDERDOC_API bool32 RENDERDOC_CC
 ReplayRenderer_GetD3D11PipelineState(ReplayRenderer *rend, D3D11PipelineState *state);
+extern "C" RENDERDOC_API bool32 RENDERDOC_CC
+ReplayRenderer_GetD3D12PipelineState(ReplayRenderer *rend, D3D12PipelineState *state);
 extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayRenderer_GetGLPipelineState(ReplayRenderer *rend,
                                                                                GLPipelineState *state);
 extern "C" RENDERDOC_API bool32 RENDERDOC_CC
@@ -406,14 +413,6 @@ extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayRenderer_GetPostVSData(Replay
                                                                           MeshDataStage stage,
                                                                           MeshFormat *data);
 
-extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayRenderer_GetMinMax(
-    ReplayRenderer *rend, ResourceId tex, uint32_t sliceFace, uint32_t mip, uint32_t sample,
-    FormatComponentType typeHint, PixelValue *minval, PixelValue *maxval);
-extern "C" RENDERDOC_API bool32 RENDERDOC_CC
-ReplayRenderer_GetHistogram(ReplayRenderer *rend, ResourceId tex, uint32_t sliceFace, uint32_t mip,
-                            uint32_t sample, FormatComponentType typeHint, float minval,
-                            float maxval, bool32 channels[4], rdctype::array<uint32_t> *histogram);
-
 extern "C" RENDERDOC_API bool32 RENDERDOC_CC ReplayRenderer_GetBufferData(
     ReplayRenderer *rend, ResourceId buff, uint64_t offset, uint64_t len, rdctype::array<byte> *data);
 extern "C" RENDERDOC_API bool32 RENDERDOC_CC
@@ -426,6 +425,8 @@ ReplayRenderer_GetTextureData(ReplayRenderer *rend, ResourceId tex, uint32_t arr
 struct ITargetControl
 {
   virtual void Shutdown() = 0;
+
+  virtual bool Connected() = 0;
 
   virtual const char *GetTarget() = 0;
   virtual const char *GetAPI() = 0;
@@ -638,7 +639,7 @@ extern "C" RENDERDOC_API uint32_t RENDERDOC_CC
 RENDERDOC_ExecuteAndInject(const char *app, const char *workingDir, const char *cmdLine, void *env,
                            const char *logfile, const CaptureOptions *opts, bool32 waitForExit);
 extern "C" RENDERDOC_API uint32_t RENDERDOC_CC RENDERDOC_InjectIntoProcess(
-    uint32_t pid, const char *logfile, const CaptureOptions *opts, bool32 waitForExit);
+    uint32_t pid, void *env, const char *logfile, const CaptureOptions *opts, bool32 waitForExit);
 
 //////////////////////////////////////////////////////////////////////////
 // Miscellaneous!
@@ -646,9 +647,14 @@ extern "C" RENDERDOC_API uint32_t RENDERDOC_CC RENDERDOC_InjectIntoProcess(
 
 extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_TriggerExceptionHandler(void *exceptionPtrs,
                                                                              bool32 crashed);
+extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_SetDebugLogFile(const char *filename);
 extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_LogText(const char *text);
-extern "C" RENDERDOC_API bool32 RENDERDOC_CC RENDERDOC_GetThumbnail(const char *filename, byte *buf,
-                                                                    uint32_t &len);
+extern "C" RENDERDOC_API void RENDERDOC_CC RENDERDOC_LogMessage(LogMessageType type,
+                                                                const char *project, const char *file,
+                                                                unsigned int line, const char *text);
+extern "C" RENDERDOC_API bool32 RENDERDOC_CC RENDERDOC_GetThumbnail(const char *filename,
+                                                                    FileType type, uint32_t maxsize,
+                                                                    rdctype::array<byte> *buf);
 extern "C" RENDERDOC_API const char *RENDERDOC_CC RENDERDOC_GetVersionString();
 extern "C" RENDERDOC_API const char *RENDERDOC_CC RENDERDOC_GetCommitHash();
 extern "C" RENDERDOC_API const char *RENDERDOC_CC RENDERDOC_GetConfigSetting(const char *name);

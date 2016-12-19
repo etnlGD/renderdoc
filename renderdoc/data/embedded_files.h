@@ -39,6 +39,8 @@ DECLARE_EMBED(glsl_fixedcol_frag);
 DECLARE_EMBED(glsl_mesh_vert);
 DECLARE_EMBED(glsl_mesh_geom);
 DECLARE_EMBED(glsl_mesh_frag);
+DECLARE_EMBED(glsl_trisize_geom);
+DECLARE_EMBED(glsl_trisize_frag);
 DECLARE_EMBED(glsl_minmaxtile_comp);
 DECLARE_EMBED(glsl_minmaxresult_comp);
 DECLARE_EMBED(glsl_histogram_comp);
@@ -51,5 +53,7 @@ DECLARE_EMBED(glsl_quadwrite_frag);
 DECLARE_EMBED(glsl_mesh_comp);
 DECLARE_EMBED(glsl_array2ms_comp);
 DECLARE_EMBED(glsl_ms2array_comp);
+DECLARE_EMBED(glsl_deptharr2ms_frag);
+DECLARE_EMBED(glsl_depthms2arr_frag);
 
 #undef DECLARE_EMBED
