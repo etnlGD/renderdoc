@@ -129,11 +129,11 @@ private:
       PFN_D3D11_CREATE_DEVICE_AND_SWAP_CHAIN createFunc = NULL;
 
       // shouldn't ever get in here if we're in the case without hooks but let's be safe.
-      if(m_HasHooks)
-      {
-        createFunc = CreateDeviceAndSwapChain();
-      }
-      else
+//       if(m_HasHooks)
+//       {
+//         createFunc = CreateDeviceAndSwapChain();
+//       }
+//       else
       {
         HMODULE d3d11 = GetModuleHandleA("d3d11.dll");
 

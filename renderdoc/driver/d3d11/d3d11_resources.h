@@ -304,7 +304,7 @@ public:
       const char* pStrData = (const char*) pData;
       if(pStrData[DataSize - 1] != '\0')
       {
-        string sName(pData, DataSize);
+        string sName((const char*)pData, DataSize);
         m_pDevice->SetResourceName(this, sName.c_str());
       }
       else
