@@ -66,9 +66,13 @@ static BOOL add_hooks()
 
   RDCLOG("Loading into %ls", curFile);
 
-  LibraryHooks::GetInstance().CreateHooks();
-
   return TRUE;
+}
+
+extern "C" __declspec(dllexport) void
+	__cdecl RENDERDOC_CreateHooks(UINT Flags)
+{
+	LibraryHooks::GetInstance().CreateHooks(Flags);
 }
 
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)

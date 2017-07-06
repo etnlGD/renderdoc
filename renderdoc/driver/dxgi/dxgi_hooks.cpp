@@ -62,36 +62,21 @@ public:
   void EnableHooks(const char *libName, bool enable) { m_EnabledHooks = enable; }
   void OptionsUpdated(const char *libName) {}
   bool UseHooks() { return (dxgihooks.m_HasHooks && dxgihooks.m_EnabledHooks); }
+
+  static HRESULT CreateWrappedFactory(REFIID riid, void **ppFactory)
+  {
+	  if (dxgihooks.m_HasHooks)
+		  return dxgihooks.CreateDXGIFactory_hook(riid, ppFactory);
+
+	  return CreateWrappedFactoryFromAddr("CreateDXGIFactory", riid, ppFactory);
+  }
+
   static HRESULT CreateWrappedFactory1(REFIID riid, void **ppFactory)
   {
     if(dxgihooks.m_HasHooks)
       return dxgihooks.CreateDXGIFactory1_hook(riid, ppFactory);
 
-    HMODULE dxgi = GetModuleHandleA("dxgi.dll");
-
-    if(dxgi)
-    {
-      PFN_CREATE_DXGI_FACTORY createFunc =
-          (PFN_CREATE_DXGI_FACTORY)GetProcAddress(dxgi, "CreateDXGIFactory1");
-
-      if(!createFunc)
-      {
-        RDCERR("Trying to create hooked dxgi factory without dxgi loaded");
-        return E_INVALIDARG;
-      }
-
-      HRESULT ret = createFunc(riid, ppFactory);
-
-      if(SUCCEEDED(ret))
-        RefCountDXGIObject::HandleWrap(riid, ppFactory);
-
-      return ret;
-    }
-    else
-    {
-      RDCERR("Something went seriously wrong, dxgi.dll couldn't be loaded!");
-      return E_UNEXPECTED;
-    }
+	return CreateWrappedFactoryFromAddr("CreateDXGIFactory1", riid, ppFactory);
   }
 
   static HRESULT CreateWrappedFactory2(UINT Flags, REFIID riid, void **ppFactory)
@@ -99,32 +84,63 @@ public:
     if(dxgihooks.m_HasHooks)
       return dxgihooks.CreateDXGIFactory2_hook(Flags, riid, ppFactory);
 
-    HMODULE dxgi = GetModuleHandleA("dxgi.dll");
+	HMODULE dxgi = GetModuleHandleA("dxgi.dll");
 
-    if(dxgi)
-    {
-      PFN_CREATE_DXGI_FACTORY2 createFunc =
-          (PFN_CREATE_DXGI_FACTORY2)GetProcAddress(dxgi, "CreateDXGIFactory2");
+	if (dxgi)
+	{
+		PFN_CREATE_DXGI_FACTORY2 createFunc =
+			(PFN_CREATE_DXGI_FACTORY2)GetProcAddress(dxgi, "CreateDXGIFactory2");
 
-      if(!createFunc)
-      {
-        RDCERR("Trying to create hooked dxgi factory without dxgi loaded");
-        return E_INVALIDARG;
-      }
+		if (!createFunc)
+		{
+			RDCERR("Trying to create hooked dxgi factory without dxgi loaded");
+			return E_INVALIDARG;
+		}
 
-      HRESULT ret = createFunc(Flags, riid, ppFactory);
+		HRESULT ret = createFunc(Flags, riid, ppFactory);
 
-      if(SUCCEEDED(ret))
-        RefCountDXGIObject::HandleWrap(riid, ppFactory);
+		if (SUCCEEDED(ret))
+			RefCountDXGIObject::HandleWrap(riid, ppFactory);
 
-      return ret;
-    }
-    else
-    {
-      RDCERR("Something went seriously wrong, dxgi.dll couldn't be loaded!");
-      return E_UNEXPECTED;
-    }
+		return ret;
+	}
+	else
+	{
+		RDCERR("Something went seriously wrong, dxgi.dll couldn't be loaded!");
+		return E_UNEXPECTED;
+	}
+
   }
+
+private:
+	static HRESULT CreateWrappedFactoryFromAddr(const char* funcName, REFIID riid, void **ppFactory)
+	{
+		HMODULE dxgi = GetModuleHandleA("dxgi.dll");
+
+		if (dxgi)
+		{
+			PFN_CREATE_DXGI_FACTORY createFunc =
+				(PFN_CREATE_DXGI_FACTORY)GetProcAddress(dxgi, funcName);
+
+			if (!createFunc)
+			{
+				RDCERR("Trying to create hooked dxgi factory without dxgi loaded");
+				return E_INVALIDARG;
+			}
+
+			HRESULT ret = createFunc(riid, ppFactory);
+
+			if (SUCCEEDED(ret))
+				RefCountDXGIObject::HandleWrap(riid, ppFactory);
+
+			return ret;
+		}
+		else
+		{
+			RDCERR("Something went seriously wrong, dxgi.dll couldn't be loaded!");
+			return E_UNEXPECTED;
+		}
+	}
 
 private:
   static DXGIHook dxgihooks;
@@ -174,6 +190,12 @@ private:
 };
 
 DXGIHook DXGIHook::dxgihooks;
+
+extern "C" __declspec(dllexport) HRESULT
+	__cdecl RENDERDOC_CreateWrappedDXGIFactory(REFIID riid, void **ppFactory)
+{
+	return DXGIHook::CreateWrappedFactory(riid, ppFactory);
+}
 
 extern "C" __declspec(dllexport) HRESULT
     __cdecl RENDERDOC_CreateWrappedDXGIFactory1(REFIID riid, void **ppFactory)

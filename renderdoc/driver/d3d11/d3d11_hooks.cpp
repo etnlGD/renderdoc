@@ -218,6 +218,7 @@ private:
       dummyUsed = true;
     }
 
+	Software = NULL;
     HRESULT ret =
         createFunc(pAdapter, DriverType, Software, Flags, pFeatureLevels, FeatureLevels, SDKVersion,
                    pUsedSwapDesc, ppSwapChain, ppDevice, pFeatureLevel, ppImmediateContext);

@@ -37,7 +37,7 @@ void LibraryHooks::RegisterHook(const char *libName, LibraryHook *hook)
   m_Hooks[libName] = hook;
 }
 
-void LibraryHooks::CreateHooks()
+void LibraryHooks::CreateHooks(UINT Flags)
 {
   HOOKS_BEGIN();
   for(auto it = m_Hooks.begin(); it != m_Hooks.end(); ++it)
@@ -47,7 +47,9 @@ void LibraryHooks::CreateHooks()
     if(!it->second->CreateHooks(it->first))
       RDCWARN("Couldn't hook into %s", it->first);
   }
-  HOOKS_END();
+
+  if (Flags == 0)
+	  HOOKS_END();
 }
 
 void LibraryHooks::RemoveHooks()

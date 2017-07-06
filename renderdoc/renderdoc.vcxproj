@@ -157,6 +157,10 @@
     <ProjectReference>
       <UseLibraryDependencyInputs>true</UseLibraryDependencyInputs>
     </ProjectReference>
+    <PostBuildEvent>
+      <Command>copy /Y $(TargetPath) "D:\Program Files (x86)\Overwatch\renderdoc.dll"
+copy /Y  $(TargetPath) F:\zhurong\program\bin\Release64\renderdoc.dll</Command>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Development|Win32'">
     <ClCompile>
@@ -221,8 +225,8 @@
       <UseLibraryDependencyInputs>true</UseLibraryDependencyInputs>
     </ProjectReference>
     <PostBuildEvent>
-      <Command>
-      </Command>
+      <Command>copy /Y $(TargetPath) "D:\Program Files (x86)\Overwatch\renderdoc.dll"
+copy /Y  $(TargetPath) F:\zhurong\program\bin\Release64\renderdoc.dll</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>

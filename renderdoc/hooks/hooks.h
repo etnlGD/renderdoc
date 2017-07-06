@@ -94,7 +94,7 @@ public:
   LibraryHooks() : m_HooksRemoved(false) {}
   static LibraryHooks &GetInstance();
   void RegisterHook(const char *libName, LibraryHook *hook);
-  void CreateHooks();
+  void CreateHooks(UINT Flags);
   void OptionsUpdated();
   void EnableHooks(bool enable);
   void RemoveHooks();
