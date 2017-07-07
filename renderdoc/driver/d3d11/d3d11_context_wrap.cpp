@@ -3902,6 +3902,31 @@ bool WrappedID3D11DeviceContext::Serialise_DrawIndexed(UINT IndexCount_, UINT St
 void WrappedID3D11DeviceContext::DrawIndexed(UINT IndexCount, UINT StartIndexLocation,
                                              INT BaseVertexLocation)
 {
+	bool isOutlinePass = false;
+
+	UINT stencilRef;
+	ID3D11DepthStencilState* pDepthStencilState;
+	OMGetDepthStencilState(&pDepthStencilState, &stencilRef);
+	if (pDepthStencilState != NULL && stencilRef == 0x10)
+	{
+		D3D11_DEPTH_STENCIL_DESC Desc;
+		pDepthStencilState->GetDesc(&Desc);
+		if (Desc.DepthEnable == TRUE && Desc.DepthFunc == D3D11_COMPARISON_LESS_EQUAL &&
+			Desc.StencilEnable == TRUE && Desc.StencilWriteMask == 0x10 &&
+			Desc.StencilReadMask == 0x00 &&
+			Desc.FrontFace.StencilFunc == D3D11_COMPARISON_ALWAYS &&
+			Desc.BackFace.StencilFunc == D3D11_COMPARISON_ALWAYS)
+		{
+			isOutlinePass = true;
+
+			Desc.DepthFunc = D3D11_COMPARISON_ALWAYS;
+			ID3D11DepthStencilState* pHackedDepthStencilState;
+			m_pDevice->CreateDepthStencilState(&Desc, &pHackedDepthStencilState);
+			OMSetDepthStencilState(pHackedDepthStencilState, stencilRef);
+// 			pHackedDepthStencilState->Release();
+		}
+	}
+
   DrainAnnotationQueue();
 
   m_EmptyCommandList = false;
@@ -3922,6 +3947,12 @@ void WrappedID3D11DeviceContext::DrawIndexed(UINT IndexCount, UINT StartIndexLoc
   {
     m_CurrentPipelineState->MarkDirty(this);
   }
+
+  if (isOutlinePass)
+  {
+	  OMSetDepthStencilState(pDepthStencilState, stencilRef);
+  }
+  SAFE_RELEASE(pDepthStencilState);
 }
 
 bool WrappedID3D11DeviceContext::Serialise_Draw(UINT VertexCount_, UINT StartVertexLocation_)
