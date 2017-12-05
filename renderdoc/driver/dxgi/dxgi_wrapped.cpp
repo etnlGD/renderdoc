@@ -705,6 +705,12 @@ WrappedIDXGIFactory5::WrappedIDXGIFactory5(IDXGIFactory *real)
   real->QueryInterface(__uuidof(IDXGIFactory4), (void **)&m_pReal4);
   m_pReal5 = NULL;
   real->QueryInterface(__uuidof(IDXGIFactory5), (void **)&m_pReal5);
+
+  if (m_pReal1 == NULL)
+  {
+	  m_pReal1 = m_pReal5;
+	  m_pReal1->AddRef();
+  }
 }
 
 WrappedIDXGIFactory5::~WrappedIDXGIFactory5()
