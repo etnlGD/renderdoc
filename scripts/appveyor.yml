@@ -2,7 +2,8 @@ version: '{build}'
 
 branches:
   only:
-  - master
+  - v1.x
+  - ci-test
 
 image: Visual Studio 2015
 
@@ -11,10 +12,10 @@ configuration:
   - Release
 
 platform:
-  - Win32
+  - x86
   - x64
 
-clone_depth: 1
+clone_depth: 50
 
 environment:
   coverity_token:
@@ -22,14 +23,8 @@ environment:
   coverity_email:
     secure: ndq7n9R6NhCV8mENhPAH4VTFNUeROGK/uFlqfUVwxAc=
 
-# Can't exclude things in the build matrix, just skip development win32
-matrix:
-  allow_failures:
-    - configuration: Development
-      platform: Win32
-
 init:
-  - if "%PLATFORM%" EQU "Win32" ( if "%CONFIGURATION%"=="Development" (echo "Skipping Win32 Development" && exit /b 1 ) )
+  - if "%PLATFORM%" EQU "x86" ( if "%CONFIGURATION%"=="Development" (echo "Skipping x86 Development" && appveyor exit ) )
 
 install:
 - ps: $env:PATH = 'C:\MinGW\bin;C:\MinGW\mingw32\bin;C:\MinGW\msys\1.0\bin;' + $env:PATH
@@ -41,9 +36,13 @@ build:
 
 build_script:
 - ps: >-
+    Invoke-WebRequest https://renderdoc.org/qrenderdoc_3rdparty.zip -OutFile qrenderdoc_3rdparty.zip
+
+    7z x qrenderdoc_3rdparty.zip
+
     if ( ($env:APPVEYOR_SCHEDULED_BUILD -eq "True" ) -and ($env:PLATFORM -eq "x64") -and ($env:CONFIGURATION -eq "Development") )
     {
-      cov-build.exe --dir cov-int msbuild renderdoc.sln /p:Configuration=Development /p:Platform=x64 /p:PlatformToolset=v120
+      cov-build.exe --dir cov-int msbuild renderdoc.sln /p:Configuration=Development /p:Platform=x64 /p:PlatformToolset=v140
 
       nuget.exe install PublishCoverity -ExcludeVersion
 
@@ -65,6 +64,10 @@ build_script:
       return
     }
 
-    sh -c ./scripts/hash_version.sh
-
     msbuild renderdoc.sln /v:m "/p:Configuration=$env:CONFIGURATION" "/p:Platform=$env:PLATFORM" /p:PlatformToolset=v140
+
+test_script:
+- ps: $env:testexe = "$env:PLATFORM\$env:CONFIGURATION\renderdoccmd.exe"
+- ps: if ( $env:PLATFORM -eq "x86" ) { $env:testexe = "Win32\$env:CONFIGURATION\renderdoccmd.exe" }
+- cmd: >-
+    "%testexe%" test -t unit

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -25,7 +25,7 @@
 
 #pragma once
 
-#include "api/replay/shader_types.h"
+#include "api/replay/renderdoc_replay.h"
 #include "common/common.h"
 #include "dxbc_disassemble.h"
 
@@ -57,21 +57,17 @@ public:
 
   struct ViewFmt
   {
-    ViewFmt()
-    {
-      byteWidth = 0;
-      numComps = 0;
-      reversed = false;
-      fmt = eCompType_None;
-    }
-
-    int byteWidth;
-    int numComps;
-    bool reversed;
-    FormatComponentType fmt;
+    int byteWidth = 0;
+    int numComps = 0;
+    bool reversed = false;
+    CompType fmt = CompType::Typeless;
+    int stride = 0;
 
     int Stride()
     {
+      if(stride != 0)
+        return stride;
+
       if(byteWidth == 10 || byteWidth == 11)
         return 32;    // 10 10 10 2 or 11 11 10
 
@@ -81,7 +77,7 @@ public:
 
   struct
   {
-    vector<byte> data;
+    bytebuf data;
     uint32_t firstElement;
     uint32_t numElements;
 
@@ -95,7 +91,7 @@ public:
 
   struct
   {
-    vector<byte> data;
+    bytebuf data;
     uint32_t firstElement;
     uint32_t numElements;
 
@@ -108,7 +104,7 @@ public:
     uint32_t bytestride;
     uint32_t count;    // of structures (above stride), or uint32s (raw)
 
-    vector<byte> data;
+    bytebuf data;
   };
 
   vector<groupsharedMem> groupshared;
@@ -121,6 +117,7 @@ public:
   {
     quadIndex = 0;
     nextInstruction = 0;
+    flags = ShaderEvents::NoEvent;
     done = false;
     trace = NULL;
     dxbc = NULL;
@@ -131,6 +128,7 @@ public:
   {
     quadIndex = quadIdx;
     nextInstruction = 0;
+    flags = ShaderEvents::NoEvent;
     done = false;
     trace = t;
     dxbc = f;
@@ -165,6 +163,9 @@ private:
 
   bool done;
 
+  // validates assignment for generation of non-normal values
+  void AssignValue(ShaderVariable &dst, uint32_t dstIndex, const ShaderVariable &src,
+                   uint32_t srcIndex);
   // sets the destination operand by looking up in the register
   // file and applying any masking or swizzling
   void SetDst(const DXBC::ASMOperand &dstoper, const DXBC::ASMOperation &op,

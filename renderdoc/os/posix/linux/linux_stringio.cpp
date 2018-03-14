@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -34,7 +34,7 @@
 #include "api/app/renderdoc_app.h"
 #include "common/threading.h"
 #include "os/os_specific.h"
-#include "serialise/string_utils.h"
+#include "strings/string_utils.h"
 
 #if ENABLED(RDOC_XLIB)
 #include <X11/Xlib.h>
@@ -42,6 +42,7 @@
 #endif
 
 #if ENABLED(RDOC_XCB)
+#include <X11/keysym.h>
 #include <xcb/xcb_keysyms.h>
 #endif
 
@@ -137,6 +138,10 @@ bool GetXlibKeyState(int key)
 
 // if RENDERDOC_WINDOWING_XLIB is not enabled
 
+void CloneDisplay(Display *dpy)
+{
+}
+
 bool GetXlibKeyState(int key)
 {
   return false;
@@ -160,7 +165,7 @@ bool GetXCBKeyState(int key)
   if(symbols == NULL)
     return false;
 
-  KeySym ks = 0;
+  xcb_keysym_t ks = 0;
 
   if(key >= eRENDERDOC_Key_A && key <= eRENDERDOC_Key_Z)
     ks = key;
@@ -253,7 +258,7 @@ bool GetKeyState(int key)
 
 namespace FileIO
 {
-const char *GetTempRootPath()
+string GetTempRootPath()
 {
   return "/tmp";
 }
@@ -288,6 +293,13 @@ iconv_t iconvWide2UTF8 = (iconv_t)-1;
 // I don't expect much contention but if it happens we could TryLock
 // before creating a temporary iconv_t, or hold two iconv_ts, or something.
 Threading::CriticalSection lockWide2UTF8;
+
+void Shutdown()
+{
+  SCOPED_LOCK(lockWide2UTF8);
+  iconv_close(iconvWide2UTF8);
+  iconvWide2UTF8 = (iconv_t)-1;
+}
 
 string Wide2UTF8(const std::wstring &s)
 {
@@ -342,9 +354,15 @@ namespace OSUtility
 void WriteOutput(int channel, const char *str)
 {
   if(channel == OSUtility::Output_StdOut)
+  {
     fprintf(stdout, "%s", str);
+    fflush(stdout);
+  }
   else if(channel == OSUtility::Output_StdErr)
+  {
     fprintf(stderr, "%s", str);
+    fflush(stderr);
+  }
 }
 
 uint64_t GetMachineIdent()

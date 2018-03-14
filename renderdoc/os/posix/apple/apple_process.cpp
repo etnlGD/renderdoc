@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -153,4 +153,9 @@ bool OSUtility::DebuggerPresent()
 
   return info.kp_proc.p_flag & P_TRACED;
 #endif
+}
+
+const char *Process::GetEnvVariable(const char *name)
+{
+  return getenv(name);
 }

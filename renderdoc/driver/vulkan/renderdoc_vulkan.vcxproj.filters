@@ -94,6 +94,42 @@
     <ClCompile Include="vk_apple.cpp">
       <Filter>OS\Posix</Filter>
     </ClCompile>
+    <ClCompile Include="precompiled.cpp">
+      <Filter>PCH</Filter>
+    </ClCompile>
+    <ClCompile Include="vk_stringise.cpp">
+      <Filter>Util</Filter>
+    </ClCompile>
+    <ClCompile Include="vk_serialise.cpp">
+      <Filter>Util</Filter>
+    </ClCompile>
+    <ClCompile Include="vk_sparse_initstate.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="vk_postvs.cpp">
+      <Filter>Replay</Filter>
+    </ClCompile>
+    <ClCompile Include="vk_overlay.cpp">
+      <Filter>Replay</Filter>
+    </ClCompile>
+    <ClCompile Include="vk_outputwindow.cpp">
+      <Filter>Replay</Filter>
+    </ClCompile>
+    <ClCompile Include="vk_rendermesh.cpp">
+      <Filter>Replay</Filter>
+    </ClCompile>
+    <ClCompile Include="vk_msaa_array_conv.cpp">
+      <Filter>Replay</Filter>
+    </ClCompile>
+    <ClCompile Include="vk_rendertexture.cpp">
+      <Filter>Replay</Filter>
+    </ClCompile>
+    <ClCompile Include="vk_shader_cache.cpp">
+      <Filter>Util</Filter>
+    </ClCompile>
+    <ClCompile Include="vk_rendertext.cpp">
+      <Filter>Util</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="vk_replay.h">
@@ -135,6 +171,15 @@
     <ClInclude Include="official\vulkan.h">
       <Filter>official</Filter>
     </ClInclude>
+    <ClInclude Include="precompiled.h">
+      <Filter>PCH</Filter>
+    </ClInclude>
+    <ClInclude Include="vk_shader_cache.h">
+      <Filter>Util</Filter>
+    </ClInclude>
+    <ClInclude Include="vk_rendertext.h">
+      <Filter>Util</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="OS">
@@ -163,6 +208,9 @@
     </Filter>
     <Filter Include="OS\Posix">
       <UniqueIdentifier>{c6141a90-0765-4409-afe2-e59d683e5a5e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="PCH">
+      <UniqueIdentifier>{356d20c5-9ffd-4c8d-86cc-4e674104f275}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -25,26 +25,96 @@
 #pragma once
 
 #include <QFrame>
-#include "Code/CaptureContext.h"
+#include "Code/Interface/QRDInterface.h"
 
 namespace Ui
 {
 class D3D12PipelineStateViewer;
 }
 
-class D3D12PipelineStateViewer : public QFrame, public ILogViewerForm
+class QXmlStreamWriter;
+
+class RDLabel;
+class RDTreeWidget;
+class RDTreeWidgetItem;
+struct D3D12ViewTag;
+class PipelineStateViewer;
+
+class D3D12PipelineStateViewer : public QFrame, public ICaptureViewer
 {
   Q_OBJECT
 
 public:
-  explicit D3D12PipelineStateViewer(CaptureContext *ctx, QWidget *parent = 0);
+  explicit D3D12PipelineStateViewer(ICaptureContext &ctx, PipelineStateViewer &common,
+                                    QWidget *parent = 0);
   ~D3D12PipelineStateViewer();
 
-  void OnLogfileLoaded();
-  void OnLogfileClosed();
-  void OnEventSelected(uint32_t eventID);
+  // ICaptureViewer
+  void OnCaptureLoaded() override;
+  void OnCaptureClosed() override;
+  void OnSelectedEventChanged(uint32_t eventId) override {}
+  void OnEventChanged(uint32_t eventId) override;
+
+private slots:
+  // automatic slots
+  void on_showDisabled_toggled(bool checked);
+  void on_showEmpty_toggled(bool checked);
+  void on_exportHTML_clicked();
+  void on_meshView_clicked();
+  void on_iaLayouts_itemActivated(RDTreeWidgetItem *item, int column);
+  void on_iaBuffers_itemActivated(RDTreeWidgetItem *item, int column);
+  void on_iaLayouts_mouseMove(QMouseEvent *event);
+  void on_iaBuffers_mouseMove(QMouseEvent *event);
+  void on_pipeFlow_stageSelected(int index);
+
+  // manual slots
+  void shaderView_clicked();
+  void shaderEdit_clicked();
+  void shaderSave_clicked();
+  void resource_itemActivated(RDTreeWidgetItem *item, int column);
+  void cbuffer_itemActivated(RDTreeWidgetItem *item, int column);
+  void vertex_leave(QEvent *e);
 
 private:
   Ui::D3D12PipelineStateViewer *ui;
-  CaptureContext *m_Ctx;
+  ICaptureContext &m_Ctx;
+  PipelineStateViewer &m_Common;
+
+  void setShaderState(const D3D12Pipe::Shader &stage, RDLabel *shader, RDLabel *rootSig,
+                      RDTreeWidget *tex, RDTreeWidget *samp, RDTreeWidget *cbuffer,
+                      RDTreeWidget *uavs);
+
+  void addResourceRow(const D3D12ViewTag &view, const D3D12Pipe::Shader *stage,
+                      RDTreeWidget *resources);
+
+  void clearShaderState(RDLabel *shader, RDLabel *rootSig, RDTreeWidget *tex, RDTreeWidget *samp,
+                        RDTreeWidget *cbuffer, RDTreeWidget *uavs);
+  void setState();
+  void clearState();
+
+  void setInactiveRow(RDTreeWidgetItem *node);
+  void setEmptyRow(RDTreeWidgetItem *node);
+  void highlightIABind(int slot);
+
+  QString formatMembers(int indent, const QString &nameprefix, const rdcarray<ShaderConstant> &vars);
+  const D3D12Pipe::Shader *stageForSender(QWidget *widget);
+
+  bool HasImportantViewParams(const D3D12Pipe::View &view, TextureDescription *tex);
+  bool HasImportantViewParams(const D3D12Pipe::View &view, BufferDescription *buf);
+
+  void setViewDetails(RDTreeWidgetItem *node, const D3D12ViewTag &view, TextureDescription *tex);
+  void setViewDetails(RDTreeWidgetItem *node, const D3D12ViewTag &view, BufferDescription *buf);
+
+  bool showNode(bool usedSlot, bool filledSlot);
+
+  QVariantList exportViewHTML(const D3D12Pipe::View &view, bool rw,
+                              const ShaderResource *shaderInput, const QString &extraParams);
+  void exportHTML(QXmlStreamWriter &xml, const D3D12Pipe::InputAssembly &ia);
+  void exportHTML(QXmlStreamWriter &xml, const D3D12Pipe::Shader &sh);
+  void exportHTML(QXmlStreamWriter &xml, const D3D12Pipe::StreamOut &so);
+  void exportHTML(QXmlStreamWriter &xml, const D3D12Pipe::Rasterizer &rs);
+  void exportHTML(QXmlStreamWriter &xml, const D3D12Pipe::OM &om);
+
+  // keep track of the VB nodes (we want to be able to highlight them easily on hover)
+  QList<RDTreeWidgetItem *> m_VBNodes;
 };

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -29,8 +29,38 @@
 #include "common/wrapped_pool.h"
 #include "core/core.h"
 #include "core/resource_manager.h"
-#include "driver/d3d11/d3d11_common.h"
 #include "serialise/serialiser.h"
+#include "d3d11_common.h"
+
+enum D3D11ResourceType
+{
+  Resource_Unknown = 0,
+  Resource_InputLayout,
+  Resource_Buffer,
+  Resource_Texture1D,
+  Resource_Texture2D,
+  Resource_Texture3D,
+  Resource_RasterizerState,
+  Resource_BlendState,
+  Resource_DepthStencilState,
+  Resource_SamplerState,
+  Resource_RenderTargetView,
+  Resource_ShaderResourceView,
+  Resource_DepthStencilView,
+  Resource_UnorderedAccessView,
+  Resource_Shader,
+  Resource_Counter,
+  Resource_Query,
+  Resource_Predicate,
+  Resource_ClassInstance,
+  Resource_ClassLinkage,
+
+  Resource_DeviceContext,
+  Resource_CommandList,
+  Resource_DeviceState,
+};
+
+DECLARE_REFLECTION_ENUM(D3D11ResourceType);
 
 struct D3D11ResourceRecord : public ResourceRecord
 {
@@ -66,8 +96,8 @@ struct D3D11ResourceRecord : public ResourceRecord
   {
     if(ShadowPtr[ctx][0] == NULL)
     {
-      ShadowPtr[ctx][0] = Serialiser::AllocAlignedBuffer(size + sizeof(markerValue));
-      ShadowPtr[ctx][1] = Serialiser::AllocAlignedBuffer(size + sizeof(markerValue));
+      ShadowPtr[ctx][0] = AllocAlignedBuffer(size + sizeof(markerValue));
+      ShadowPtr[ctx][1] = AllocAlignedBuffer(size + sizeof(markerValue));
 
       memcpy(ShadowPtr[ctx][0] + size, markerValue, sizeof(markerValue));
       memcpy(ShadowPtr[ctx][1] + size, markerValue, sizeof(markerValue));
@@ -95,8 +125,8 @@ struct D3D11ResourceRecord : public ResourceRecord
     {
       if(ShadowPtr[i][0] != NULL)
       {
-        Serialiser::FreeAlignedBuffer(ShadowPtr[i][0]);
-        Serialiser::FreeAlignedBuffer(ShadowPtr[i][1]);
+        FreeAlignedBuffer(ShadowPtr[i][0]);
+        FreeAlignedBuffer(ShadowPtr[i][1]);
       }
       ShadowPtr[i][0] = ShadowPtr[i][1] = NULL;
     }
@@ -157,7 +187,7 @@ struct D3D11ResourceRecord : public ResourceRecord
   bool ignoreSerialise;
 
   int NumSubResources;
-  ResourceRecord **SubResources;
+  D3D11ResourceRecord **SubResources;
 
 private:
   byte *ShadowPtr[32][2];
@@ -166,15 +196,56 @@ private:
   bool contexts[32];
 };
 
-class D3D11ResourceManager
-    : public ResourceManager<ID3D11DeviceChild *, ID3D11DeviceChild *, D3D11ResourceRecord>
+struct D3D11InitialContents
 {
-public:
-  D3D11ResourceManager(LogState state, Serialiser *ser, WrappedID3D11Device *dev)
-      : ResourceManager(state, ser), m_Device(dev)
+  enum Tag
+  {
+    Copy,
+    ClearRTV,
+    ClearDSV,
+    UAVCount,
+  };
+  D3D11InitialContents(D3D11ResourceType t, ID3D11DeviceChild *r)
+      : resourceType(t), tag(Copy), resource(r), uavCount(0)
   {
   }
+  D3D11InitialContents(D3D11ResourceType t, ID3D11RenderTargetView *r)
+      : resourceType(t), tag(ClearRTV), resource(r), uavCount(0)
+  {
+  }
+  D3D11InitialContents(D3D11ResourceType t, ID3D11DepthStencilView *r)
+      : resourceType(t), tag(ClearDSV), resource(r), uavCount(0)
+  {
+  }
+  D3D11InitialContents(D3D11ResourceType t, uint32_t c)
+      : resourceType(t), tag(UAVCount), resource(NULL), uavCount(c)
+  {
+  }
+  D3D11InitialContents() : resourceType(Resource_Unknown), tag(Copy), resource(NULL), uavCount(0) {}
+  template <typename Configuration>
+  void Free(ResourceManager<Configuration> *rm)
+  {
+    SAFE_RELEASE(resource);
+  }
 
+  D3D11ResourceType resourceType;
+  Tag tag;
+  ID3D11DeviceChild *resource;
+  uint32_t uavCount;
+};
+
+struct D3D11ResourceManagerConfiguration
+{
+  typedef ID3D11DeviceChild *WrappedResourceType;
+  typedef ID3D11DeviceChild *RealResourceType;
+  typedef D3D11ResourceRecord RecordType;
+  typedef D3D11InitialContents InitialContentData;
+};
+
+class D3D11ResourceManager : public ResourceManager<D3D11ResourceManagerConfiguration>
+{
+public:
+  D3D11ResourceManager(WrappedID3D11Device *dev) : m_Device(dev) {}
   ID3D11DeviceChild *UnwrapResource(ID3D11DeviceChild *res);
   ID3D11Resource *UnwrapResource(ID3D11Resource *res)
   {
@@ -190,9 +261,10 @@ private:
   bool Force_InitialState(ID3D11DeviceChild *res, bool prepare);
   bool Need_InitialStateChunk(ID3D11DeviceChild *res);
   bool Prepare_InitialState(ID3D11DeviceChild *res);
-  bool Serialise_InitialState(ResourceId resid, ID3D11DeviceChild *res);
+  uint32_t GetSize_InitialState(ResourceId id, ID3D11DeviceChild *res);
+  bool Serialise_InitialState(WriteSerialiser &ser, ResourceId resid, ID3D11DeviceChild *res);
   void Create_InitialState(ResourceId id, ID3D11DeviceChild *live, bool hasData);
-  void Apply_InitialState(ID3D11DeviceChild *live, InitialContentData data);
+  void Apply_InitialState(ID3D11DeviceChild *live, D3D11InitialContents data);
 
   WrappedID3D11Device *m_Device;
 };

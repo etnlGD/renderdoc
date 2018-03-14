@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -111,6 +111,9 @@ public:
 
   void Deallocate(void *p)
   {
+    if(p == NULL)
+      return;
+
     SCOPED_LOCK(m_Lock);
 
     // try immediate pool
@@ -225,7 +228,8 @@ private:
       allocated[idx] = false;
 
 #if ENABLED(RDOC_DEVEL)
-      memset(p, 0xfe, DebugClear ? AllocByteSize : 0);
+      if(DebugClear)
+        memset(p, 0xfe, AllocByteSize);
 #endif
     }
 
@@ -272,7 +276,7 @@ private:
   template <>                                                                             \
   const size_t a::PoolType::AllocByteSize = sizeof(a);                                    \
   RDCCOMPILE_ASSERT(a::PoolType::AllocCount * sizeof(a) <= a::PoolType::AllocMaxByteSize, \
-                    "Pool is bigger than max pool size cap for " #a);                     \
+                    "Pool is bigger than max pool size cap for " STRINGIZE(a));           \
   RDCCOMPILE_ASSERT(a::PoolType::AllocCount > 2,                                          \
                     "Pool isn't greater than 2 in size. Bad parameters?");                \
   DECL_TYPENAME(a);

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,9 +22,21 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
+#if defined(GL_ES) && __VERSION__ == 100
+
+// GLES shading language 1.0 must use gl_FragColor
+#define color_out gl_FragColor
+
+#else
+
+//#extension_nongles GL_ARB_explicit_attrib_location : require
+
+// otherwise we use a proper output
 layout (location = 0) out vec4 color_out;
 
-#ifdef OPENGL // OpenGL can't use SPIR-V patching
+#endif
+
+#ifndef VULKAN // OpenGL can't use SPIR-V patching
 uniform vec4 RENDERDOC_Fixed_Color;
 #endif
 

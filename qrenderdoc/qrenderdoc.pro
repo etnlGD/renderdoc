@@ -4,11 +4,13 @@
 #
 #-------------------------------------------------
 
-QT       += core gui widgets
+QT       += core gui widgets svg network
 
-lessThan(QT_MAJOR_VERSION, 5): error("requires Qt 5")
+CONFIG   += silent
 
-equals(QT_MAJOR_VERSION, 5): lessThan(QT_MINOR_VERSION, 6): error("requires Qt 5.6")
+lessThan(QT_MAJOR_VERSION, 5): error("requires Qt 5.6; found $$[QT_VERSION]")
+
+equals(QT_MAJOR_VERSION, 5): lessThan(QT_MINOR_VERSION, 6): error("requires Qt 5.6; found $$[QT_VERSION]")
 
 TARGET = qrenderdoc
 TEMPLATE = app
@@ -23,18 +25,18 @@ INCLUDEPATH += $$_PRO_FILE_PWD_/
 INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/toolwindowmanager
 # For FlowLayout
 INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/flowlayout
+# For Scintilla
+INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/scintilla/include/qt
+INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/scintilla/include
+
+# Disable conversions to/from const char * in QString
+DEFINES += QT_NO_CAST_FROM_ASCII QT_NO_CAST_TO_ASCII
 
 # Different output folders per platform
 win32 {
 
 	RC_INCLUDEPATH = $$_PRO_FILE_PWD_/../renderdoc/api/replay
 	RC_FILE = Resources/qrenderdoc.rc
-
-	# it is fine to alias these across targets, because the output
-	# is identical on all targets
-	MOC_DIR = $$_PRO_FILE_PWD_/generated
-	UI_DIR = $$_PRO_FILE_PWD_/generated
-	RCC_DIR = $$_PRO_FILE_PWD_/generated
 
 	# generate pdb files even in release
 	QMAKE_LFLAGS_RELEASE+=/MAP
@@ -44,28 +46,65 @@ win32 {
 	!contains(QMAKE_TARGET.arch, x86_64) {
 		Debug:DESTDIR = $$_PRO_FILE_PWD_/../Win32/Development
 		Release:DESTDIR = $$_PRO_FILE_PWD_/../Win32/Release
-
-		Debug:OBJECTS_DIR = $$_PRO_FILE_PWD_/Win32/Development
-		Release:OBJECTS_DIR = $$_PRO_FILE_PWD_/Win32/Release
-
 	} else {
 		Debug:DESTDIR = $$_PRO_FILE_PWD_/../x64/Development
 		Release:DESTDIR = $$_PRO_FILE_PWD_/../x64/Release
+	}
 
-		Debug:OBJECTS_DIR = $$_PRO_FILE_PWD_/obj/x64/Development
-		Release:OBJECTS_DIR = $$_PRO_FILE_PWD_/obj/x64/Release
+	# Run SWIG here, since normally we run it from VS
+	swig.name = SWIG ${QMAKE_FILE_IN}
+	swig.input = SWIGSOURCES
+	swig.output = ${QMAKE_FILE_BASE}_python.cxx
+	swig.commands = $$_PRO_FILE_PWD_/3rdparty/swig/swig.exe -v -Wextra -Werror -O -c++ -python -modern -modernargs -enumclass -fastunpack -py3 -builtin -I$$_PRO_FILE_PWD_ -I$$_PRO_FILE_PWD_/../renderdoc/api/replay -outdir . -o ${QMAKE_FILE_BASE}_python.cxx ${QMAKE_FILE_IN}
+	swig.CONFIG += target_predeps
+	swig.variable_out = GENERATED_SOURCES
+	silent:swig.commands = @echo SWIG ${QMAKE_FILE_IN} && $$swig.commands
+	QMAKE_EXTRA_COMPILERS += swig
+
+	# windows only qrc file with qt.conf
+	RESOURCES += Resources/qtconf.qrc
+
+	SWIGSOURCES += Code/pyrenderdoc/renderdoc.i
+	SWIGSOURCES += Code/pyrenderdoc/qrenderdoc.i
+
+	# Include and link against python
+	INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/python/include
+	!contains(QMAKE_TARGET.arch, x86_64) {
+		LIBS += $$_PRO_FILE_PWD_/3rdparty/python/Win32/python36.lib
+	} else {
+		LIBS += $$_PRO_FILE_PWD_/3rdparty/python/x64/python36.lib
+	}
+
+	# Include and link against PySide2
+	DEFINES += PYSIDE2_ENABLED=1
+	INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/pyside/include/shiboken2
+	INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/pyside/include/PySide2
+	INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/pyside/include/PySide2/QtCore
+	INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/pyside/include/PySide2/QtGui
+	INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/pyside/include/PySide2/QtWidgets
+	!contains(QMAKE_TARGET.arch, x86_64) {
+		LIBS += $$_PRO_FILE_PWD_/3rdparty/pyside/Win32/shiboken2.lib
+	} else {
+		LIBS += $$_PRO_FILE_PWD_/3rdparty/pyside/x64/shiboken2.lib
 	}
 
 	# Link against the core library
 	LIBS += $$DESTDIR/renderdoc.lib
 
+	# Link against the version library
+	LIBS += $$DESTDIR/version.lib
+
 	QMAKE_CXXFLAGS_WARN_ON -= -w34100 
 	DEFINES += RENDERDOC_PLATFORM_WIN32
 
 } else {
-	isEmpty(DESTDIR) {
-		DESTDIR = $$_PRO_FILE_PWD_/../bin
+	isEmpty(CMAKE_DIR) {
+		error("When run from outside CMake, please set the Build Environment Variable CMAKE_DIR to point to your CMake build root. In Qt Creator add CMAKE_DIR=/path/to/renderdoc/build under 'Additional arguments' in the qmake Build Step. If running qmake directly, add CMAKE_DIR=/path/to/renderdoc/build/ to the command line.")
 	}
+
+	DESTDIR=$$CMAKE_DIR/bin
+
+	include($$CMAKE_DIR/qrenderdoc/qrenderdoc_cmake.pri)
 
 	# Temp files into .obj
 	MOC_DIR = .obj
@@ -74,35 +113,76 @@ win32 {
 	OBJECTS_DIR = .obj
 
 	# Link against the core library
-	LIBS += -L$$DESTDIR -lrenderdoc
-	QMAKE_LFLAGS += '-Wl,-rpath,\'\$$ORIGIN\''
+	LIBS += -lrenderdoc
+	QMAKE_LFLAGS += '-Wl,-rpath,\'\$$ORIGIN\',-rpath,\'\$$ORIGIN/../lib'$$LIB_SUFFIX'/'$$LIB_SUBFOLDER_TRAIL_SLASH'\''
 
-	QMAKE_CXXFLAGS += -std=c++11 -Wno-unused-parameter -Wno-reorder
+	# Add the SWIG files that were generated in cmake
+	SOURCES += $$CMAKE_DIR/qrenderdoc/renderdoc_python.cxx
+	SOURCES += $$CMAKE_DIR/qrenderdoc/renderdoc.py.c
+	SOURCES += $$CMAKE_DIR/qrenderdoc/qrenderdoc_python.cxx
+	SOURCES += $$CMAKE_DIR/qrenderdoc/qrenderdoc.py.c
+
+	SOURCES += $$_PRO_FILE_PWD_/../renderdoc/api/replay/version.cpp
+
+	CONFIG += warn_off
+	CONFIG += c++14
+	QMAKE_CFLAGS_WARN_OFF -= -w
+	QMAKE_CXXFLAGS_WARN_OFF -= -w
 
 	macx: {
 		DEFINES += RENDERDOC_PLATFORM_POSIX RENDERDOC_PLATFORM_APPLE
+		ICON = $$OSX_ICONFILE
+
+		INFO_PLIST_PATH = $$shell_quote($$DESTDIR/$${TARGET}.app/Contents/Info.plist)
+		QMAKE_POST_LINK += $$_PRO_FILE_PWD_/../scripts/set_plist_version.sh $${RENDERDOC_VERSION}.0 $${INFO_PLIST_PATH}
 	} else {
 		QT += x11extras
 		DEFINES += RENDERDOC_PLATFORM_POSIX RENDERDOC_PLATFORM_LINUX RENDERDOC_WINDOWING_XLIB RENDERDOC_WINDOWING_XCB
+		QMAKE_LFLAGS += '-Wl,--no-as-needed -rdynamic'
+
+		contains(QMAKE_CXXFLAGS, "-DRENDERDOC_SUPPORT_GL") {
+			# Link against GL
+			LIBS += -lGL
+		}
+
+		contains(QMAKE_CXXFLAGS, "-DRENDERDOC_SUPPORT_GLES") {
+			# Link against EGL
+			LIBS += -lEGL
+		}
 	}
 }
 
-SOURCES += 3rdparty/toolwindowmanager/ToolWindowManager.cpp \
-    3rdparty/toolwindowmanager/ToolWindowManagerArea.cpp \
-    3rdparty/toolwindowmanager/ToolWindowManagerWrapper.cpp \
-    3rdparty/flowlayout/FlowLayout.cpp \
-    Code/qrenderdoc.cpp \
+# Add our sources first so Qt Creator adds new files here
+
+SOURCES += Code/qrenderdoc.cpp \
     Code/qprocessinfo.cpp \
-    Code/RenderManager.cpp \
-    Code/CommonPipelineState.cpp \
-    Code/PersistantConfig.cpp \
+    Code/ReplayManager.cpp \
     Code/CaptureContext.cpp \
+    Code/ScintillaSyntax.cpp \
+    Code/QRDUtils.cpp \
+    Code/FormatElement.cpp \
+    Code/Resources.cpp \
+    Code/pyrenderdoc/PythonContext.cpp \
+    Code/Interface/QRDInterface.cpp \
+    Code/Interface/Analytics.cpp \
+    Code/Interface/CommonPipelineState.cpp \
+    Code/Interface/SPIRVDisassembler.cpp \
+    Code/Interface/PersistantConfig.cpp \
+    Code/Interface/RemoteHost.cpp \
+    Styles/StyleData.cpp \
+    Styles/RDStyle/RDStyle.cpp \
+    Styles/RDTweakedNativeStyle/RDTweakedNativeStyle.cpp \
     Windows/Dialogs/AboutDialog.cpp \
+    Windows/Dialogs/CrashDialog.cpp \
+    Windows/Dialogs/UpdateDialog.cpp \
     Windows/MainWindow.cpp \
     Windows/EventBrowser.cpp \
     Windows/TextureViewer.cpp \
     Widgets/Extended/RDLineEdit.cpp \
+    Widgets/Extended/RDTextEdit.cpp \
     Widgets/Extended/RDLabel.cpp \
+    Widgets/Extended/RDHeaderView.cpp \
+    Widgets/Extended/RDToolButton.cpp \
     Widgets/Extended/RDDoubleSpinBox.cpp \
     Widgets/Extended/RDListView.cpp \
     Widgets/CustomPaintWidget.cpp \
@@ -112,7 +192,6 @@ SOURCES += 3rdparty/toolwindowmanager/ToolWindowManager.cpp \
     Widgets/RangeHistogram.cpp \
     Windows/Dialogs/TextureSaveDialog.cpp \
     Windows/Dialogs/CaptureDialog.cpp \
-    Code/QRDUtils.cpp \
     Windows/Dialogs/LiveCapture.cpp \
     Widgets/Extended/RDListWidget.cpp \
     Windows/APIInspector.cpp \
@@ -121,28 +200,62 @@ SOURCES += 3rdparty/toolwindowmanager/ToolWindowManager.cpp \
     Windows/PipelineState/D3D11PipelineStateViewer.cpp \
     Windows/PipelineState/D3D12PipelineStateViewer.cpp \
     Windows/PipelineState/GLPipelineStateViewer.cpp \
+    Widgets/Extended/RDTreeView.cpp \
     Widgets/Extended/RDTreeWidget.cpp \
     Windows/ConstantBufferPreviewer.cpp \
     Widgets/BufferFormatSpecifier.cpp \
-    Code/FormatElement.cpp \
     Windows/BufferViewer.cpp \
-    Widgets/Extended/RDTableView.cpp
-
-HEADERS  += 3rdparty/toolwindowmanager/ToolWindowManager.h \
-    3rdparty/toolwindowmanager/ToolWindowManagerArea.h \
-    3rdparty/toolwindowmanager/ToolWindowManagerWrapper.h \
-    3rdparty/flowlayout/FlowLayout.h \
-    Code/CaptureContext.h \
+    Widgets/Extended/RDTableView.cpp \
+    Windows/DebugMessageView.cpp \
+    Windows/CommentView.cpp \
+    Windows/StatisticsViewer.cpp \
+    Windows/TimelineBar.cpp \
+    Windows/Dialogs/SettingsDialog.cpp \
+    Widgets/OrderedListEditor.cpp \
+    Widgets/Extended/RDTableWidget.cpp \
+    Windows/Dialogs/SuggestRemoteDialog.cpp \
+    Windows/Dialogs/VirtualFileDialog.cpp \
+    Windows/Dialogs/RemoteManager.cpp \
+    Windows/PixelHistoryView.cpp \
+    Widgets/PipelineFlowChart.cpp \
+    Windows/Dialogs/EnvironmentEditor.cpp \
+    Widgets/FindReplace.cpp \
+    Widgets/Extended/RDSplitter.cpp \
+    Windows/Dialogs/TipsDialog.cpp \
+    Windows/PythonShell.cpp \
+    Windows/Dialogs/PerformanceCounterSelection.cpp \
+    Windows/PerformanceCounterViewer.cpp \
+    Windows/ResourceInspector.cpp \
+    Windows/Dialogs/AnalyticsConfirmDialog.cpp \
+    Windows/Dialogs/AnalyticsPromptDialog.cpp
+HEADERS += Code/CaptureContext.h \
     Code/qprocessinfo.h \
-    Code/RenderManager.h \
-    Code/PersistantConfig.h \
-    Code/CommonPipelineState.h \
+    Code/ReplayManager.h \
+    Code/ScintillaSyntax.h \
+    Code/QRDUtils.h \
+    Code/Resources.h \
+    Code/pyrenderdoc/PythonContext.h \
+    Code/pyrenderdoc/pyconversion.h \
+    Code/pyrenderdoc/interface_check.h \
+    Code/Interface/QRDInterface.h \
+    Code/Interface/Analytics.h \
+    Code/Interface/CommonPipelineState.h \
+    Code/Interface/PersistantConfig.h \
+    Code/Interface/RemoteHost.h \
+    Styles/StyleData.h \
+    Styles/RDStyle/RDStyle.h \
+    Styles/RDTweakedNativeStyle/RDTweakedNativeStyle.h \
     Windows/Dialogs/AboutDialog.h \
+    Windows/Dialogs/CrashDialog.h \
+    Windows/Dialogs/UpdateDialog.h \
     Windows/MainWindow.h \
     Windows/EventBrowser.h \
     Windows/TextureViewer.h \
     Widgets/Extended/RDLineEdit.h \
+    Widgets/Extended/RDTextEdit.h \
     Widgets/Extended/RDLabel.h \
+    Widgets/Extended/RDHeaderView.h \
+    Widgets/Extended/RDToolButton.h \
     Widgets/Extended/RDDoubleSpinBox.h \
     Widgets/Extended/RDListView.h \
     Widgets/CustomPaintWidget.h \
@@ -152,7 +265,6 @@ HEADERS  += 3rdparty/toolwindowmanager/ToolWindowManager.h \
     Widgets/RangeHistogram.h \
     Windows/Dialogs/TextureSaveDialog.h \
     Windows/Dialogs/CaptureDialog.h \
-    Code/QRDUtils.h \
     Windows/Dialogs/LiveCapture.h \
     Widgets/Extended/RDListWidget.h \
     Windows/APIInspector.h \
@@ -161,13 +273,37 @@ HEADERS  += 3rdparty/toolwindowmanager/ToolWindowManager.h \
     Windows/PipelineState/D3D11PipelineStateViewer.h \
     Windows/PipelineState/D3D12PipelineStateViewer.h \
     Windows/PipelineState/GLPipelineStateViewer.h \
+    Widgets/Extended/RDTreeView.h \
     Widgets/Extended/RDTreeWidget.h \
     Windows/ConstantBufferPreviewer.h \
     Widgets/BufferFormatSpecifier.h \
     Windows/BufferViewer.h \
-    Widgets/Extended/RDTableView.h
-
+    Widgets/Extended/RDTableView.h \
+    Windows/DebugMessageView.h \
+    Windows/CommentView.h \
+    Windows/StatisticsViewer.h \
+    Windows/TimelineBar.h \
+    Windows/Dialogs/SettingsDialog.h \
+    Widgets/OrderedListEditor.h \
+    Widgets/Extended/RDTableWidget.h \
+    Windows/Dialogs/SuggestRemoteDialog.h \
+    Windows/Dialogs/VirtualFileDialog.h \
+    Windows/Dialogs/RemoteManager.h \
+    Windows/PixelHistoryView.h \
+    Widgets/PipelineFlowChart.h \
+    Windows/Dialogs/EnvironmentEditor.h \
+    Widgets/FindReplace.h \
+    Widgets/Extended/RDSplitter.h \
+    Windows/Dialogs/TipsDialog.h \
+    Windows/PythonShell.h \
+    Windows/Dialogs/PerformanceCounterSelection.h \
+    Windows/PerformanceCounterViewer.h \
+    Windows/ResourceInspector.h \
+    Windows/Dialogs/AnalyticsConfirmDialog.h \
+    Windows/Dialogs/AnalyticsPromptDialog.h
 FORMS    += Windows/Dialogs/AboutDialog.ui \
+    Windows/Dialogs/CrashDialog.ui \
+    Windows/Dialogs/UpdateDialog.ui \
     Windows/MainWindow.ui \
     Windows/EventBrowser.ui \
     Windows/TextureViewer.ui \
@@ -184,7 +320,64 @@ FORMS    += Windows/Dialogs/AboutDialog.ui \
     Windows/PipelineState/GLPipelineStateViewer.ui \
     Windows/ConstantBufferPreviewer.ui \
     Widgets/BufferFormatSpecifier.ui \
-    Windows/BufferViewer.ui
+    Windows/BufferViewer.ui \
+    Windows/ShaderViewer.ui \
+    Windows/DebugMessageView.ui \
+    Windows/CommentView.ui \
+    Windows/StatisticsViewer.ui \
+    Windows/Dialogs/SettingsDialog.ui \
+    Windows/Dialogs/SuggestRemoteDialog.ui \
+    Windows/Dialogs/VirtualFileDialog.ui \
+    Windows/Dialogs/RemoteManager.ui \
+    Windows/PixelHistoryView.ui \
+    Windows/Dialogs/EnvironmentEditor.ui \
+    Widgets/FindReplace.ui \
+    Windows/Dialogs/TipsDialog.ui \
+    Windows/PythonShell.ui \
+    Windows/Dialogs/PerformanceCounterSelection.ui \
+    Windows/PerformanceCounterViewer.ui \
+    Windows/ResourceInspector.ui \
+    Windows/Dialogs/AnalyticsConfirmDialog.ui \
+    Windows/Dialogs/AnalyticsPromptDialog.ui
 
-RESOURCES += \
-    resources.qrc
+RESOURCES += Resources/resources.qrc
+
+# Add ToolWindowManager
+
+SOURCES += 3rdparty/toolwindowmanager/ToolWindowManager.cpp \
+    3rdparty/toolwindowmanager/ToolWindowManagerArea.cpp \
+    3rdparty/toolwindowmanager/ToolWindowManagerSplitter.cpp \
+    3rdparty/toolwindowmanager/ToolWindowManagerTabBar.cpp \
+    3rdparty/toolwindowmanager/ToolWindowManagerWrapper.cpp
+
+HEADERS += 3rdparty/toolwindowmanager/ToolWindowManager.h \
+    3rdparty/toolwindowmanager/ToolWindowManagerArea.h \
+    3rdparty/toolwindowmanager/ToolWindowManagerSplitter.h \
+    3rdparty/toolwindowmanager/ToolWindowManagerTabBar.h \
+    3rdparty/toolwindowmanager/ToolWindowManagerWrapper.h
+
+# Add FlowLayout
+
+SOURCES += 3rdparty/flowlayout/FlowLayout.cpp
+HEADERS += 3rdparty/flowlayout/FlowLayout.h
+
+# Add Scintilla last as it has extra search paths
+
+# Needed for building
+DEFINES += SCINTILLA_QT=1 MAKING_LIBRARY=1 SCI_LEXER=1
+INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/scintilla/src
+INCLUDEPATH += $$_PRO_FILE_PWD_/3rdparty/scintilla/lexlib
+
+SOURCES += $$_PRO_FILE_PWD_/3rdparty/scintilla/lexlib/*.cxx \
+    $$_PRO_FILE_PWD_/3rdparty/scintilla/lexers/*.cxx \
+    $$_PRO_FILE_PWD_/3rdparty/scintilla/src/*.cxx \
+    $$_PRO_FILE_PWD_/3rdparty/scintilla/qt/ScintillaEdit/*.cpp \
+    $$_PRO_FILE_PWD_/3rdparty/scintilla/qt/ScintillaEditBase/*.cpp \
+    Windows/ShaderViewer.cpp
+
+HEADERS += $$_PRO_FILE_PWD_/3rdparty/scintilla/lexlib/*.h \
+    $$_PRO_FILE_PWD_/3rdparty/scintilla/src/*.h \
+    $$_PRO_FILE_PWD_/3rdparty/scintilla/qt/ScintillaEdit/*.h \
+    $$_PRO_FILE_PWD_/3rdparty/scintilla/qt/ScintillaEditBase/*.h \
+    Windows/ShaderViewer.h
+

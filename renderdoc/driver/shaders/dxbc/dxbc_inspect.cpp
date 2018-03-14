@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -27,7 +27,7 @@
 #include "api/app/renderdoc_app.h"
 #include "common/common.h"
 #include "serialise/serialiser.h"
-#include "serialise/string_utils.h"
+#include "strings/string_utils.h"
 #include "dxbc_sdbg.h"
 #include "dxbc_spdb.h"
 
@@ -190,7 +190,7 @@ struct SIGNElement
                           // after FourCC and chunk length.
 
   uint32_t semanticIdx;
-  uint32_t systemType;
+  SVSemantic systemType;
   uint32_t componentType;
   uint32_t registerNum;
 
@@ -203,6 +203,13 @@ struct SIGNElement7
 {
   uint32_t stream;
   SIGNElement elem;
+};
+
+struct SIGNElement1
+{
+  uint32_t stream;
+  SIGNElement elem;
+  MinimumPrecision precision;
 };
 
 static const uint32_t STATSizeDX10 = 29 * 4;    // either 29 uint32s
@@ -218,6 +225,8 @@ static const uint32_t FOURCC_SDBG = MAKE_FOURCC('S', 'D', 'B', 'G');
 static const uint32_t FOURCC_SPDB = MAKE_FOURCC('S', 'P', 'D', 'B');
 static const uint32_t FOURCC_ISGN = MAKE_FOURCC('I', 'S', 'G', 'N');
 static const uint32_t FOURCC_OSGN = MAKE_FOURCC('O', 'S', 'G', 'N');
+static const uint32_t FOURCC_ISG1 = MAKE_FOURCC('I', 'S', 'G', '1');
+static const uint32_t FOURCC_OSG1 = MAKE_FOURCC('O', 'S', 'G', '1');
 static const uint32_t FOURCC_OSG5 = MAKE_FOURCC('O', 'S', 'G', '5');
 static const uint32_t FOURCC_PCSG = MAKE_FOURCC('P', 'C', 'S', 'G');
 static const uint32_t FOURCC_Aon9 = MAKE_FOURCC('A', 'o', 'n', '9');
@@ -231,7 +240,16 @@ int TypeByteSize(VariableType t)
     case VARTYPE_BOOL:
     case VARTYPE_INT:
     case VARTYPE_FLOAT:
-    case VARTYPE_UINT: return 4;
+    case VARTYPE_UINT:
+      return 4;
+    // we pretend for our purposes that the 'min' formats round up to 4 bytes. For any external
+    // interfaces they are treated as regular types, only using lower precision internally.
+    case VARTYPE_MIN8FLOAT:
+    case VARTYPE_MIN10FLOAT:
+    case VARTYPE_MIN16FLOAT:
+    case VARTYPE_MIN12INT:
+    case VARTYPE_MIN16INT:
+    case VARTYPE_MIN16UINT: return 4;
     case VARTYPE_DOUBLE:
       return 8;
     // 'virtual' type. Just return 1
@@ -240,64 +258,35 @@ int TypeByteSize(VariableType t)
   }
 }
 
-SystemAttribute GetSystemValue(uint32_t systemValue)
+ShaderBuiltin GetSystemValue(SVSemantic systemValue)
 {
-  enum DXBC_SVSemantic
-  {
-    SVNAME_UNDEFINED = 0,
-    SVNAME_POSITION,
-    SVNAME_CLIP_DISTANCE,
-    SVNAME_CULL_DISTANCE,
-    SVNAME_RENDER_TARGET_ARRAY_INDEX,
-    SVNAME_VIEWPORT_ARRAY_INDEX,
-    SVNAME_VERTEX_ID,
-    SVNAME_PRIMITIVE_ID,
-    SVNAME_INSTANCE_ID,
-    SVNAME_IS_FRONT_FACE,
-    SVNAME_SAMPLE_INDEX,
-
-    // following are non-contiguous
-    SVNAME_FINAL_QUAD_EDGE_TESSFACTOR,
-    SVNAME_FINAL_QUAD_INSIDE_TESSFACTOR = SVNAME_FINAL_QUAD_EDGE_TESSFACTOR + 4,
-    SVNAME_FINAL_TRI_EDGE_TESSFACTOR = SVNAME_FINAL_QUAD_INSIDE_TESSFACTOR + 2,
-    SVNAME_FINAL_TRI_INSIDE_TESSFACTOR = SVNAME_FINAL_TRI_EDGE_TESSFACTOR + 3,
-    SVNAME_FINAL_LINE_DETAIL_TESSFACTOR,
-    SVNAME_FINAL_LINE_DENSITY_TESSFACTOR,
-
-    SVNAME_TARGET = 64,
-    SVNAME_DEPTH,
-    SVNAME_COVERAGE,
-    SVNAME_DEPTH_GREATER_EQUAL,
-    SVNAME_DEPTH_LESS_EQUAL,
-  };
-
   switch(systemValue)
   {
-    case SVNAME_UNDEFINED: return eAttr_None;
-    case SVNAME_POSITION: return eAttr_Position;
-    case SVNAME_CLIP_DISTANCE: return eAttr_ClipDistance;
-    case SVNAME_CULL_DISTANCE: return eAttr_CullDistance;
-    case SVNAME_RENDER_TARGET_ARRAY_INDEX: return eAttr_RTIndex;
-    case SVNAME_VIEWPORT_ARRAY_INDEX: return eAttr_ViewportIndex;
-    case SVNAME_VERTEX_ID: return eAttr_VertexIndex;
-    case SVNAME_PRIMITIVE_ID: return eAttr_PrimitiveIndex;
-    case SVNAME_INSTANCE_ID: return eAttr_InstanceIndex;
-    case SVNAME_IS_FRONT_FACE: return eAttr_IsFrontFace;
-    case SVNAME_SAMPLE_INDEX: return eAttr_MSAASampleIndex;
-    case SVNAME_FINAL_QUAD_EDGE_TESSFACTOR: return eAttr_OuterTessFactor;
-    case SVNAME_FINAL_QUAD_INSIDE_TESSFACTOR: return eAttr_InsideTessFactor;
-    case SVNAME_FINAL_TRI_EDGE_TESSFACTOR: return eAttr_OuterTessFactor;
-    case SVNAME_FINAL_TRI_INSIDE_TESSFACTOR: return eAttr_InsideTessFactor;
-    case SVNAME_FINAL_LINE_DETAIL_TESSFACTOR: return eAttr_OuterTessFactor;
-    case SVNAME_FINAL_LINE_DENSITY_TESSFACTOR: return eAttr_InsideTessFactor;
-    case SVNAME_TARGET: return eAttr_ColourOutput;
-    case SVNAME_DEPTH: return eAttr_DepthOutput;
-    case SVNAME_COVERAGE: return eAttr_MSAACoverage;
-    case SVNAME_DEPTH_GREATER_EQUAL: return eAttr_DepthOutputGreaterEqual;
-    case SVNAME_DEPTH_LESS_EQUAL: return eAttr_DepthOutputLessEqual;
+    case SVNAME_UNDEFINED: return ShaderBuiltin::Undefined;
+    case SVNAME_POSITION: return ShaderBuiltin::Position;
+    case SVNAME_CLIP_DISTANCE: return ShaderBuiltin::ClipDistance;
+    case SVNAME_CULL_DISTANCE: return ShaderBuiltin::CullDistance;
+    case SVNAME_RENDER_TARGET_ARRAY_INDEX: return ShaderBuiltin::RTIndex;
+    case SVNAME_VIEWPORT_ARRAY_INDEX: return ShaderBuiltin::ViewportIndex;
+    case SVNAME_VERTEX_ID: return ShaderBuiltin::VertexIndex;
+    case SVNAME_PRIMITIVE_ID: return ShaderBuiltin::PrimitiveIndex;
+    case SVNAME_INSTANCE_ID: return ShaderBuiltin::InstanceIndex;
+    case SVNAME_IS_FRONT_FACE: return ShaderBuiltin::IsFrontFace;
+    case SVNAME_SAMPLE_INDEX: return ShaderBuiltin::MSAASampleIndex;
+    case SVNAME_FINAL_QUAD_EDGE_TESSFACTOR: return ShaderBuiltin::OuterTessFactor;
+    case SVNAME_FINAL_QUAD_INSIDE_TESSFACTOR: return ShaderBuiltin::InsideTessFactor;
+    case SVNAME_FINAL_TRI_EDGE_TESSFACTOR: return ShaderBuiltin::OuterTessFactor;
+    case SVNAME_FINAL_TRI_INSIDE_TESSFACTOR: return ShaderBuiltin::InsideTessFactor;
+    case SVNAME_FINAL_LINE_DETAIL_TESSFACTOR: return ShaderBuiltin::OuterTessFactor;
+    case SVNAME_FINAL_LINE_DENSITY_TESSFACTOR: return ShaderBuiltin::InsideTessFactor;
+    case SVNAME_TARGET: return ShaderBuiltin::ColorOutput;
+    case SVNAME_DEPTH: return ShaderBuiltin::DepthOutput;
+    case SVNAME_COVERAGE: return ShaderBuiltin::MSAACoverage;
+    case SVNAME_DEPTH_GREATER_EQUAL: return ShaderBuiltin::DepthOutputGreaterEqual;
+    case SVNAME_DEPTH_LESS_EQUAL: return ShaderBuiltin::DepthOutputLessEqual;
   }
 
-  return eAttr_None;
+  return ShaderBuiltin::Undefined;
 }
 
 string TypeName(CBufferVariableType::Descriptor desc)
@@ -315,6 +304,12 @@ string TypeName(CBufferVariableType::Descriptor desc)
     case VARTYPE_UINT8: type = "ubyte"; break;
     case VARTYPE_VOID: type = "void"; break;
     case VARTYPE_INTERFACE_POINTER: type = "interface"; break;
+    case VARTYPE_MIN8FLOAT: type = "min8float"; break;
+    case VARTYPE_MIN10FLOAT: type = "min10float"; break;
+    case VARTYPE_MIN16FLOAT: type = "min16float"; break;
+    case VARTYPE_MIN12INT: type = "min12int"; break;
+    case VARTYPE_MIN16INT: type = "min16int"; break;
+    case VARTYPE_MIN16UINT: type = "min16uint"; break;
     default: RDCERR("Unexpected type in RDEF variable type %d", type);
   }
 
@@ -543,6 +538,11 @@ DXBCFile::DXBCFile(const void *ByteCode, size_t ByteCodeLength)
 
   m_Disassembled = false;
 
+  m_Type = D3D11_ShaderType_Vertex;
+  m_Version.Major = 5;
+  m_Version.Minor = 0;
+  m_GuessedResources = true;
+
   RDCASSERT(ByteCodeLength < UINT32_MAX);
 
   RDCEraseEl(m_ShaderStats);
@@ -599,7 +599,9 @@ DXBCFile::DXBCFile(const void *ByteCode, size_t ByteCodeLength)
       else if(h->targetShaderStage == 0x4353)    // 'CS'
         m_Type = D3D11_ShaderType_Compute;
 
-      m_Resources.reserve(h->resources.count);
+      m_SRVs.reserve(h->resources.count);
+      m_UAVs.reserve(h->resources.count);
+      m_Samplers.reserve(h->resources.count);
 
       struct CBufferBind
       {
@@ -629,13 +631,12 @@ DXBCFile::DXBCFile(const void *ByteCode, size_t ByteCodeLength)
         desc.reg = res->bindPoint;
         desc.bindCount = res->bindCount;
         desc.flags = res->flags;
-        desc.retType = (ShaderInputBind::RetType)res->retType;
+        desc.retType = (ResourceRetType)res->retType;
         desc.dimension = (ShaderInputBind::Dimension)res->dimension;
         desc.numSamples = res->sampleCount;
 
-        if(desc.numSamples == ~0 && desc.retType != ShaderInputBind::RETTYPE_MIXED &&
-           desc.retType != ShaderInputBind::RETTYPE_UNKNOWN &&
-           desc.retType != ShaderInputBind::RETTYPE_CONTINUED)
+        if(desc.numSamples == ~0 && desc.retType != RETURN_TYPE_MIXED &&
+           desc.retType != RETURN_TYPE_UNKNOWN && desc.retType != RETURN_TYPE_CONTINUED)
         {
           // uint, uint2, uint3, uint4 seem to be in these bits of flags.
           desc.numSamples = 1 + ((desc.flags & 0xC) >> 2);
@@ -644,7 +645,7 @@ DXBCFile::DXBCFile(const void *ByteCode, size_t ByteCodeLength)
         // for cbuffers the names can be duplicated, so handle this by assuming
         // the order will match between binding declaration and cbuffer declaration
         // and append _s onto each subsequent buffer name
-        if(desc.type == ShaderInputBind::TYPE_CBUFFER)
+        if(desc.IsCBuffer())
         {
           string cname = desc.name;
 
@@ -657,8 +658,22 @@ DXBCFile::DXBCFile(const void *ByteCode, size_t ByteCodeLength)
           cb.bindCount = desc.bindCount;
           cbufferbinds[cname] = cb;
         }
-
-        m_Resources.push_back(desc);
+        else if(desc.IsSampler())
+        {
+          m_Samplers.push_back(desc);
+        }
+        else if(desc.IsSRV())
+        {
+          m_SRVs.push_back(desc);
+        }
+        else if(desc.IsUAV())
+        {
+          m_UAVs.push_back(desc);
+        }
+        else
+        {
+          RDCERR("Unexpected type of resource: %u", desc.type);
+        }
       }
 
       // Expand out any array resources. We deliberately place these at the end of the resources
@@ -671,35 +686,41 @@ DXBCFile::DXBCFile(const void *ByteCode, size_t ByteCodeLength)
       // Note we preserve the arrays in SM5.1
       if(h->targetVersion < 0x501)
       {
-        for(size_t i = 0; i < m_Resources.size();)
+        for(vector<ShaderInputBind> *arr : {&m_SRVs, &m_UAVs, &m_Samplers})
         {
-          if(m_Resources[i].bindCount > 1)
+          vector<ShaderInputBind> &resArray = *arr;
+          for(auto it = resArray.begin(); it != resArray.end();)
           {
-            ShaderInputBind desc = m_Resources[i];
-            m_Resources.erase(m_Resources.begin() + i);
-
-            string rname = desc.name;
-            uint32_t arraySize = desc.bindCount;
-
-            desc.bindCount = 1;
-
-            for(uint32_t a = 0; a < arraySize; a++)
+            if(it->bindCount > 1)
             {
-              desc.name = StringFormat::Fmt("%s[%u]", rname.c_str(), a);
-              m_Resources.push_back(desc);
-              desc.reg++;
+              // copy off the array item description
+              ShaderInputBind desc = *it;
+
+              // remove the array item, and get the iterator to the next item to process
+              it = resArray.erase(it);
+
+              string rname = desc.name;
+              uint32_t arraySize = desc.bindCount;
+
+              desc.bindCount = 1;
+
+              for(uint32_t a = 0; a < arraySize; a++)
+              {
+                desc.name = StringFormat::Fmt("%s[%u]", rname.c_str(), a);
+                resArray.push_back(desc);
+                desc.reg++;
+              }
+
+              continue;
             }
 
-            // continue from the i'th element again since
-            // we just removed it.
-            continue;
+            // just move on if this item wasn't arrayed
+            it++;
           }
-
-          i++;
         }
       }
 
-      set<string> cbuffernames;
+      std::set<std::string> cbuffernames;
 
       for(int32_t i = 0; i < h->cbuffers.count; i++)
       {
@@ -838,6 +859,8 @@ DXBCFile::DXBCFile(const void *ByteCode, size_t ByteCodeLength)
   // get type/version that's used regularly and cheap to fetch
   FetchTypeVersion();
 
+  m_GuessedResources = false;
+
   // didn't find an rdef means reflection information was stripped.
   // Attempt to reverse engineer basic info from declarations
   if(!rdefFound)
@@ -846,6 +869,14 @@ DXBCFile::DXBCFile(const void *ByteCode, size_t ByteCodeLength)
     DisassembleHexDump();
 
     GuessResources();
+
+    m_GuessedResources = true;
+  }
+
+  // make sure to fetch the dispatch threads dimension from disassembly
+  if(!m_Disassembled && m_Type == D3D11_ShaderType_Compute)
+  {
+    FetchThreadDim();
   }
 
   for(uint32_t chunkIdx = 0; chunkIdx < header->numChunks; chunkIdx++)
@@ -855,8 +886,8 @@ DXBCFile::DXBCFile(const void *ByteCode, size_t ByteCodeLength)
 
     char *chunkContents = (char *)(data + chunkOffsets[chunkIdx] + sizeof(uint32_t) * 2);
 
-    if(*fourcc == FOURCC_ISGN || *fourcc == FOURCC_OSGN || *fourcc == FOURCC_OSG5 ||
-       *fourcc == FOURCC_PCSG)
+    if(*fourcc == FOURCC_ISGN || *fourcc == FOURCC_OSGN || *fourcc == FOURCC_ISG1 ||
+       *fourcc == FOURCC_OSG1 || *fourcc == FOURCC_OSG5 || *fourcc == FOURCC_PCSG)
     {
       SIGNHeader *sign = (SIGNHeader *)fourcc;
 
@@ -866,12 +897,12 @@ DXBCFile::DXBCFile(const void *ByteCode, size_t ByteCodeLength)
       bool output = false;
       bool patch = false;
 
-      if(*fourcc == FOURCC_ISGN)
+      if(*fourcc == FOURCC_ISGN || *fourcc == FOURCC_ISG1)
       {
         sig = &m_InputSig;
         input = true;
       }
-      if(*fourcc == FOURCC_OSGN || *fourcc == FOURCC_OSG5)
+      if(*fourcc == FOURCC_OSGN || *fourcc == FOURCC_OSG1 || *fourcc == FOURCC_OSG5)
       {
         sig = &m_OutputSig;
         output = true;
@@ -884,12 +915,25 @@ DXBCFile::DXBCFile(const void *ByteCode, size_t ByteCodeLength)
 
       RDCASSERT(sig && sig->empty());
 
-      SIGNElement *el = (SIGNElement *)(sign + 1);
-      SIGNElement7 *el7 = (SIGNElement7 *)el;
+      SIGNElement *el0 = (SIGNElement *)(sign + 1);
+      SIGNElement7 *el7 = (SIGNElement7 *)el0;
+      SIGNElement1 *el1 = (SIGNElement1 *)el0;
 
       for(uint32_t signIdx = 0; signIdx < sign->numElems; signIdx++)
       {
         SigParameter desc;
+
+        const SIGNElement *el = el0;
+
+        if(*fourcc == FOURCC_ISG1 || *fourcc == FOURCC_OSG1)
+        {
+          desc.stream = el1->stream;
+
+          // discard el1->precision as we don't use it and don't want to pollute the common API
+          // structures
+
+          el = &el1->elem;
+        }
 
         if(*fourcc == FOURCC_OSG5)
         {
@@ -899,11 +943,11 @@ DXBCFile::DXBCFile(const void *ByteCode, size_t ByteCodeLength)
         }
 
         ComponentType compType = (ComponentType)el->componentType;
-        desc.compType = eCompType_Float;
+        desc.compType = CompType::Float;
         if(compType == COMPONENT_TYPE_UINT32)
-          desc.compType = eCompType_UInt;
+          desc.compType = CompType::UInt;
         else if(compType == COMPONENT_TYPE_SINT32)
-          desc.compType = eCompType_SInt;
+          desc.compType = CompType::SInt;
         else if(compType != COMPONENT_TYPE_FLOAT32)
           RDCERR("Unexpected component type in signature");
 
@@ -919,68 +963,69 @@ DXBCFile::DXBCFile(const void *ByteCode, size_t ByteCodeLength)
         RDCASSERT(m_Type != (D3D11_ShaderType)-1);
 
         // pixel shader outputs with registers are always targets
-        if(m_Type == D3D11_ShaderType_Pixel && output && desc.systemValue == eAttr_None &&
-           desc.regIndex >= 0 && desc.regIndex <= 16)
-          desc.systemValue = eAttr_ColourOutput;
+        if(m_Type == D3D11_ShaderType_Pixel && output &&
+           desc.systemValue == ShaderBuiltin::Undefined && desc.regIndex >= 0 && desc.regIndex <= 16)
+          desc.systemValue = ShaderBuiltin::ColorOutput;
 
         // check system value semantics
-        if(desc.systemValue == eAttr_None)
+        if(desc.systemValue == ShaderBuiltin::Undefined)
         {
-          if(!_stricmp(desc.semanticName.elems, "SV_Position"))
-            desc.systemValue = eAttr_Position;
-          if(!_stricmp(desc.semanticName.elems, "SV_ClipDistance"))
-            desc.systemValue = eAttr_ClipDistance;
-          if(!_stricmp(desc.semanticName.elems, "SV_CullDistance"))
-            desc.systemValue = eAttr_CullDistance;
-          if(!_stricmp(desc.semanticName.elems, "SV_RenderTargetArrayIndex"))
-            desc.systemValue = eAttr_RTIndex;
-          if(!_stricmp(desc.semanticName.elems, "SV_ViewportArrayIndex"))
-            desc.systemValue = eAttr_ViewportIndex;
-          if(!_stricmp(desc.semanticName.elems, "SV_VertexID"))
-            desc.systemValue = eAttr_VertexIndex;
-          if(!_stricmp(desc.semanticName.elems, "SV_PrimitiveID"))
-            desc.systemValue = eAttr_PrimitiveIndex;
-          if(!_stricmp(desc.semanticName.elems, "SV_InstanceID"))
-            desc.systemValue = eAttr_InstanceIndex;
-          if(!_stricmp(desc.semanticName.elems, "SV_DispatchThreadID"))
-            desc.systemValue = eAttr_DispatchThreadIndex;
-          if(!_stricmp(desc.semanticName.elems, "SV_GroupID"))
-            desc.systemValue = eAttr_GroupIndex;
-          if(!_stricmp(desc.semanticName.elems, "SV_GroupIndex"))
-            desc.systemValue = eAttr_GroupFlatIndex;
-          if(!_stricmp(desc.semanticName.elems, "SV_GroupThreadID"))
-            desc.systemValue = eAttr_GroupThreadIndex;
-          if(!_stricmp(desc.semanticName.elems, "SV_GSInstanceID"))
-            desc.systemValue = eAttr_GSInstanceIndex;
-          if(!_stricmp(desc.semanticName.elems, "SV_OutputControlPointID"))
-            desc.systemValue = eAttr_OutputControlPointIndex;
-          if(!_stricmp(desc.semanticName.elems, "SV_DomainLocation"))
-            desc.systemValue = eAttr_DomainLocation;
-          if(!_stricmp(desc.semanticName.elems, "SV_IsFrontFace"))
-            desc.systemValue = eAttr_IsFrontFace;
-          if(!_stricmp(desc.semanticName.elems, "SV_SampleIndex"))
-            desc.systemValue = eAttr_MSAASampleIndex;
-          if(!_stricmp(desc.semanticName.elems, "SV_TessFactor"))
-            desc.systemValue = eAttr_OuterTessFactor;
-          if(!_stricmp(desc.semanticName.elems, "SV_InsideTessFactor"))
-            desc.systemValue = eAttr_InsideTessFactor;
-          if(!_stricmp(desc.semanticName.elems, "SV_Target"))
-            desc.systemValue = eAttr_ColourOutput;
-          if(!_stricmp(desc.semanticName.elems, "SV_Depth"))
-            desc.systemValue = eAttr_DepthOutput;
-          if(!_stricmp(desc.semanticName.elems, "SV_Coverage"))
-            desc.systemValue = eAttr_MSAACoverage;
-          if(!_stricmp(desc.semanticName.elems, "SV_DepthGreaterEqual"))
-            desc.systemValue = eAttr_DepthOutputGreaterEqual;
-          if(!_stricmp(desc.semanticName.elems, "SV_DepthLessEqual"))
-            desc.systemValue = eAttr_DepthOutputLessEqual;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_Position"))
+            desc.systemValue = ShaderBuiltin::Position;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_ClipDistance"))
+            desc.systemValue = ShaderBuiltin::ClipDistance;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_CullDistance"))
+            desc.systemValue = ShaderBuiltin::CullDistance;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_RenderTargetArrayIndex"))
+            desc.systemValue = ShaderBuiltin::RTIndex;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_ViewportArrayIndex"))
+            desc.systemValue = ShaderBuiltin::ViewportIndex;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_VertexID"))
+            desc.systemValue = ShaderBuiltin::VertexIndex;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_PrimitiveID"))
+            desc.systemValue = ShaderBuiltin::PrimitiveIndex;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_InstanceID"))
+            desc.systemValue = ShaderBuiltin::InstanceIndex;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_DispatchThreadID"))
+            desc.systemValue = ShaderBuiltin::DispatchThreadIndex;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_GroupID"))
+            desc.systemValue = ShaderBuiltin::GroupIndex;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_GroupIndex"))
+            desc.systemValue = ShaderBuiltin::GroupFlatIndex;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_GroupThreadID"))
+            desc.systemValue = ShaderBuiltin::GroupThreadIndex;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_GSInstanceID"))
+            desc.systemValue = ShaderBuiltin::GSInstanceIndex;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_OutputControlPointID"))
+            desc.systemValue = ShaderBuiltin::OutputControlPointIndex;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_DomainLocation"))
+            desc.systemValue = ShaderBuiltin::DomainLocation;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_IsFrontFace"))
+            desc.systemValue = ShaderBuiltin::IsFrontFace;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_SampleIndex"))
+            desc.systemValue = ShaderBuiltin::MSAASampleIndex;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_TessFactor"))
+            desc.systemValue = ShaderBuiltin::OuterTessFactor;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_InsideTessFactor"))
+            desc.systemValue = ShaderBuiltin::InsideTessFactor;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_Target"))
+            desc.systemValue = ShaderBuiltin::ColorOutput;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_Depth"))
+            desc.systemValue = ShaderBuiltin::DepthOutput;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_Coverage"))
+            desc.systemValue = ShaderBuiltin::MSAACoverage;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_DepthGreaterEqual"))
+            desc.systemValue = ShaderBuiltin::DepthOutputGreaterEqual;
+          if(!_stricmp(desc.semanticName.c_str(), "SV_DepthLessEqual"))
+            desc.systemValue = ShaderBuiltin::DepthOutputLessEqual;
         }
 
-        RDCASSERT(desc.systemValue != eAttr_None || desc.regIndex >= 0);
+        RDCASSERT(desc.systemValue != ShaderBuiltin::Undefined || desc.regIndex >= 0);
 
         sig->push_back(desc);
 
-        el++;
+        el0++;
+        el1++;
         el7++;
       }
 
@@ -991,16 +1036,16 @@ DXBCFile::DXBCFile(const void *ByteCode, size_t ByteCodeLength)
         for(uint32_t j = 0; j < sign->numElems; j++)
         {
           SigParameter &b = (*sig)[j];
-          if(i != j && !strcmp(a.semanticName.elems, b.semanticName.elems))
+          if(i != j && a.semanticName == b.semanticName)
           {
             a.needSemanticIndex = true;
             break;
           }
         }
 
-        string semanticIdxName = a.semanticName.elems;
+        std::string semanticIdxName = a.semanticName;
         if(a.needSemanticIndex)
-          semanticIdxName += ToStr::Get(a.semanticIndex);
+          semanticIdxName += ToStr(a.semanticIndex);
 
         a.semanticIdxName = semanticIdxName;
       }
@@ -1049,7 +1094,7 @@ void DXBCFile::GuessResources()
         desc.reg = idx;
         desc.bindCount = 1;
         desc.flags = dcl.samplerMode == SAMPLER_MODE_COMPARISON ? 2 : 0;
-        desc.retType = ShaderInputBind::RETTYPE_UNKNOWN;
+        desc.retType = RETURN_TYPE_UNKNOWN;
         desc.dimension = ShaderInputBind::DIM_UNKNOWN;
         desc.numSamples = 0;
 
@@ -1060,7 +1105,7 @@ void DXBCFile::GuessResources()
             desc.bindCount = 0;
         }
 
-        m_Resources.push_back(desc);
+        m_Samplers.push_back(desc);
 
         break;
       }
@@ -1082,7 +1127,7 @@ void DXBCFile::GuessResources()
         desc.reg = idx;
         desc.bindCount = 1;
         desc.flags = 0;
-        desc.retType = (ShaderInputBind::RetType)dcl.resType[0];
+        desc.retType = dcl.resType[0];
 
         switch(dcl.dim)
         {
@@ -1112,6 +1157,10 @@ void DXBCFile::GuessResources()
         }
         desc.numSamples = dcl.sampleCount;
 
+        // can't tell, fxc seems to default to 4
+        if(desc.dimension == ShaderInputBind::DIM_BUFFER)
+          desc.numSamples = 4;
+
         RDCASSERT(desc.dimension != ShaderInputBind::DIM_UNKNOWN);
 
         if(dcl.operand.indices.size() == 3)
@@ -1121,7 +1170,7 @@ void DXBCFile::GuessResources()
             desc.bindCount = 0;
         }
 
-        m_Resources.push_back(desc);
+        m_SRVs.push_back(desc);
 
         break;
       }
@@ -1147,7 +1196,7 @@ void DXBCFile::GuessResources()
         desc.reg = idx;
         desc.bindCount = 1;
         desc.flags = 0;
-        desc.retType = ShaderInputBind::RETTYPE_MIXED;
+        desc.retType = RETURN_TYPE_MIXED;
         desc.dimension = ShaderInputBind::DIM_BUFFER;
         desc.numSamples = 0;
 
@@ -1158,7 +1207,10 @@ void DXBCFile::GuessResources()
             desc.bindCount = 0;
         }
 
-        m_Resources.push_back(desc);
+        if(dcl.operand.type == TYPE_RESOURCE)
+          m_SRVs.push_back(desc);
+        else
+          m_UAVs.push_back(desc);
 
         break;
       }
@@ -1180,7 +1232,7 @@ void DXBCFile::GuessResources()
         desc.reg = idx;
         desc.bindCount = 1;
         desc.flags = 0;
-        desc.retType = ShaderInputBind::RETTYPE_MIXED;
+        desc.retType = RETURN_TYPE_MIXED;
         desc.dimension = ShaderInputBind::DIM_BUFFER;
         desc.numSamples = dcl.stride;
 
@@ -1191,7 +1243,7 @@ void DXBCFile::GuessResources()
             desc.bindCount = 0;
         }
 
-        m_Resources.push_back(desc);
+        m_SRVs.push_back(desc);
 
         break;
       }
@@ -1217,7 +1269,7 @@ void DXBCFile::GuessResources()
         desc.reg = idx;
         desc.bindCount = 1;
         desc.flags = 0;
-        desc.retType = ShaderInputBind::RETTYPE_MIXED;
+        desc.retType = RETURN_TYPE_MIXED;
         desc.dimension = ShaderInputBind::DIM_BUFFER;
         desc.numSamples = dcl.stride;
 
@@ -1228,7 +1280,7 @@ void DXBCFile::GuessResources()
             desc.bindCount = 0;
         }
 
-        m_Resources.push_back(desc);
+        m_UAVs.push_back(desc);
 
         break;
       }
@@ -1250,7 +1302,7 @@ void DXBCFile::GuessResources()
         desc.reg = idx;
         desc.bindCount = 1;
         desc.flags = 0;
-        desc.retType = (ShaderInputBind::RetType) int(dcl.resType[0]);    // enums match
+        desc.retType = dcl.resType[0];
 
         switch(dcl.dim)
         {
@@ -1287,7 +1339,7 @@ void DXBCFile::GuessResources()
             desc.bindCount = 0;
         }
 
-        m_Resources.push_back(desc);
+        m_UAVs.push_back(desc);
 
         break;
       }
@@ -1310,7 +1362,7 @@ void DXBCFile::GuessResources()
         desc.reg = idx;
         desc.bindCount = 1;
         desc.flags = 1;
-        desc.retType = ShaderInputBind::RETTYPE_UNKNOWN;
+        desc.retType = RETURN_TYPE_UNKNOWN;
         desc.dimension = ShaderInputBind::DIM_UNKNOWN;
         desc.numSamples = 0;
 
@@ -1322,8 +1374,6 @@ void DXBCFile::GuessResources()
         }
 
         CBuffer cb;
-
-        m_Resources.push_back(desc);
 
         cb.name = desc.name;
 
@@ -1379,6 +1429,30 @@ void DXBCFile::GuessResources()
       }
     }
   }
+}
+
+uint32_t DecodeFlags(const ShaderCompileFlags &compileFlags)
+{
+  uint32_t ret = 0;
+
+  if(!compileFlags.flags.empty() && compileFlags.flags[0].name == "compileFlags")
+    ret = atoi(compileFlags.flags[0].value.c_str());
+
+  return ret;
+}
+
+ShaderCompileFlags EncodeFlags(const uint32_t flags)
+{
+  ShaderCompileFlags ret;
+
+  ret.flags = {{"compileFlags", StringFormat::Fmt("%u", flags)}};
+
+  return ret;
+}
+
+ShaderCompileFlags EncodeFlags(const DXBCDebugChunk *dbg)
+{
+  return EncodeFlags(dbg ? dbg->GetShaderCompileFlags() : 0);
 }
 
 SDBGChunk::SDBGChunk(void *data)
@@ -1846,9 +1920,9 @@ SPDBChunk::SPDBChunk(void *chunk)
                 if(value[i] >= '0' && value[i] <= '9')
                   digit = (uint32_t)(value[i] - '0');
                 if(value[i] >= 'a' && value[i] <= 'f')
-                  digit = (uint32_t)(value[i] - 'a');
+                  digit = 0xa + (uint32_t)(value[i] - 'a');
                 if(value[i] >= 'A' && value[i] <= 'F')
-                  digit = (uint32_t)(value[i] - 'A');
+                  digit = 0xa + (uint32_t)(value[i] - 'A');
 
                 m_ShaderFlags <<= 4;
                 m_ShaderFlags |= digit;
@@ -2355,7 +2429,7 @@ SPDBChunk::SPDBChunk(void *chunk)
         {
           // some kind of control bytes? they have n file mappings following but I'm not sure what
           // they mean
-          if(calls[0] <= 0xf)
+          if(calls[0] <= 0xfff)
           {
             calls += 1 + calls[0];
           }

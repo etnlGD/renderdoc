@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -25,26 +25,93 @@
 #pragma once
 
 #include <QFrame>
-#include "Code/CaptureContext.h"
+#include "Code/Interface/QRDInterface.h"
 
 namespace Ui
 {
 class GLPipelineStateViewer;
 }
 
-class GLPipelineStateViewer : public QFrame, public ILogViewerForm
+class QXmlStreamWriter;
+
+class RDLabel;
+class RDTreeWidget;
+class RDTreeWidgetItem;
+class PipelineStateViewer;
+
+class GLPipelineStateViewer : public QFrame, public ICaptureViewer
 {
   Q_OBJECT
 
 public:
-  explicit GLPipelineStateViewer(CaptureContext *ctx, QWidget *parent = 0);
+  explicit GLPipelineStateViewer(ICaptureContext &ctx, PipelineStateViewer &common,
+                                 QWidget *parent = 0);
   ~GLPipelineStateViewer();
 
-  void OnLogfileLoaded();
-  void OnLogfileClosed();
-  void OnEventSelected(uint32_t eventID);
+  // ICaptureViewer
+  void OnCaptureLoaded() override;
+  void OnCaptureClosed() override;
+  void OnSelectedEventChanged(uint32_t eventId) override {}
+  void OnEventChanged(uint32_t eventId) override;
+
+private slots:
+  // automatic slots
+  void on_showDisabled_toggled(bool checked);
+  void on_showEmpty_toggled(bool checked);
+  void on_exportHTML_clicked();
+  void on_meshView_clicked();
+  void on_viAttrs_itemActivated(RDTreeWidgetItem *item, int column);
+  void on_viBuffers_itemActivated(RDTreeWidgetItem *item, int column);
+  void on_viAttrs_mouseMove(QMouseEvent *event);
+  void on_viBuffers_mouseMove(QMouseEvent *event);
+  void on_pipeFlow_stageSelected(int index);
+
+  // manual slots
+  void shaderView_clicked();
+  void shaderEdit_clicked();
+  void shaderSave_clicked();
+  void resource_itemActivated(RDTreeWidgetItem *item, int column);
+  void ubo_itemActivated(RDTreeWidgetItem *item, int column);
+  void vertex_leave(QEvent *e);
 
 private:
   Ui::GLPipelineStateViewer *ui;
-  CaptureContext *m_Ctx;
+  ICaptureContext &m_Ctx;
+  PipelineStateViewer &m_Common;
+
+  enum class GLReadWriteType
+  {
+    Atomic,
+    SSBO,
+    Image,
+  };
+
+  QString MakeGenericValueString(uint32_t compCount, CompType compType,
+                                 const GLPipe::VertexAttribute &val);
+  GLReadWriteType GetGLReadWriteType(ShaderResource res);
+
+  void setShaderState(const GLPipe::Shader &stage, RDLabel *shader, RDTreeWidget *tex,
+                      RDTreeWidget *samp, RDTreeWidget *ubo, RDTreeWidget *sub, RDTreeWidget *rw);
+  void clearShaderState(RDLabel *shader, RDTreeWidget *tex, RDTreeWidget *samp, RDTreeWidget *ubo,
+                        RDTreeWidget *sub, RDTreeWidget *rw);
+  void setState();
+  void clearState();
+
+  void setInactiveRow(RDTreeWidgetItem *node);
+  void setEmptyRow(RDTreeWidgetItem *node);
+  void highlightIABind(int slot);
+
+  QString formatMembers(int indent, const QString &nameprefix, const rdcarray<ShaderConstant> &vars);
+  const GLPipe::Shader *stageForSender(QWidget *widget);
+
+  bool showNode(bool usedSlot, bool filledSlot);
+
+  void exportHTML(QXmlStreamWriter &xml, const GLPipe::VertexInput &vtx);
+  void exportHTML(QXmlStreamWriter &xml, const GLPipe::Shader &sh);
+  void exportHTML(QXmlStreamWriter &xml, const GLPipe::Feedback &xfb);
+  void exportHTML(QXmlStreamWriter &xml, const GLPipe::Rasterizer &rs);
+  void exportHTML(QXmlStreamWriter &xml, const GLPipe::FrameBuffer &fb);
+
+  // keep track of the VB nodes (we want to be able to highlight them easily on hover)
+  QList<RDTreeWidgetItem *> m_VBNodes;
 };

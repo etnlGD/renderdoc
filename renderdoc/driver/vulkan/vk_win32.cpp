@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -27,11 +27,10 @@
 
 static int dllLocator = 0;
 
-void VulkanReplay::OutputWindow::SetWindowHandle(WindowingSystem system, void *data)
+void VulkanReplay::OutputWindow::SetWindowHandle(WindowingData window)
 {
-  RDCASSERT(system == eWindowingSystem_Win32, system);
-  wnd = (HWND)data;
-  m_WindowSystem = system;
+  RDCASSERT(window.system == WindowingSystem::Win32, window.system);
+  wnd = window.win32.window;
 }
 
 void VulkanReplay::OutputWindow::CreateSurface(VkInstance inst)
@@ -72,7 +71,7 @@ bool VulkanReplay::IsOutputWindowVisible(uint64_t id)
   return (IsWindowVisible(m_OutputWindows[id].wnd) == TRUE);
 }
 
-bool WrappedVulkan::AddRequiredExtensions(bool instance, vector<string> &extensionList,
+void WrappedVulkan::AddRequiredExtensions(bool instance, vector<string> &extensionList,
                                           const std::set<string> &supportedExtensions)
 {
   bool device = !instance;
@@ -83,39 +82,40 @@ bool WrappedVulkan::AddRequiredExtensions(bool instance, vector<string> &extensi
     if(supportedExtensions.find(VK_KHR_SURFACE_EXTENSION_NAME) == supportedExtensions.end())
     {
       RDCERR("Unsupported required instance extension '%s'", VK_KHR_SURFACE_EXTENSION_NAME);
-      return false;
+    }
+    else
+    {
+      // don't add duplicates
+      if(std::find(extensionList.begin(), extensionList.end(), VK_KHR_SURFACE_EXTENSION_NAME) ==
+         extensionList.end())
+        extensionList.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
     }
 
     if(supportedExtensions.find(VK_KHR_WIN32_SURFACE_EXTENSION_NAME) == supportedExtensions.end())
     {
       RDCERR("Unsupported required instance extension '%s'", VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
-      return false;
     }
-
-    // don't add duplicates
-    if(std::find(extensionList.begin(), extensionList.end(), VK_KHR_SURFACE_EXTENSION_NAME) ==
-       extensionList.end())
-      extensionList.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
-
-    if(std::find(extensionList.begin(), extensionList.end(), VK_KHR_WIN32_SURFACE_EXTENSION_NAME) ==
-       extensionList.end())
-      extensionList.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
+    else
+    {
+      if(std::find(extensionList.begin(), extensionList.end(),
+                   VK_KHR_WIN32_SURFACE_EXTENSION_NAME) == extensionList.end())
+        extensionList.push_back(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
+    }
   }
   else if(device)
   {
     if(supportedExtensions.find(VK_KHR_SWAPCHAIN_EXTENSION_NAME) == supportedExtensions.end())
     {
       RDCERR("Unsupported required device extension '%s'", VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-      return false;
     }
-
-    // don't add duplicates
-    if(std::find(extensionList.begin(), extensionList.end(), VK_KHR_SWAPCHAIN_EXTENSION_NAME) ==
-       extensionList.end())
-      extensionList.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    else
+    {
+      // don't add duplicates
+      if(std::find(extensionList.begin(), extensionList.end(), VK_KHR_SWAPCHAIN_EXTENSION_NAME) ==
+         extensionList.end())
+        extensionList.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    }
   }
-
-  return true;
 }
 
 #if !defined(VK_USE_PLATFORM_WIN32_KHR)
@@ -128,7 +128,7 @@ VkResult WrappedVulkan::vkCreateWin32SurfaceKHR(VkInstance instance,
                                                 VkSurfaceKHR *pSurface)
 {
   // should not come in here at all on replay
-  RDCASSERT(m_State >= WRITING);
+  RDCASSERT(IsCaptureMode(m_State));
 
   VkResult ret =
       ObjDisp(instance)->CreateWin32SurfaceKHR(Unwrap(instance), pCreateInfo, pAllocator, pSurface);
@@ -157,3 +157,193 @@ VkBool32 WrappedVulkan::vkGetPhysicalDeviceWin32PresentationSupportKHR(VkPhysica
 }
 
 const char *VulkanLibraryName = "vulkan-1.dll";
+
+std::wstring GetJSONPath(bool wow6432)
+{
+  wchar_t curFile[1024];
+  GetModuleFileNameW(NULL, curFile, 1024);
+
+  wchar_t *lastSlash = wcsrchr(curFile, '\\');
+  if(lastSlash)
+    *(lastSlash + 1) = 0;
+
+  if(wow6432)
+    wcscat_s(curFile, L"x86\\");
+
+  wcscat_s(curFile, L"renderdoc.json");
+
+  return curFile;
+}
+
+static HKEY GetImplicitLayersKey(bool writeable, bool wow6432)
+{
+  std::string basepath = "SOFTWARE\\";
+
+  if(wow6432)
+    basepath += "Wow6432Node\\";
+
+  basepath += "Khronos\\Vulkan\\ImplicitLayers";
+
+  HKEY key = NULL;
+  LSTATUS ret = ERROR_SUCCESS;
+
+  if(writeable)
+    ret = RegCreateKeyExA(HKEY_LOCAL_MACHINE, basepath.c_str(), 0, NULL, 0, KEY_READ | KEY_WRITE,
+                          NULL, &key, NULL);
+  else
+    ret = RegOpenKeyExA(HKEY_LOCAL_MACHINE, basepath.c_str(), 0, KEY_READ, &key);
+
+  if(ret != ERROR_SUCCESS)
+  {
+    if(key)
+      RegCloseKey(key);
+
+    // find to fail to open for read, the key may not exist
+    if(writeable)
+      RDCERR("Couldn't open %s for write", basepath.c_str());
+
+    return NULL;
+  }
+
+  return key;
+}
+
+bool ProcessImplicitLayersKey(HKEY key, const std::wstring &path,
+                              std::vector<std::string> *otherJSONs, bool deleteOthers)
+{
+  bool thisRegistered = false;
+
+  wchar_t name[1025] = {};
+  DWORD nameSize = 1024;
+  DWORD idx = 0;
+
+  LONG ret = RegEnumValueW(key, idx++, name, &nameSize, NULL, NULL, NULL, NULL);
+
+  std::wstring myJSON = path;
+  for(size_t i = 0; i < myJSON.size(); i++)
+    myJSON[i] = towlower(myJSON[i]);
+
+  while(ret == ERROR_SUCCESS)
+  {
+    // convert the name here so we preserve casing
+    std::string utf8name = StringFormat::Wide2UTF8(name);
+
+    for(DWORD i = 0; i <= nameSize && name[i]; i++)
+      name[i] = towlower(name[i]);
+
+    if(wcscmp(name, myJSON.c_str()) == 0)
+    {
+      thisRegistered = true;
+    }
+    else if(wcsstr(name, L"renderdoc.json") != NULL)
+    {
+      if(otherJSONs)
+        otherJSONs->push_back(utf8name);
+
+      if(deleteOthers)
+        RegDeleteValueW(key, name);
+    }
+
+    nameSize = 1024;
+    ret = RegEnumValueW(key, idx++, name, &nameSize, NULL, NULL, NULL, NULL);
+  }
+
+  return thisRegistered;
+}
+
+bool VulkanReplay::CheckVulkanLayer(VulkanLayerFlags &flags, std::vector<std::string> &myJSONs,
+                                    std::vector<std::string> &otherJSONs)
+{
+  std::wstring normalPath = GetJSONPath(false);
+  myJSONs.push_back(StringFormat::Wide2UTF8(normalPath));
+
+#if ENABLED(RDOC_X64)
+  std::wstring wow6432Path = GetJSONPath(true);
+  myJSONs.push_back(StringFormat::Wide2UTF8(wow6432Path));
+#endif
+
+  HKEY key = GetImplicitLayersKey(false, false);
+
+  // if we couldn't even get the ImplicitLayers reg key the system doesn't have the
+  // vulkan runtime, so we return as if we are not registered (as that's the case).
+  // People not using vulkan can either ignore the message, or click to set it up
+  // and it will go away as we'll have rights to create it.
+  if(!key)
+  {
+    flags = VulkanLayerFlags::NeedElevation | VulkanLayerFlags::RegisterAll;
+    return true;
+  }
+
+  bool thisRegistered = ProcessImplicitLayersKey(key, normalPath, &otherJSONs, false);
+
+  RegCloseKey(key);
+
+#if ENABLED(RDOC_X64)
+  {
+    key = GetImplicitLayersKey(false, true);
+
+    // if we're on 64-bit, the layer isn't registered unless both keys are registered.
+    thisRegistered = false;
+
+    if(key)
+    {
+      thisRegistered = ProcessImplicitLayersKey(key, wow6432Path, &otherJSONs, false);
+
+      RegCloseKey(key);
+    }
+  }
+#endif
+
+  flags = VulkanLayerFlags::NeedElevation | VulkanLayerFlags::RegisterAll;
+
+  if(thisRegistered)
+    flags |= VulkanLayerFlags::ThisInstallRegistered;
+
+  if(!otherJSONs.empty())
+    flags |= VulkanLayerFlags::OtherInstallsRegistered;
+
+  // return true if any changes are needed
+  return !otherJSONs.empty() || !thisRegistered;
+}
+
+void VulkanReplay::InstallVulkanLayer(bool systemLevel)
+{
+  HKEY key = GetImplicitLayersKey(true, false);
+
+  const DWORD zero = 0;
+
+  if(key)
+  {
+    std::wstring path = GetJSONPath(false);
+
+    // this function will delete all non-matching renderdoc.json values, and return true if our own
+    // is registered
+    bool thisRegistered = ProcessImplicitLayersKey(key, path, NULL, true);
+
+    if(!thisRegistered)
+      RegSetValueExW(key, path.c_str(), 0, REG_DWORD, (const BYTE *)&zero, sizeof(zero));
+
+    RegCloseKey(key);
+  }
+
+// if we're a 64-bit process, update the 32-bit key
+#if ENABLED(RDOC_X64)
+  {
+    key = GetImplicitLayersKey(true, true);
+
+    if(key)
+    {
+      std::wstring path = GetJSONPath(true);
+
+      // this function will delete all non-matching renderdoc.json values, and return true if our
+      // own is registered
+      bool thisRegistered = ProcessImplicitLayersKey(key, path, NULL, true);
+
+      if(!thisRegistered)
+        RegSetValueExW(key, path.c_str(), 0, REG_DWORD, (const BYTE *)&zero, sizeof(zero));
+
+      RegCloseKey(key);
+    }
+  }
+#endif
+}

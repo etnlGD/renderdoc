@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,11 +24,13 @@
 
 #include "ConstantBufferPreviewer.h"
 #include <QFontDatabase>
+#include <QTextStream>
+#include "3rdparty/toolwindowmanager/ToolWindowManager.h"
 #include "ui_ConstantBufferPreviewer.h"
 
 QList<ConstantBufferPreviewer *> ConstantBufferPreviewer::m_Previews;
 
-ConstantBufferPreviewer::ConstantBufferPreviewer(CaptureContext *ctx, const ShaderStageType stage,
+ConstantBufferPreviewer::ConstantBufferPreviewer(ICaptureContext &ctx, const ShaderStage stage,
                                                  uint32_t slot, uint32_t idx, QWidget *parent)
     : QFrame(parent), ui(new Ui::ConstantBufferPreviewer), m_Ctx(ctx)
 {
@@ -47,28 +49,27 @@ ConstantBufferPreviewer::ConstantBufferPreviewer(CaptureContext *ctx, const Shad
   ui->splitter->setSizes({1, 0});
   ui->splitter->handle(1)->setEnabled(false);
 
+  ui->variables->setColumns({tr("Name"), tr("Value"), tr("Type")});
   {
-    // Name | Value | Type
-    ui->variables->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    ui->variables->header()->setSectionResizeMode(1, QHeaderView::Stretch);
-    ui->variables->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    ui->variables->header()->setSectionResizeMode(0, QHeaderView::Interactive);
+    ui->variables->header()->setSectionResizeMode(1, QHeaderView::Interactive);
+    ui->variables->header()->setSectionResizeMode(2, QHeaderView::Interactive);
   }
 
   ui->variables->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
 
   m_Previews.push_back(this);
-  m_Ctx->AddLogViewer(this);
+  m_Ctx.AddCaptureViewer(this);
 }
 
 ConstantBufferPreviewer::~ConstantBufferPreviewer()
 {
-  m_Ctx->RemoveLogViewer(this);
+  m_Ctx.RemoveCaptureViewer(this);
   m_Previews.removeOne(this);
   delete ui;
 }
 
-ConstantBufferPreviewer *ConstantBufferPreviewer::has(ShaderStageType stage, uint32_t slot,
-                                                      uint32_t idx)
+ConstantBufferPreviewer *ConstantBufferPreviewer::has(ShaderStage stage, uint32_t slot, uint32_t idx)
 {
   for(ConstantBufferPreviewer *c : m_Previews)
   {
@@ -79,31 +80,36 @@ ConstantBufferPreviewer *ConstantBufferPreviewer::has(ShaderStageType stage, uin
   return NULL;
 }
 
-void ConstantBufferPreviewer::OnLogfileLoaded()
+void ConstantBufferPreviewer::OnCaptureLoaded()
 {
-  OnLogfileClosed();
+  OnCaptureClosed();
 }
 
-void ConstantBufferPreviewer::OnLogfileClosed()
+void ConstantBufferPreviewer::OnCaptureClosed()
 {
   ui->variables->clear();
 
   ui->saveCSV->setEnabled(false);
+
+  ToolWindowManager::closeToolWindow(this);
 }
 
-void ConstantBufferPreviewer::OnEventSelected(uint32_t eventID)
+void ConstantBufferPreviewer::OnEventChanged(uint32_t eventId)
 {
-  uint64_t offs = 0;
-  uint64_t size = 0;
-  m_Ctx->CurPipelineState.GetConstantBuffer(m_stage, m_slot, m_arrayIdx, m_cbuffer, offs, size);
+  BoundCBuffer cb = m_Ctx.CurPipelineState().GetConstantBuffer(m_stage, m_slot, m_arrayIdx);
+  m_cbuffer = cb.resourceId;
+  uint64_t offs = cb.byteOffset;
+  uint64_t size = cb.byteSize;
 
-  m_shader = m_Ctx->CurPipelineState.GetShader(m_stage);
-  QString entryPoint = m_Ctx->CurPipelineState.GetShaderEntryPoint(m_stage);
-  ShaderReflection *reflection = m_Ctx->CurPipelineState.GetShaderReflection(m_stage);
+  m_shader = m_Ctx.CurPipelineState().GetShader(m_stage);
+  QString entryPoint = m_Ctx.CurPipelineState().GetShaderEntryPoint(m_stage);
+  const ShaderReflection *reflection = m_Ctx.CurPipelineState().GetShaderReflection(m_stage);
+
+  bool wasEmpty = ui->variables->topLevelItemCount() == 0;
 
   updateLabels();
 
-  if(reflection == NULL || reflection->ConstantBlocks.count <= (int)m_slot)
+  if(reflection == NULL || m_slot >= reflection->constantBlocks.size())
   {
     setVariables({});
     return;
@@ -111,20 +117,32 @@ void ConstantBufferPreviewer::OnEventSelected(uint32_t eventID)
 
   if(!m_formatOverride.empty())
   {
-    m_Ctx->Renderer()->AsyncInvoke([this, offs, size](IReplayRenderer *r) {
-      rdctype::array<byte> data;
-      r->GetBufferData(m_cbuffer, offs, size, &data);
-      rdctype::array<ShaderVariable> vars = applyFormatOverride(data);
-      GUIInvoke::call([this, vars] { setVariables(vars); });
+    m_Ctx.Replay().AsyncInvoke([this, offs, size, wasEmpty](IReplayController *r) {
+      bytebuf data = r->GetBufferData(m_cbuffer, offs, size);
+      rdcarray<ShaderVariable> vars = applyFormatOverride(data);
+      GUIInvoke::call([this, vars, wasEmpty] {
+        setVariables(vars);
+        if(wasEmpty)
+        {
+          for(int i = 0; i < 3; i++)
+            ui->variables->resizeColumnToContents(i);
+        }
+      });
     });
   }
   else
   {
-    m_Ctx->Renderer()->AsyncInvoke([this, entryPoint, offs](IReplayRenderer *r) {
-      rdctype::array<ShaderVariable> vars;
-      r->GetCBufferVariableContents(m_shader, entryPoint.toUtf8().data(), m_slot, m_cbuffer, offs,
-                                    &vars);
-      GUIInvoke::call([this, vars] { setVariables(vars); });
+    m_Ctx.Replay().AsyncInvoke([this, entryPoint, offs, wasEmpty](IReplayController *r) {
+      rdcarray<ShaderVariable> vars = r->GetCBufferVariableContents(
+          m_shader, entryPoint.toUtf8().data(), m_slot, m_cbuffer, offs);
+      GUIInvoke::call([this, vars, wasEmpty] {
+        setVariables(vars);
+        if(wasEmpty)
+        {
+          for(int i = 0; i < 3; i++)
+            ui->variables->resizeColumnToContents(i);
+        }
+      });
     });
   }
 }
@@ -137,7 +155,7 @@ void ConstantBufferPreviewer::on_setFormat_toggled(bool checked)
     ui->splitter->setSizes({1, 0});
     ui->splitter->handle(1)->setEnabled(false);
 
-    processFormat("");
+    processFormat(QString());
     return;
   }
 
@@ -146,8 +164,63 @@ void ConstantBufferPreviewer::on_setFormat_toggled(bool checked)
   ui->splitter->handle(1)->setEnabled(true);
 }
 
+void ConstantBufferPreviewer::on_resourceDetails_clicked()
+{
+  if(!m_Ctx.HasResourceInspector())
+    m_Ctx.ShowResourceInspector();
+
+  m_Ctx.GetResourceInspector()->Inspect(m_cbuffer);
+
+  ToolWindowManager::raiseToolWindow(m_Ctx.GetResourceInspector()->Widget());
+}
+
 void ConstantBufferPreviewer::on_saveCSV_clicked()
 {
+  QString filename = RDDialog::getSaveFileName(this, tr("Export buffer data as CSV"), QString(),
+                                               tr("CSV Files (*.csv)"));
+
+  if(!filename.isEmpty())
+  {
+    QDir dirinfo = QFileInfo(filename).dir();
+    if(dirinfo.exists())
+    {
+      QFile f(filename, this);
+      if(f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+      {
+        QTextStream ts(&f);
+
+        ts << tr("Name,Value,Type\n");
+
+        for(int i = 0; i < ui->variables->topLevelItemCount(); i++)
+          exportCSV(ts, QString(), ui->variables->topLevelItem(i));
+
+        return;
+      }
+
+      RDDialog::critical(
+          this, tr("Error exporting buffer data"),
+          tr("Couldn't open path %1 for write.\n%2").arg(filename).arg(f.errorString()));
+    }
+    else
+    {
+      RDDialog::critical(this, tr("Invalid directory"),
+                         tr("Cannot find target directory to save to"));
+    }
+  }
+}
+
+void ConstantBufferPreviewer::exportCSV(QTextStream &ts, const QString &prefix, RDTreeWidgetItem *item)
+{
+  if(item->childCount() == 0)
+  {
+    ts << QFormatStr("%1,\"%2\",%3\n").arg(item->text(0)).arg(item->text(1)).arg(item->text(2));
+  }
+  else
+  {
+    ts << QFormatStr("%1,,%2\n").arg(item->text(0)).arg(item->text(2));
+    for(int i = 0; i < item->childCount(); i++)
+      exportCSV(ts, item->text(0) + lit("."), item->child(i));
+  }
 }
 
 void ConstantBufferPreviewer::processFormat(const QString &format)
@@ -155,7 +228,7 @@ void ConstantBufferPreviewer::processFormat(const QString &format)
   if(format.isEmpty())
   {
     m_formatOverride.clear();
-    ui->formatSpecifier->setErrors("");
+    ui->formatSpecifier->setErrors(QString());
   }
   else
   {
@@ -165,87 +238,139 @@ void ConstantBufferPreviewer::processFormat(const QString &format)
     ui->formatSpecifier->setErrors(errors);
   }
 
-  OnEventSelected(m_Ctx->CurEvent());
+  OnEventChanged(m_Ctx.CurEvent());
 }
 
-void ConstantBufferPreviewer::addVariables(QTreeWidgetItem *root,
-                                           const rdctype::array<ShaderVariable> &vars)
+void ConstantBufferPreviewer::addVariables(RDTreeWidgetItem *root,
+                                           const rdcarray<ShaderVariable> &vars)
 {
   for(const ShaderVariable &v : vars)
   {
-    QTreeWidgetItem *n = makeTreeNode({ToQStr(v.name), VarString(v), TypeString(v)});
+    RDTreeWidgetItem *n = new RDTreeWidgetItem({v.name, VarString(v), TypeString(v)});
 
     root->addChild(n);
 
     if(v.rows > 1)
     {
       for(uint32_t i = 0; i < v.rows; i++)
-        n->addChild(makeTreeNode(
-            {QString("%1.row%2").arg(ToQStr(v.name)).arg(i), RowString(v, i), RowTypeString(v)}));
+        n->addChild(new RDTreeWidgetItem(
+            {QFormatStr("%1.row%2").arg(v.name).arg(i), RowString(v, i), RowTypeString(v)}));
     }
 
-    if(v.members.count > 0)
+    if(!v.members.isEmpty())
       addVariables(n, v.members);
   }
 }
 
-void ConstantBufferPreviewer::setVariables(const rdctype::array<ShaderVariable> &vars)
+bool ConstantBufferPreviewer::updateVariables(RDTreeWidgetItem *root,
+                                              const rdcarray<ShaderVariable> &prevVars,
+                                              const rdcarray<ShaderVariable> &newVars)
 {
-  ui->variables->setUpdatesEnabled(false);
+  // mismatched child count? can't update
+  if(prevVars.size() != newVars.size())
+    return false;
+
+  for(int i = 0; i < prevVars.count(); i++)
+  {
+    const ShaderVariable &a = prevVars[i];
+    const ShaderVariable &b = newVars[i];
+
+    // different names? can't update
+    if(strcmp(a.name.c_str(), b.name.c_str()))
+      return false;
+
+    // different size or type? can't update
+    if(a.rows != b.rows || a.columns != b.columns || a.displayAsHex != b.displayAsHex ||
+       a.isStruct != b.isStruct || a.rowMajor != b.rowMajor || a.type != b.type)
+      return false;
+
+    // update this node's value column
+    RDTreeWidgetItem *node = root->child(i);
+
+    node->setText(1, VarString(b));
+
+    if(a.rows > 1)
+    {
+      for(uint32_t r = 0; r < a.rows; r++)
+        node->child(r)->setText(1, RowString(b, r));
+    }
+
+    if(!a.members.isEmpty())
+    {
+      // recurse to update child members. This handles a and b having different number of variables
+      bool updated = updateVariables(node, a.members, b.members);
+
+      if(!updated)
+        return false;
+    }
+  }
+
+  // got this far without bailing? we updated!
+  return true;
+}
+
+void ConstantBufferPreviewer::setVariables(const rdcarray<ShaderVariable> &vars)
+{
+  ui->variables->beginUpdate();
+
+  // try to update the variables in-place by only changing their values, if the set of variables
+  // matches *exactly* to what we had before.
+  //
+  // This keeps things like expanded structs and matrices when moving between drawcalls
+  bool updated = updateVariables(ui->variables->invisibleRootItem(), m_Vars, vars);
+
+  // update the variables either way
+  m_Vars = vars;
+
+  if(updated)
+  {
+    ui->variables->endUpdate();
+    return;
+  }
+
   ui->variables->clear();
 
   ui->saveCSV->setEnabled(false);
 
-  if(vars.count > 0)
+  if(!vars.isEmpty())
   {
     addVariables(ui->variables->invisibleRootItem(), vars);
     ui->saveCSV->setEnabled(true);
   }
 
-  ui->variables->setUpdatesEnabled(true);
+  ui->variables->endUpdate();
 }
 
 void ConstantBufferPreviewer::updateLabels()
 {
-  QString bufName = "";
+  QString bufName = m_Ctx.GetResourceName(m_cbuffer);
 
-  bool needName = true;
-
-  FetchBuffer *buf = m_Ctx ? m_Ctx->GetBuffer(m_cbuffer) : NULL;
-  if(buf)
-  {
-    bufName = buf->name;
-    if(buf->customName)
-      needName = false;
-  }
-
-  ShaderReflection *reflection = m_Ctx ? m_Ctx->CurPipelineState.GetShaderReflection(m_stage) : NULL;
+  const ShaderReflection *reflection = m_Ctx.CurPipelineState().GetShaderReflection(m_stage);
 
   if(reflection != NULL)
   {
-    if(needName && (int)m_slot < reflection->ConstantBlocks.count &&
-       reflection->ConstantBlocks[m_slot].name.count > 0)
-      bufName = "<" + ToQStr(reflection->ConstantBlocks[m_slot].name) + ">";
+    if(m_Ctx.IsAutogeneratedName(m_cbuffer) && m_slot < reflection->constantBlocks.size() &&
+       !reflection->constantBlocks[m_slot].name.isEmpty())
+      bufName = QFormatStr("<%1>").arg(reflection->constantBlocks[m_slot].name);
   }
 
   ui->nameLabel->setText(bufName);
 
-  GraphicsAPI pipeType = eGraphicsAPI_D3D11;
-  if(m_Ctx != NULL)
-    pipeType = m_Ctx->APIProps().pipelineType;
+  GraphicsAPI pipeType = m_Ctx.APIProps().pipelineType;
 
-  QString title =
-      QString("%1 %2 %3").arg(ToQStr(m_stage, pipeType)).arg(IsD3D(pipeType) ? "CB" : "UBO").arg(m_slot);
+  QString title = QFormatStr("%1 %2 %3")
+                      .arg(ToQStr(m_stage, pipeType))
+                      .arg(IsD3D(pipeType) ? lit("CB") : lit("UBO"))
+                      .arg(m_slot);
 
-  if(m_Ctx != NULL && m_Ctx->CurPipelineState.SupportsResourceArrays())
-    title += QString(" [%1]").arg(m_arrayIdx);
+  if(m_Ctx.CurPipelineState().SupportsResourceArrays())
+    title += QFormatStr(" [%1]").arg(m_arrayIdx);
 
   ui->slotLabel->setText(title);
   setWindowTitle(title);
 }
 
-rdctype::array<ShaderVariable> ConstantBufferPreviewer::applyFormatOverride(
-    const rdctype::array<byte> &bytes)
+rdcarray<ShaderVariable> ConstantBufferPreviewer::applyFormatOverride(const bytebuf &bytes)
 {
   QVector<ShaderVariable> variables;
 
@@ -257,7 +382,7 @@ rdctype::array<ShaderVariable> ConstantBufferPreviewer::applyFormatOverride(
     variables[i] = m_formatOverride[i].GetShaderVar(b, bytes.end());
   }
 
-  rdctype::array<ShaderVariable> ret;
+  rdcarray<ShaderVariable> ret;
   ret = variables.toStdVector();
   return ret;
 }

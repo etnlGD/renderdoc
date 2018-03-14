@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,6 +24,7 @@
 
 #include <unistd.h>
 #include "os/os_specific.h"
+#include "strings/string_utils.h"
 
 extern char **environ;
 
@@ -36,7 +37,7 @@ int GetIdentPort(pid_t childPid)
 {
   int ret = 0;
 
-  string procfile = StringFormat::Fmt("/proc/%d/net/tcp", (int)childPid);
+  string procfile = StringFormat::Fmt("/proc/%d/net/unix", (int)childPid);
 
   // try for a little while for the /proc entry to appear
   for(int retry = 0; retry < 10; retry++)
@@ -60,19 +61,36 @@ int GetIdentPort(pid_t childPid)
       line[sz - 1] = 0;
       fgets(line, sz - 1, f);
 
-      int socketnum = 0, hexip = 0, hexport = 0;
-      int num = sscanf(line, " %d: %x:%x", &socketnum, &hexip, &hexport);
+      int port = 0;
+      char *startpos = strstr(line, "@renderdoc_");
 
-      // find open listen socket on 0.0.0.0:port
-      if(num == 3 && hexip == 0 && hexport >= RenderDoc_FirstTargetControlPort &&
-         hexport <= RenderDoc_LastTargetControlPort)
+      if(startpos == NULL)
       {
-        ret = hexport;
+        // This is not the line we are looking for, continue the processing.
+        continue;
+      }
+
+      int num = sscanf(startpos, "@renderdoc_%d", &port);
+
+      // find open listen abstract socket on 'renderdoc_<port>'
+      if(num == 1 && port >= RenderDoc_FirstTargetControlPort &&
+         port <= RenderDoc_LastTargetControlPort)
+      {
+        ret = port;
         break;
       }
     }
 
     FileIO::fclose(f);
+  }
+
+  if(ret == 0)
+  {
+    RDCWARN(
+        "Couldn't locate renderdoc target control listening port between @renderdoc_%u and "
+        "@renderdoc_%u in %s",
+        (uint32_t)RenderDoc_FirstTargetControlPort, (uint32_t)RenderDoc_LastTargetControlPort,
+        procfile.c_str());
   }
 
   return ret;
@@ -120,4 +138,22 @@ void CacheDebuggerPresent()
 bool OSUtility::DebuggerPresent()
 {
   return debuggerPresent;
+}
+
+const char *Process::GetEnvVariable(const char *name)
+{
+  // we fake environment variables with properties
+  Process::ProcessResult result;
+  Process::LaunchProcess("getprop", ".",
+                         StringFormat::Fmt("debug.rdoc.%s variable_is_not_set", name).c_str(), true,
+                         &result);
+
+  static std::string settingsOutput;
+
+  settingsOutput = trim(result.strStdout);
+
+  if(settingsOutput == "variable_is_not_set")
+    return NULL;
+
+  return settingsOutput.c_str();
 }

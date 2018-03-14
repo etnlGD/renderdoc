@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -38,7 +38,7 @@ UINT GetFormatBPP(DXGI_FORMAT f);
 
 DXGI_FORMAT GetTypelessFormat(DXGI_FORMAT f);
 DXGI_FORMAT GetTypedFormat(DXGI_FORMAT f);
-DXGI_FORMAT GetTypedFormat(DXGI_FORMAT f, FormatComponentType hint);
+DXGI_FORMAT GetTypedFormat(DXGI_FORMAT f, CompType hint);
 DXGI_FORMAT GetDepthTypedFormat(DXGI_FORMAT f);
 DXGI_FORMAT GetFloatTypedFormat(DXGI_FORMAT f);
 DXGI_FORMAT GetUnormTypedFormat(DXGI_FORMAT f);
@@ -55,7 +55,16 @@ bool IsUIntFormat(DXGI_FORMAT f);
 bool IsTypelessFormat(DXGI_FORMAT f);
 bool IsIntFormat(DXGI_FORMAT f);
 bool IsSRGBFormat(DXGI_FORMAT f);
+bool IsYUVFormat(DXGI_FORMAT f);
 
 // not technically DXGI, but makes more sense to have it here common between D3D versions
-PrimitiveTopology MakePrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY Topo);
-D3D_PRIMITIVE_TOPOLOGY MakeD3DPrimitiveTopology(PrimitiveTopology Topo);
+Topology MakePrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY Topo);
+D3D_PRIMITIVE_TOPOLOGY MakeD3DPrimitiveTopology(Topology Topo);
+
+void WarnUnknownGUID(const char *name, REFIID riid);
+
+DECLARE_REFLECTION_STRUCT(DXGI_SAMPLE_DESC);
+DECLARE_REFLECTION_STRUCT(IID);
+DECLARE_REFLECTION_ENUM(DXGI_FORMAT);
+DECLARE_REFLECTION_ENUM(D3D_FEATURE_LEVEL);
+DECLARE_REFLECTION_ENUM(D3D_DRIVER_TYPE);

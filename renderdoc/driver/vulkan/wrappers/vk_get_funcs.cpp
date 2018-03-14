@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -126,7 +126,7 @@ void WrappedVulkan::vkGetBufferMemoryRequirements(VkDevice device, VkBuffer buff
   ObjDisp(device)->GetBufferMemoryRequirements(Unwrap(device), Unwrap(buffer), pMemoryRequirements);
 
   // don't do remapping here on replay.
-  if(m_State < WRITING)
+  if(IsReplayMode(m_State))
     return;
 
   uint32_t bits = pMemoryRequirements->memoryTypeBits;
@@ -137,8 +137,8 @@ void WrappedVulkan::vkGetBufferMemoryRequirements(VkDevice device, VkBuffer buff
   // for each of our fake memory indices, check if the real
   // memory type it points to is set - if so, set our fake bit
   for(uint32_t i = 0; i < VK_MAX_MEMORY_TYPES; i++)
-    if(bits & (1 << memIdxMap[i]))
-      pMemoryRequirements->memoryTypeBits |= (1 << i);
+    if(memIdxMap[i] < 32U && (bits & (1U << memIdxMap[i])))
+      pMemoryRequirements->memoryTypeBits |= (1U << i);
 }
 
 void WrappedVulkan::vkGetImageMemoryRequirements(VkDevice device, VkImage image,
@@ -147,7 +147,7 @@ void WrappedVulkan::vkGetImageMemoryRequirements(VkDevice device, VkImage image,
   ObjDisp(device)->GetImageMemoryRequirements(Unwrap(device), Unwrap(image), pMemoryRequirements);
 
   // don't do remapping here on replay.
-  if(m_State < WRITING)
+  if(IsReplayMode(m_State))
     return;
 
   uint32_t bits = pMemoryRequirements->memoryTypeBits;
@@ -158,8 +158,32 @@ void WrappedVulkan::vkGetImageMemoryRequirements(VkDevice device, VkImage image,
   // for each of our fake memory indices, check if the real
   // memory type it points to is set - if so, set our fake bit
   for(uint32_t i = 0; i < VK_MAX_MEMORY_TYPES; i++)
-    if(bits & (1 << memIdxMap[i]))
-      pMemoryRequirements->memoryTypeBits |= (1 << i);
+    if(memIdxMap[i] < 32U && (bits & (1U << memIdxMap[i])))
+      pMemoryRequirements->memoryTypeBits |= (1U << i);
+
+  // AMD can have some variability in the returned size, so we need to pad the reported size to
+  // allow for this. The variability isn't quite clear, but for now we assume aligning size to
+  // alignment * 4 should be sufficient (adding on a fixed padding won't help the problem as it
+  // won't remove the variability, nor will adding then aligning for the same reason).
+  if(GetDriverVersion().Vendor() == GPUVendor::AMD && pMemoryRequirements->size > 0)
+  {
+    VkMemoryRequirements &memreq = *pMemoryRequirements;
+
+    VkDeviceSize oldsize = memreq.size;
+    memreq.size = AlignUp(memreq.size, memreq.alignment * 4);
+
+    // if it's already 'super aligned', then bump it up a little. We assume that this case
+    // represents the low-end of the variation range, and other variations will be a little higher.
+    // The other alternative is the variations are all lower and this one happened to be super
+    // aligned, which I think (arbitrarily really) is less likely.
+    if(oldsize == memreq.size)
+      memreq.size = AlignUp(memreq.size + 1, memreq.alignment * 4);
+
+    RDCDEBUG(
+        "Padded image memory requirements from %llu to %llu (base alignment %llu) (%f%% increase)",
+        oldsize, memreq.size, memreq.alignment,
+        (100.0 * double(memreq.size - oldsize)) / double(oldsize));
+  }
 }
 
 void WrappedVulkan::vkGetImageSparseMemoryRequirements(
@@ -168,6 +192,91 @@ void WrappedVulkan::vkGetImageSparseMemoryRequirements(
 {
   ObjDisp(device)->GetImageSparseMemoryRequirements(Unwrap(device), Unwrap(image), pNumRequirements,
                                                     pSparseMemoryRequirements);
+}
+
+void WrappedVulkan::vkGetBufferMemoryRequirements2KHR(VkDevice device,
+                                                      const VkBufferMemoryRequirementsInfo2KHR *pInfo,
+                                                      VkMemoryRequirements2KHR *pMemoryRequirements)
+{
+  VkBufferMemoryRequirementsInfo2KHR unwrappedInfo = *pInfo;
+  unwrappedInfo.buffer = Unwrap(unwrappedInfo.buffer);
+  ObjDisp(device)->GetBufferMemoryRequirements2KHR(Unwrap(device), &unwrappedInfo,
+                                                   pMemoryRequirements);
+
+  // don't do remapping here on replay.
+  if(IsReplayMode(m_State))
+    return;
+
+  uint32_t bits = pMemoryRequirements->memoryRequirements.memoryTypeBits;
+  uint32_t *memIdxMap = GetRecord(device)->memIdxMap;
+
+  pMemoryRequirements->memoryRequirements.memoryTypeBits = 0;
+
+  // for each of our fake memory indices, check if the real
+  // memory type it points to is set - if so, set our fake bit
+  for(uint32_t i = 0; i < VK_MAX_MEMORY_TYPES; i++)
+    if(memIdxMap[i] < 32U && (bits & (1U << memIdxMap[i])))
+      pMemoryRequirements->memoryRequirements.memoryTypeBits |= (1U << i);
+}
+
+void WrappedVulkan::vkGetImageMemoryRequirements2KHR(VkDevice device,
+                                                     const VkImageMemoryRequirementsInfo2KHR *pInfo,
+                                                     VkMemoryRequirements2KHR *pMemoryRequirements)
+{
+  VkImageMemoryRequirementsInfo2KHR unwrappedInfo = *pInfo;
+  unwrappedInfo.image = Unwrap(unwrappedInfo.image);
+  ObjDisp(device)->GetImageMemoryRequirements2KHR(Unwrap(device), &unwrappedInfo,
+                                                  pMemoryRequirements);
+
+  // don't do remapping here on replay.
+  if(IsReplayMode(m_State))
+    return;
+
+  uint32_t bits = pMemoryRequirements->memoryRequirements.memoryTypeBits;
+  uint32_t *memIdxMap = GetRecord(device)->memIdxMap;
+
+  pMemoryRequirements->memoryRequirements.memoryTypeBits = 0;
+
+  // for each of our fake memory indices, check if the real
+  // memory type it points to is set - if so, set our fake bit
+  for(uint32_t i = 0; i < VK_MAX_MEMORY_TYPES; i++)
+    if(memIdxMap[i] < 32U && (bits & (1U << memIdxMap[i])))
+      pMemoryRequirements->memoryRequirements.memoryTypeBits |= (1U << i);
+
+  // AMD can have some variability in the returned size, so we need to pad the reported size to
+  // allow for this. The variability isn't quite clear, but for now we assume aligning size to
+  // alignment * 4 should be sufficient (adding on a fixed padding won't help the problem as it
+  // won't remove the variability, nor will adding then aligning for the same reason).
+  if(GetDriverVersion().Vendor() == GPUVendor::AMD && pMemoryRequirements->memoryRequirements.size > 0)
+  {
+    VkMemoryRequirements &memreq = pMemoryRequirements->memoryRequirements;
+
+    VkDeviceSize oldsize = memreq.size;
+    memreq.size = AlignUp(memreq.size, memreq.alignment * 4);
+
+    // if it's already 'super aligned', then bump it up a little. We assume that this case
+    // represents the low-end of the variation range, and other variations will be a little higher.
+    // The other alternative is the variations are all lower and this one happened to be super
+    // aligned, which I think (arbitrarily really) is less likely.
+    if(oldsize == memreq.size)
+      memreq.size = AlignUp(memreq.size + 1, memreq.alignment * 4);
+
+    RDCDEBUG(
+        "Padded image memory requirements from %llu to %llu (base alignment %llu) (%f%% increase)",
+        oldsize, memreq.size, memreq.alignment,
+        (100.0 * double(memreq.size - oldsize)) / double(oldsize));
+  }
+}
+
+void WrappedVulkan::vkGetImageSparseMemoryRequirements2KHR(
+    VkDevice device, const VkImageSparseMemoryRequirementsInfo2KHR *pInfo,
+    uint32_t *pSparseMemoryRequirementCount,
+    VkSparseImageMemoryRequirements2KHR *pSparseMemoryRequirements)
+{
+  VkImageSparseMemoryRequirementsInfo2KHR unwrappedInfo = *pInfo;
+  unwrappedInfo.image = Unwrap(unwrappedInfo.image);
+  ObjDisp(device)->GetImageSparseMemoryRequirements2KHR(
+      Unwrap(device), &unwrappedInfo, pSparseMemoryRequirementCount, pSparseMemoryRequirements);
 }
 
 void WrappedVulkan::vkGetDeviceMemoryCommitment(VkDevice device, VkDeviceMemory memory,
@@ -253,4 +362,119 @@ VkResult WrappedVulkan::vkGetMemoryWin32HandleNV(VkDevice device, VkDeviceMemory
 {
   return ObjDisp(device)->GetMemoryWin32HandleNV(Unwrap(device), Unwrap(memory), handleType, pHandle);
 }
+
+VkResult WrappedVulkan::vkGetMemoryWin32HandleKHR(
+    VkDevice device, const VkMemoryGetWin32HandleInfoKHR *pGetWin32HandleInfo, HANDLE *pHandle)
+{
+  VkMemoryGetWin32HandleInfoKHR unwrappedInfo = *pGetWin32HandleInfo;
+  unwrappedInfo.memory = Unwrap(unwrappedInfo.memory);
+  return ObjDisp(device)->GetMemoryWin32HandleKHR(Unwrap(device), &unwrappedInfo, pHandle);
+}
+
+VkResult WrappedVulkan::vkGetMemoryWin32HandlePropertiesKHR(
+    VkDevice device, VkExternalMemoryHandleTypeFlagBitsKHR handleType, HANDLE handle,
+    VkMemoryWin32HandlePropertiesKHR *pMemoryWin32HandleProperties)
+{
+  return ObjDisp(device)->GetMemoryWin32HandlePropertiesKHR(Unwrap(device), handleType, handle,
+                                                            pMemoryWin32HandleProperties);
+}
 #endif
+
+VkResult WrappedVulkan::vkGetMemoryFdKHR(VkDevice device, const VkMemoryGetFdInfoKHR *pGetFdInfo,
+                                         int *pFd)
+{
+  VkMemoryGetFdInfoKHR unwrappedInfo = *pGetFdInfo;
+  unwrappedInfo.memory = Unwrap(unwrappedInfo.memory);
+  return ObjDisp(device)->GetMemoryFdKHR(Unwrap(device), &unwrappedInfo, pFd);
+}
+
+VkResult WrappedVulkan::vkGetMemoryFdPropertiesKHR(VkDevice device,
+                                                   VkExternalMemoryHandleTypeFlagBitsKHR handleType,
+                                                   int fd,
+                                                   VkMemoryFdPropertiesKHR *pMemoryFdProperties)
+{
+  return ObjDisp(device)->GetMemoryFdPropertiesKHR(Unwrap(device), handleType, fd,
+                                                   pMemoryFdProperties);
+}
+
+void WrappedVulkan::vkGetPhysicalDeviceExternalBufferPropertiesKHR(
+    VkPhysicalDevice physicalDevice, const VkPhysicalDeviceExternalBufferInfoKHR *pExternalBufferInfo,
+    VkExternalBufferPropertiesKHR *pExternalBufferProperties)
+{
+  return ObjDisp(physicalDevice)
+      ->GetPhysicalDeviceExternalBufferPropertiesKHR(Unwrap(physicalDevice), pExternalBufferInfo,
+                                                     pExternalBufferProperties);
+}
+
+void WrappedVulkan::vkGetPhysicalDeviceExternalSemaphorePropertiesKHR(
+    VkPhysicalDevice physicalDevice,
+    const VkPhysicalDeviceExternalSemaphoreInfoKHR *pExternalSemaphoreInfo,
+    VkExternalSemaphorePropertiesKHR *pExternalSemaphoreProperties)
+{
+  return ObjDisp(physicalDevice)
+      ->GetPhysicalDeviceExternalSemaphorePropertiesKHR(
+          Unwrap(physicalDevice), pExternalSemaphoreInfo, pExternalSemaphoreProperties);
+}
+
+void WrappedVulkan::vkGetPhysicalDeviceFeatures2KHR(VkPhysicalDevice physicalDevice,
+                                                    VkPhysicalDeviceFeatures2KHR *pFeatures)
+{
+  return ObjDisp(physicalDevice)->GetPhysicalDeviceFeatures2KHR(Unwrap(physicalDevice), pFeatures);
+}
+
+void WrappedVulkan::vkGetPhysicalDeviceProperties2KHR(VkPhysicalDevice physicalDevice,
+                                                      VkPhysicalDeviceProperties2KHR *pProperties)
+{
+  return ObjDisp(physicalDevice)->GetPhysicalDeviceProperties2KHR(Unwrap(physicalDevice), pProperties);
+}
+
+void WrappedVulkan::vkGetPhysicalDeviceFormatProperties2KHR(VkPhysicalDevice physicalDevice,
+                                                            VkFormat format,
+                                                            VkFormatProperties2KHR *pFormatProperties)
+{
+  return ObjDisp(physicalDevice)
+      ->GetPhysicalDeviceFormatProperties2KHR(Unwrap(physicalDevice), format, pFormatProperties);
+}
+
+VkResult WrappedVulkan::vkGetPhysicalDeviceImageFormatProperties2KHR(
+    VkPhysicalDevice physicalDevice, const VkPhysicalDeviceImageFormatInfo2KHR *pImageFormatInfo,
+    VkImageFormatProperties2KHR *pImageFormatProperties)
+{
+  return ObjDisp(physicalDevice)
+      ->GetPhysicalDeviceImageFormatProperties2KHR(Unwrap(physicalDevice), pImageFormatInfo,
+                                                   pImageFormatProperties);
+}
+
+void WrappedVulkan::vkGetPhysicalDeviceQueueFamilyProperties2KHR(
+    VkPhysicalDevice physicalDevice, uint32_t *pCount,
+    VkQueueFamilyProperties2KHR *pQueueFamilyProperties)
+{
+  return ObjDisp(physicalDevice)
+      ->GetPhysicalDeviceQueueFamilyProperties2KHR(Unwrap(physicalDevice), pCount,
+                                                   pQueueFamilyProperties);
+}
+
+void WrappedVulkan::vkGetPhysicalDeviceMemoryProperties2KHR(
+    VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties2KHR *pMemoryProperties)
+{
+  return ObjDisp(physicalDevice)
+      ->GetPhysicalDeviceMemoryProperties2KHR(Unwrap(physicalDevice), pMemoryProperties);
+}
+
+void WrappedVulkan::vkGetPhysicalDeviceSparseImageFormatProperties2KHR(
+    VkPhysicalDevice physicalDevice, const VkPhysicalDeviceSparseImageFormatInfo2KHR *pFormatInfo,
+    uint32_t *pPropertyCount, VkSparseImageFormatProperties2KHR *pProperties)
+{
+  return ObjDisp(physicalDevice)
+      ->GetPhysicalDeviceSparseImageFormatProperties2KHR(Unwrap(physicalDevice), pFormatInfo,
+                                                         pPropertyCount, pProperties);
+}
+
+VkResult WrappedVulkan::vkGetShaderInfoAMD(VkDevice device, VkPipeline pipeline,
+                                           VkShaderStageFlagBits shaderStage,
+                                           VkShaderInfoTypeAMD infoType, size_t *pInfoSize,
+                                           void *pInfo)
+{
+  return ObjDisp(device)->GetShaderInfoAMD(Unwrap(device), Unwrap(pipeline), shaderStage, infoType,
+                                           pInfoSize, pInfo);
+}

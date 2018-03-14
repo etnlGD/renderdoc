@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -30,3 +30,5 @@ bool Win32_IAT_Hook(void **orig_function_ptr, const char *module_name, const cha
 void Win32_IAT_BeginHooks();
 void Win32_IAT_EndHooks();
 void Win32_IAT_RemoveHooks();
+
+bool Win32_HookDetect(const char *identifier);

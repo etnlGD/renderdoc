@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2014-2016 Baldur Karlsson
+ * Copyright (c) 2014-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -234,197 +234,199 @@ ResourceFormat DXGIFormat2ResourceFormat(DXGI_FORMAT format)
 
   fmt32.compByteWidth = 4;
   fmt32.compCount = 1;
-  fmt32.compType = eCompType_Float;
-  fmt32.special = false;
+  fmt32.compType = CompType::Float;
+  fmt32.type = ResourceFormatType::Regular;
 
   fmt16.compByteWidth = 2;
   fmt16.compCount = 1;
-  fmt16.compType = eCompType_Float;
-  fmt16.special = false;
+  fmt16.compType = CompType::Float;
+  fmt16.type = ResourceFormatType::Regular;
 
   fmt8.compByteWidth = 1;
   fmt8.compCount = 1;
-  fmt8.compType = eCompType_UNorm;
-  fmt8.special = false;
+  fmt8.compType = CompType::UNorm;
+  fmt8.type = ResourceFormatType::Regular;
 
   switch(format)
   {
     case DXGI_FORMAT_BC1_UNORM:
     case DXGI_FORMAT_BC1_UNORM_SRGB:
-      special.specialFormat = eSpecial_BC1;
+      special.type = ResourceFormatType::BC1;
       special.srgbCorrected = (format == DXGI_FORMAT_BC1_UNORM_SRGB ? true : false);
       return special;
     case DXGI_FORMAT_BC2_UNORM:
     case DXGI_FORMAT_BC2_UNORM_SRGB:
-      special.specialFormat = eSpecial_BC2;
+      special.type = ResourceFormatType::BC2;
       special.srgbCorrected = (format == DXGI_FORMAT_BC2_UNORM_SRGB ? true : false);
       return special;
     case DXGI_FORMAT_BC3_UNORM:
     case DXGI_FORMAT_BC3_UNORM_SRGB:
-      special.specialFormat = eSpecial_BC3;
+      special.type = ResourceFormatType::BC3;
       special.srgbCorrected = (format == DXGI_FORMAT_BC3_UNORM_SRGB ? true : false);
       return special;
     case DXGI_FORMAT_BC4_UNORM:
     case DXGI_FORMAT_BC4_SNORM:
-      special.specialFormat = eSpecial_BC4;
-      special.compType = (format == DXGI_FORMAT_BC4_UNORM ? eCompType_UNorm : eCompType_SNorm);
+      special.type = ResourceFormatType::BC4;
+      special.compType = (format == DXGI_FORMAT_BC4_UNORM ? CompType::UNorm : CompType::SNorm);
       return special;
     case DXGI_FORMAT_BC5_UNORM:
     case DXGI_FORMAT_BC5_SNORM:
-      special.specialFormat = eSpecial_BC5;
-      special.compType = (format == DXGI_FORMAT_BC5_UNORM ? eCompType_UNorm : eCompType_SNorm);
+      special.type = ResourceFormatType::BC5;
+      special.compType = (format == DXGI_FORMAT_BC5_UNORM ? CompType::UNorm : CompType::SNorm);
       return special;
     case DXGI_FORMAT_BC6H_UF16:
     case DXGI_FORMAT_BC6H_SF16:
-      special.specialFormat = eSpecial_BC6;
-      special.compType = (format == DXGI_FORMAT_BC6H_UF16 ? eCompType_UNorm : eCompType_SNorm);
+      special.type = ResourceFormatType::BC6;
+      special.compType = (format == DXGI_FORMAT_BC6H_UF16 ? CompType::UNorm : CompType::SNorm);
       return special;
     case DXGI_FORMAT_BC7_UNORM:
     case DXGI_FORMAT_BC7_UNORM_SRGB:
-      special.specialFormat = eSpecial_BC7;
+      special.type = ResourceFormatType::BC7;
       special.srgbCorrected = (format == DXGI_FORMAT_BC7_UNORM_SRGB ? true : false);
       return special;
     case DXGI_FORMAT_R10G10B10A2_UNORM:
     case DXGI_FORMAT_R10G10B10A2_UINT:
-      special.specialFormat = eSpecial_R10G10B10A2;
-      special.compType = (format == DXGI_FORMAT_R10G10B10A2_UNORM ? eCompType_UNorm : eCompType_UInt);
+      special.type = ResourceFormatType::R10G10B10A2;
+      special.compType = (format == DXGI_FORMAT_R10G10B10A2_UNORM ? CompType::UNorm : CompType::UInt);
       return special;
-    case DXGI_FORMAT_R11G11B10_FLOAT: special.specialFormat = eSpecial_R11G11B10; return special;
+    case DXGI_FORMAT_R11G11B10_FLOAT: special.type = ResourceFormatType::R11G11B10; return special;
     case DXGI_FORMAT_B5G6R5_UNORM:
       fmt8.bgraOrder = true;
-      special.specialFormat = eSpecial_R5G6B5;
+      special.type = ResourceFormatType::R5G6B5;
       return special;
     case DXGI_FORMAT_B5G5R5A1_UNORM:
       fmt8.bgraOrder = true;
-      special.specialFormat = eSpecial_R5G5B5A1;
+      special.type = ResourceFormatType::R5G5B5A1;
       return special;
-    case DXGI_FORMAT_R9G9B9E5_SHAREDEXP: special.specialFormat = eSpecial_R9G9B9E5; return special;
+    case DXGI_FORMAT_R9G9B9E5_SHAREDEXP:
+      special.type = ResourceFormatType::R9G9B9E5;
+      return special;
     case DXGI_FORMAT_B4G4R4A4_UNORM:
       fmt8.bgraOrder = true;
-      special.specialFormat = eSpecial_R4G4B4A4;
+      special.type = ResourceFormatType::R4G4B4A4;
       return special;
-    case DXGI_FORMAT_D24_UNORM_S8_UINT: special.specialFormat = eSpecial_D24S8; return special;
-    case DXGI_FORMAT_D32_FLOAT_S8X24_UINT: special.specialFormat = eSpecial_D32S8; return special;
+    case DXGI_FORMAT_D24_UNORM_S8_UINT: special.type = ResourceFormatType::D24S8; return special;
+    case DXGI_FORMAT_D32_FLOAT_S8X24_UINT: special.type = ResourceFormatType::D32S8; return special;
 
     case DXGI_FORMAT_R32G32B32A32_UINT:
-      fmt32.compType = eCompType_UInt;
+      fmt32.compType = CompType::UInt;
       fmt32.compCount = 4;
       return fmt32;
     case DXGI_FORMAT_R32G32B32A32_SINT:
-      fmt32.compType = eCompType_SInt;
+      fmt32.compType = CompType::SInt;
       fmt32.compCount = 4;
       return fmt32;
     case DXGI_FORMAT_R32G32B32A32_FLOAT: fmt32.compCount = 4; return fmt32;
 
     case DXGI_FORMAT_R32G32B32_UINT:
-      fmt32.compType = eCompType_UInt;
+      fmt32.compType = CompType::UInt;
       fmt32.compCount = 3;
       return fmt32;
     case DXGI_FORMAT_R32G32B32_SINT:
-      fmt32.compType = eCompType_SInt;
+      fmt32.compType = CompType::SInt;
       fmt32.compCount = 3;
       return fmt32;
     case DXGI_FORMAT_R32G32B32_FLOAT: fmt32.compCount = 3; return fmt32;
 
     case DXGI_FORMAT_R32G32_UINT:
-      fmt32.compType = eCompType_UInt;
+      fmt32.compType = CompType::UInt;
       fmt32.compCount = 2;
       return fmt32;
     case DXGI_FORMAT_R32G32_SINT:
-      fmt32.compType = eCompType_SInt;
+      fmt32.compType = CompType::SInt;
       fmt32.compCount = 2;
       return fmt32;
     case DXGI_FORMAT_R32G32_FLOAT: fmt32.compCount = 2; return fmt32;
 
-    case DXGI_FORMAT_R32_UINT: fmt32.compType = eCompType_UInt; return fmt32;
-    case DXGI_FORMAT_R32_SINT: fmt32.compType = eCompType_SInt; return fmt32;
+    case DXGI_FORMAT_R32_UINT: fmt32.compType = CompType::UInt; return fmt32;
+    case DXGI_FORMAT_R32_SINT: fmt32.compType = CompType::SInt; return fmt32;
     case DXGI_FORMAT_R32_FLOAT: return fmt32;
 
     case DXGI_FORMAT_R16G16B16A16_UINT:
-      fmt16.compType = eCompType_UInt;
+      fmt16.compType = CompType::UInt;
       fmt16.compCount = 4;
       return fmt16;
     case DXGI_FORMAT_R16G16B16A16_SINT:
-      fmt16.compType = eCompType_SInt;
+      fmt16.compType = CompType::SInt;
       fmt16.compCount = 4;
       return fmt16;
     case DXGI_FORMAT_R16G16B16A16_UNORM:
-      fmt16.compType = eCompType_UNorm;
+      fmt16.compType = CompType::UNorm;
       fmt16.compCount = 4;
       return fmt16;
     case DXGI_FORMAT_R16G16B16A16_SNORM:
-      fmt16.compType = eCompType_SNorm;
+      fmt16.compType = CompType::SNorm;
       fmt16.compCount = 4;
       return fmt16;
     case DXGI_FORMAT_R16G16B16A16_FLOAT: fmt16.compCount = 4; return fmt16;
 
     case DXGI_FORMAT_R16G16_UINT:
-      fmt16.compType = eCompType_UInt;
+      fmt16.compType = CompType::UInt;
       fmt16.compCount = 2;
       return fmt16;
     case DXGI_FORMAT_R16G16_SINT:
-      fmt16.compType = eCompType_SInt;
+      fmt16.compType = CompType::SInt;
       fmt16.compCount = 2;
       return fmt16;
     case DXGI_FORMAT_R16G16_UNORM:
-      fmt16.compType = eCompType_UNorm;
+      fmt16.compType = CompType::UNorm;
       fmt16.compCount = 2;
       return fmt16;
     case DXGI_FORMAT_R16G16_SNORM:
-      fmt16.compType = eCompType_SNorm;
+      fmt16.compType = CompType::SNorm;
       fmt16.compCount = 2;
       return fmt16;
     case DXGI_FORMAT_R16G16_FLOAT: fmt16.compCount = 2; return fmt16;
 
-    case DXGI_FORMAT_R16_UINT: fmt16.compType = eCompType_UInt; return fmt16;
-    case DXGI_FORMAT_R16_SINT: fmt16.compType = eCompType_SInt; return fmt16;
-    case DXGI_FORMAT_R16_UNORM: fmt16.compType = eCompType_UNorm; return fmt16;
-    case DXGI_FORMAT_R16_SNORM: fmt16.compType = eCompType_SNorm; return fmt16;
+    case DXGI_FORMAT_R16_UINT: fmt16.compType = CompType::UInt; return fmt16;
+    case DXGI_FORMAT_R16_SINT: fmt16.compType = CompType::SInt; return fmt16;
+    case DXGI_FORMAT_R16_UNORM: fmt16.compType = CompType::UNorm; return fmt16;
+    case DXGI_FORMAT_R16_SNORM: fmt16.compType = CompType::SNorm; return fmt16;
     case DXGI_FORMAT_R16_FLOAT: return fmt16;
 
     case DXGI_FORMAT_R8G8B8A8_UINT:
-      fmt8.compType = eCompType_UInt;
+      fmt8.compType = CompType::UInt;
       fmt8.compCount = 4;
       return fmt8;
     case DXGI_FORMAT_R8G8B8A8_SINT:
-      fmt8.compType = eCompType_SInt;
+      fmt8.compType = CompType::SInt;
       fmt8.compCount = 4;
       return fmt8;
     case DXGI_FORMAT_R8G8B8A8_SNORM:
-      fmt8.compType = eCompType_SNorm;
+      fmt8.compType = CompType::SNorm;
       fmt8.compCount = 4;
       return fmt8;
     case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
-      fmt8.compType = eCompType_UNorm;
+      fmt8.compType = CompType::UNorm;
       fmt8.srgbCorrected = true;
       fmt8.compCount = 4;
       return fmt8;
     case DXGI_FORMAT_R8G8B8A8_UNORM: fmt8.compCount = 4; return fmt8;
     case DXGI_FORMAT_B8G8R8A8_UNORM:
     case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-      fmt8.compType = eCompType_UNorm;
+      fmt8.compType = CompType::UNorm;
       fmt8.compCount = 4;
       fmt8.bgraOrder = true;
       fmt8.srgbCorrected = (format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB ? true : false);
       return fmt8;
 
     case DXGI_FORMAT_R8G8_UINT:
-      fmt8.compType = eCompType_UInt;
+      fmt8.compType = CompType::UInt;
       fmt8.compCount = 2;
       return fmt8;
     case DXGI_FORMAT_R8G8_SINT:
-      fmt8.compType = eCompType_SInt;
+      fmt8.compType = CompType::SInt;
       fmt8.compCount = 2;
       return fmt8;
     case DXGI_FORMAT_R8G8_SNORM:
-      fmt8.compType = eCompType_SNorm;
+      fmt8.compType = CompType::SNorm;
       fmt8.compCount = 2;
       return fmt8;
     case DXGI_FORMAT_R8G8_UNORM: fmt8.compCount = 2; return fmt8;
 
-    case DXGI_FORMAT_R8_UINT: fmt8.compType = eCompType_UInt; return fmt8;
-    case DXGI_FORMAT_R8_SINT: fmt8.compType = eCompType_SInt; return fmt8;
-    case DXGI_FORMAT_R8_SNORM: fmt8.compType = eCompType_SNorm; return fmt8;
+    case DXGI_FORMAT_R8_UINT: fmt8.compType = CompType::UInt; return fmt8;
+    case DXGI_FORMAT_R8_SINT: fmt8.compType = CompType::SInt; return fmt8;
+    case DXGI_FORMAT_R8_SNORM: fmt8.compType = CompType::SNorm; return fmt8;
     case DXGI_FORMAT_R8_UNORM: return fmt8;
 
     default: RDCWARN("Unsupported DXGI_FORMAT: %u", (uint32_t)format);
@@ -435,43 +437,47 @@ ResourceFormat DXGIFormat2ResourceFormat(DXGI_FORMAT format)
 
 DXGI_FORMAT ResourceFormat2DXGIFormat(ResourceFormat format)
 {
-  if(format.special)
+  if(format.Special())
   {
-    switch(format.specialFormat)
+    switch(format.type)
     {
-      case eSpecial_BC1:
+      case ResourceFormatType::BC1:
         return format.srgbCorrected ? DXGI_FORMAT_BC1_UNORM_SRGB : DXGI_FORMAT_BC1_UNORM;
-      case eSpecial_BC2:
+      case ResourceFormatType::BC2:
         return format.srgbCorrected ? DXGI_FORMAT_BC2_UNORM_SRGB : DXGI_FORMAT_BC2_UNORM;
-      case eSpecial_BC3:
+      case ResourceFormatType::BC3:
         return format.srgbCorrected ? DXGI_FORMAT_BC3_UNORM_SRGB : DXGI_FORMAT_BC3_UNORM;
-      case eSpecial_BC4:
-        return format.compType == eCompType_UNorm ? DXGI_FORMAT_BC4_UNORM : DXGI_FORMAT_BC4_SNORM;
-      case eSpecial_BC5:
-        return format.compType == eCompType_UNorm ? DXGI_FORMAT_BC5_UNORM : DXGI_FORMAT_BC5_SNORM;
-      case eSpecial_BC6:
-        return format.compType == eCompType_UNorm ? DXGI_FORMAT_BC6H_UF16 : DXGI_FORMAT_BC6H_SF16;
-      case eSpecial_BC7:
+      case ResourceFormatType::BC4:
+        return format.compType == CompType::UNorm ? DXGI_FORMAT_BC4_UNORM : DXGI_FORMAT_BC4_SNORM;
+      case ResourceFormatType::BC5:
+        return format.compType == CompType::UNorm ? DXGI_FORMAT_BC5_UNORM : DXGI_FORMAT_BC5_SNORM;
+      case ResourceFormatType::BC6:
+        return format.compType == CompType::UNorm ? DXGI_FORMAT_BC6H_UF16 : DXGI_FORMAT_BC6H_SF16;
+      case ResourceFormatType::BC7:
         return format.srgbCorrected ? DXGI_FORMAT_BC7_UNORM_SRGB : DXGI_FORMAT_BC7_UNORM;
-      case eSpecial_R10G10B10A2:
-        return format.compType == eCompType_UNorm ? DXGI_FORMAT_R10G10B10A2_UNORM
+      case ResourceFormatType::R10G10B10A2:
+        return format.compType == CompType::UNorm ? DXGI_FORMAT_R10G10B10A2_UNORM
                                                   : DXGI_FORMAT_R10G10B10A2_UINT;
-      case eSpecial_R11G11B10: return DXGI_FORMAT_R11G11B10_FLOAT;
-      case eSpecial_R5G6B5: RDCASSERT(format.bgraOrder); return DXGI_FORMAT_B5G6R5_UNORM;
-      case eSpecial_R5G5B5A1: RDCASSERT(format.bgraOrder); return DXGI_FORMAT_B5G5R5A1_UNORM;
-      case eSpecial_R9G9B9E5: return DXGI_FORMAT_R9G9B9E5_SHAREDEXP;
-      case eSpecial_R4G4B4A4: RDCASSERT(format.bgraOrder); return DXGI_FORMAT_B4G4R4A4_UNORM;
-      case eSpecial_D24S8: return DXGI_FORMAT_D24_UNORM_S8_UINT;
-      case eSpecial_D32S8: return DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
-      case eSpecial_S8: return DXGI_FORMAT_R8_UINT;
+      case ResourceFormatType::R11G11B10: return DXGI_FORMAT_R11G11B10_FLOAT;
+      case ResourceFormatType::R5G6B5: RDCASSERT(format.bgraOrder); return DXGI_FORMAT_B5G6R5_UNORM;
+      case ResourceFormatType::R5G5B5A1:
+        RDCASSERT(format.bgraOrder);
+        return DXGI_FORMAT_B5G5R5A1_UNORM;
+      case ResourceFormatType::R9G9B9E5: return DXGI_FORMAT_R9G9B9E5_SHAREDEXP;
+      case ResourceFormatType::R4G4B4A4:
+        RDCASSERT(format.bgraOrder);
+        return DXGI_FORMAT_B4G4R4A4_UNORM;
+      case ResourceFormatType::D24S8: return DXGI_FORMAT_D24_UNORM_S8_UINT;
+      case ResourceFormatType::D32S8: return DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
+      case ResourceFormatType::S8: return DXGI_FORMAT_R8_UINT;
       default:
-      case eSpecial_R4G4:
-      case eSpecial_D16S8:
-      case eSpecial_ETC2:
-      case eSpecial_EAC:
-      case eSpecial_ASTC:
-      case eSpecial_YUV:
-        RDCERR("Unsupported writing format %u", format.specialFormat);
+      case ResourceFormatType::R4G4:
+      case ResourceFormatType::D16S8:
+      case ResourceFormatType::ETC2:
+      case ResourceFormatType::EAC:
+      case ResourceFormatType::ASTC:
+      case ResourceFormatType::YUV:
+        RDCERR("Unsupported writing format %u", format.type);
         return DXGI_FORMAT_UNKNOWN;
     }
   }
@@ -482,8 +488,8 @@ DXGI_FORMAT ResourceFormat2DXGIFormat(ResourceFormat format)
     {
       switch(format.compType)
       {
-        case eCompType_UInt: return DXGI_FORMAT_R32G32B32A32_UINT;
-        case eCompType_SInt: return DXGI_FORMAT_R32G32B32A32_SINT;
+        case CompType::UInt: return DXGI_FORMAT_R32G32B32A32_UINT;
+        case CompType::SInt: return DXGI_FORMAT_R32G32B32A32_SINT;
         default: return DXGI_FORMAT_R32G32B32A32_FLOAT;
       }
     }
@@ -491,10 +497,10 @@ DXGI_FORMAT ResourceFormat2DXGIFormat(ResourceFormat format)
     {
       switch(format.compType)
       {
-        case eCompType_UInt: return DXGI_FORMAT_R16G16B16A16_UINT;
-        case eCompType_SInt: return DXGI_FORMAT_R16G16B16A16_SINT;
-        case eCompType_UNorm: return DXGI_FORMAT_R16G16B16A16_UNORM;
-        case eCompType_SNorm: return DXGI_FORMAT_R16G16B16A16_SNORM;
+        case CompType::UInt: return DXGI_FORMAT_R16G16B16A16_UINT;
+        case CompType::SInt: return DXGI_FORMAT_R16G16B16A16_SINT;
+        case CompType::UNorm: return DXGI_FORMAT_R16G16B16A16_UNORM;
+        case CompType::SNorm: return DXGI_FORMAT_R16G16B16A16_SNORM;
         default: return DXGI_FORMAT_R16G16B16A16_FLOAT;
       }
     }
@@ -502,11 +508,11 @@ DXGI_FORMAT ResourceFormat2DXGIFormat(ResourceFormat format)
     {
       switch(format.compType)
       {
-        case eCompType_UInt: return DXGI_FORMAT_R8G8B8A8_UINT;
-        case eCompType_SInt: return DXGI_FORMAT_R8G8B8A8_SINT;
-        case eCompType_SNorm: return DXGI_FORMAT_R8G8B8A8_SNORM;
+        case CompType::UInt: return DXGI_FORMAT_R8G8B8A8_UINT;
+        case CompType::SInt: return DXGI_FORMAT_R8G8B8A8_SINT;
+        case CompType::SNorm: return DXGI_FORMAT_R8G8B8A8_SNORM;
         default:
-        case eCompType_UNorm:
+        case CompType::UNorm:
           if(format.srgbCorrected)
           {
             if(format.bgraOrder)
@@ -532,8 +538,8 @@ DXGI_FORMAT ResourceFormat2DXGIFormat(ResourceFormat format)
     {
       switch(format.compType)
       {
-        case eCompType_UInt: return DXGI_FORMAT_R32G32B32_UINT;
-        case eCompType_SInt: return DXGI_FORMAT_R32G32B32_SINT;
+        case CompType::UInt: return DXGI_FORMAT_R32G32B32_UINT;
+        case CompType::SInt: return DXGI_FORMAT_R32G32B32_SINT;
         default: return DXGI_FORMAT_R32G32B32_FLOAT;
       }
     }
@@ -546,8 +552,8 @@ DXGI_FORMAT ResourceFormat2DXGIFormat(ResourceFormat format)
     {
       switch(format.compType)
       {
-        case eCompType_UInt: return DXGI_FORMAT_R32G32_UINT;
-        case eCompType_SInt: return DXGI_FORMAT_R32G32_SINT;
+        case CompType::UInt: return DXGI_FORMAT_R32G32_UINT;
+        case CompType::SInt: return DXGI_FORMAT_R32G32_SINT;
         default: return DXGI_FORMAT_R32G32_FLOAT;
       }
     }
@@ -555,10 +561,10 @@ DXGI_FORMAT ResourceFormat2DXGIFormat(ResourceFormat format)
     {
       switch(format.compType)
       {
-        case eCompType_UInt: return DXGI_FORMAT_R16G16_UINT;
-        case eCompType_SInt: return DXGI_FORMAT_R16G16_SINT;
-        case eCompType_UNorm: return DXGI_FORMAT_R16G16_UNORM;
-        case eCompType_SNorm: return DXGI_FORMAT_R16G16_SNORM;
+        case CompType::UInt: return DXGI_FORMAT_R16G16_UINT;
+        case CompType::SInt: return DXGI_FORMAT_R16G16_SINT;
+        case CompType::UNorm: return DXGI_FORMAT_R16G16_UNORM;
+        case CompType::SNorm: return DXGI_FORMAT_R16G16_SNORM;
         default: return DXGI_FORMAT_R16G16_FLOAT;
       }
     }
@@ -566,9 +572,9 @@ DXGI_FORMAT ResourceFormat2DXGIFormat(ResourceFormat format)
     {
       switch(format.compType)
       {
-        case eCompType_UInt: return DXGI_FORMAT_R8G8_UINT;
-        case eCompType_SInt: return DXGI_FORMAT_R8G8_SINT;
-        case eCompType_SNorm: return DXGI_FORMAT_R8G8_SNORM;
+        case CompType::UInt: return DXGI_FORMAT_R8G8_UINT;
+        case CompType::SInt: return DXGI_FORMAT_R8G8_SINT;
+        case CompType::SNorm: return DXGI_FORMAT_R8G8_SNORM;
         default: return DXGI_FORMAT_R8G8_UNORM;
       }
     }
@@ -581,8 +587,8 @@ DXGI_FORMAT ResourceFormat2DXGIFormat(ResourceFormat format)
     {
       switch(format.compType)
       {
-        case eCompType_UInt: return DXGI_FORMAT_R32_UINT;
-        case eCompType_SInt: return DXGI_FORMAT_R32_SINT;
+        case CompType::UInt: return DXGI_FORMAT_R32_UINT;
+        case CompType::SInt: return DXGI_FORMAT_R32_SINT;
         default: return DXGI_FORMAT_R32_FLOAT;
       }
     }
@@ -590,10 +596,10 @@ DXGI_FORMAT ResourceFormat2DXGIFormat(ResourceFormat format)
     {
       switch(format.compType)
       {
-        case eCompType_UInt: return DXGI_FORMAT_R16_UINT;
-        case eCompType_SInt: return DXGI_FORMAT_R16_SINT;
-        case eCompType_UNorm: return DXGI_FORMAT_R16_UNORM;
-        case eCompType_SNorm: return DXGI_FORMAT_R16_SNORM;
+        case CompType::UInt: return DXGI_FORMAT_R16_UINT;
+        case CompType::SInt: return DXGI_FORMAT_R16_SINT;
+        case CompType::UNorm: return DXGI_FORMAT_R16_UNORM;
+        case CompType::SNorm: return DXGI_FORMAT_R16_SNORM;
         default: return DXGI_FORMAT_R16_FLOAT;
       }
     }
@@ -601,9 +607,9 @@ DXGI_FORMAT ResourceFormat2DXGIFormat(ResourceFormat format)
     {
       switch(format.compType)
       {
-        case eCompType_UInt: return DXGI_FORMAT_R8_UINT;
-        case eCompType_SInt: return DXGI_FORMAT_R8_SINT;
-        case eCompType_SNorm: return DXGI_FORMAT_R8_SNORM;
+        case CompType::UInt: return DXGI_FORMAT_R8_UINT;
+        case CompType::SInt: return DXGI_FORMAT_R8_SINT;
+        case CompType::SNorm: return DXGI_FORMAT_R8_SNORM;
         default: return DXGI_FORMAT_R8_UNORM;
       }
     }
@@ -643,22 +649,22 @@ bool write_dds_to_file(FILE *f, const dds_data &data)
 
   bool blockFormat = false;
 
-  if(data.format.special)
+  if(data.format.Special())
   {
-    switch(data.format.specialFormat)
+    switch(data.format.type)
     {
-      case eSpecial_BC1:
-      case eSpecial_BC2:
-      case eSpecial_BC3:
-      case eSpecial_BC4:
-      case eSpecial_BC5:
-      case eSpecial_BC6:
-      case eSpecial_BC7: blockFormat = true; break;
-      case eSpecial_ETC2:
-      case eSpecial_EAC:
-      case eSpecial_ASTC:
-      case eSpecial_YUV:
-        RDCERR("Unsupported file format, %u", data.format.specialFormat);
+      case ResourceFormatType::BC1:
+      case ResourceFormatType::BC2:
+      case ResourceFormatType::BC3:
+      case ResourceFormatType::BC4:
+      case ResourceFormatType::BC5:
+      case ResourceFormatType::BC6:
+      case ResourceFormatType::BC7: blockFormat = true; break;
+      case ResourceFormatType::ETC2:
+      case ResourceFormatType::EAC:
+      case ResourceFormatType::ASTC:
+      case ResourceFormatType::YUV:
+        RDCERR("Unsupported file format, %u", data.format.type);
         return false;
       default: break;
     }
@@ -686,7 +692,10 @@ bool write_dds_to_file(FILE *f, const dds_data &data)
   headerDXT10.arraySize = data.slices;
 
   if(headerDXT10.dxgiFormat == DXGI_FORMAT_UNKNOWN)
+  {
+    RDCERR("Couldn't convert resource format to DXGI format");
     return false;
+  }
 
   if(data.cubemap)
   {
@@ -703,28 +712,28 @@ bool write_dds_to_file(FILE *f, const dds_data &data)
   if(blockFormat)
   {
     int blockSize =
-        (data.format.specialFormat == eSpecial_BC1 || data.format.specialFormat == eSpecial_BC4)
+        (data.format.type == ResourceFormatType::BC1 || data.format.type == ResourceFormatType::BC4)
             ? 8
             : 16;
     header.dwPitchOrLinearSize = RDCMAX(1U, ((header.dwWidth + 3) / 4)) * blockSize;
   }
   else
   {
-    switch(data.format.specialFormat)
+    switch(data.format.type)
     {
-      case eSpecial_S8: bytesPerPixel = 1; break;
-      case eSpecial_R10G10B10A2:
-      case eSpecial_R9G9B9E5:
-      case eSpecial_R11G11B10:
-      case eSpecial_D24S8: bytesPerPixel = 4; break;
-      case eSpecial_R5G6B5:
-      case eSpecial_R5G5B5A1:
-      case eSpecial_R4G4B4A4: bytesPerPixel = 2; break;
-      case eSpecial_D32S8: bytesPerPixel = 8; break;
-      case eSpecial_D16S8:
-      case eSpecial_YUV:
-      case eSpecial_R4G4:
-        RDCERR("Unsupported file format %u", data.format.specialFormat);
+      case ResourceFormatType::S8: bytesPerPixel = 1; break;
+      case ResourceFormatType::R10G10B10A2:
+      case ResourceFormatType::R9G9B9E5:
+      case ResourceFormatType::R11G11B10:
+      case ResourceFormatType::D24S8: bytesPerPixel = 4; break;
+      case ResourceFormatType::R5G6B5:
+      case ResourceFormatType::R5G5B5A1:
+      case ResourceFormatType::R4G4B4A4: bytesPerPixel = 2; break;
+      case ResourceFormatType::D32S8: bytesPerPixel = 8; break;
+      case ResourceFormatType::D16S8:
+      case ResourceFormatType::YUV:
+      case ResourceFormatType::R4G4:
+        RDCERR("Unsupported file format %u", data.format.type);
         return false;
       default: bytesPerPixel = data.format.compCount * data.format.compByteWidth;
     }
@@ -735,7 +744,7 @@ bool write_dds_to_file(FILE *f, const dds_data &data)
   // special case a couple of formats to write out non-DX10 style, for
   // backwards compatibility
   if(data.format.compByteWidth == 1 && data.format.compCount == 4 &&
-     data.format.compType == eCompType_UNorm)
+     data.format.compType == CompType::UNorm)
   {
     header.ddspf.dwFlags = DDPF_RGBA;
     header.ddspf.dwRGBBitCount = 32;
@@ -747,37 +756,37 @@ bool write_dds_to_file(FILE *f, const dds_data &data)
     if(data.format.bgraOrder)
       std::swap(header.ddspf.dwRBitMask, header.ddspf.dwBBitMask);
   }
-  else if(data.format.specialFormat == eSpecial_BC1)
+  else if(data.format.type == ResourceFormatType::BC1)
   {
     header.ddspf.dwFlags = DDPF_FOURCC;
     header.ddspf.dwFourCC = MAKE_FOURCC('D', 'X', 'T', '1');
   }
-  else if(data.format.specialFormat == eSpecial_BC2)
+  else if(data.format.type == ResourceFormatType::BC2)
   {
     header.ddspf.dwFlags = DDPF_FOURCC;
     header.ddspf.dwFourCC = MAKE_FOURCC('D', 'X', 'T', '3');
   }
-  else if(data.format.specialFormat == eSpecial_BC3)
+  else if(data.format.type == ResourceFormatType::BC3)
   {
     header.ddspf.dwFlags = DDPF_FOURCC;
     header.ddspf.dwFourCC = MAKE_FOURCC('D', 'X', 'T', '5');
   }
-  else if(data.format.specialFormat == eSpecial_BC4 && data.format.compType == eCompType_UNorm)
+  else if(data.format.type == ResourceFormatType::BC4 && data.format.compType == CompType::UNorm)
   {
     header.ddspf.dwFlags = DDPF_FOURCC;
     header.ddspf.dwFourCC = MAKE_FOURCC('B', 'C', '4', 'U');
   }
-  else if(data.format.specialFormat == eSpecial_BC4 && data.format.compType == eCompType_SNorm)
+  else if(data.format.type == ResourceFormatType::BC4 && data.format.compType == CompType::SNorm)
   {
     header.ddspf.dwFlags = DDPF_FOURCC;
     header.ddspf.dwFourCC = MAKE_FOURCC('B', 'C', '4', 'S');
   }
-  else if(data.format.specialFormat == eSpecial_BC5 && data.format.compType == eCompType_UNorm)
+  else if(data.format.type == ResourceFormatType::BC5 && data.format.compType == CompType::UNorm)
   {
     header.ddspf.dwFlags = DDPF_FOURCC;
     header.ddspf.dwFourCC = MAKE_FOURCC('A', 'T', 'I', '2');
   }
-  else if(data.format.specialFormat == eSpecial_BC5 && data.format.compType == eCompType_SNorm)
+  else if(data.format.type == ResourceFormatType::BC5 && data.format.compType == CompType::SNorm)
   {
     header.ddspf.dwFlags = DDPF_FOURCC;
     header.ddspf.dwFourCC = MAKE_FOURCC('B', 'C', '5', 'S');
@@ -819,8 +828,8 @@ bool write_dds_to_file(FILE *f, const dds_data &data)
           {
             numRows = RDCMAX(1, numRows / 4);
 
-            int blockSize = (data.format.specialFormat == eSpecial_BC1 ||
-                             data.format.specialFormat == eSpecial_BC4)
+            int blockSize = (data.format.type == ResourceFormatType::BC1 ||
+                             data.format.type == ResourceFormatType::BC4)
                                 ? 8
                                 : 16;
 
@@ -897,7 +906,7 @@ dds_data load_dds_from_file(FILE *f)
   if(dx10Header)
   {
     ret.format = DXGIFormat2ResourceFormat(headerDXT10.dxgiFormat);
-    if(ret.format.special && ret.format.specialFormat == eSpecial_Unknown)
+    if(ret.format.type == ResourceFormatType::Undefined)
     {
       RDCWARN("Unsupported DXGI_FORMAT: %u", (uint32_t)headerDXT10.dxgiFormat);
       return error;
@@ -957,52 +966,52 @@ dds_data load_dds_from_file(FILE *f)
     }
 
     ret.format.compByteWidth = 1;
-    ret.format.compCount = header.ddspf.dwRGBBitCount / 8;
-    ret.format.compType = eCompType_UNorm;
-    ret.format.special = false;
+    ret.format.compCount = uint8_t(header.ddspf.dwRGBBitCount / 8);
+    ret.format.compType = CompType::UNorm;
+    ret.format.type = ResourceFormatType::Regular;
 
     if(header.ddspf.dwBBitMask < header.ddspf.dwRBitMask)
       ret.format.bgraOrder = true;
   }
 
   uint32_t bytesPerPixel = 1;
-  switch(ret.format.specialFormat)
+  switch(ret.format.type)
   {
-    case eSpecial_S8: bytesPerPixel = 1; break;
-    case eSpecial_R10G10B10A2:
-    case eSpecial_R9G9B9E5:
-    case eSpecial_R11G11B10:
-    case eSpecial_D24S8: bytesPerPixel = 4; break;
-    case eSpecial_R5G6B5:
-    case eSpecial_R5G5B5A1:
-    case eSpecial_R4G4B4A4: bytesPerPixel = 2; break;
-    case eSpecial_D32S8: bytesPerPixel = 8; break;
-    case eSpecial_D16S8:
-    case eSpecial_YUV:
-    case eSpecial_R4G4:
-      RDCERR("Unsupported file format %u", ret.format.specialFormat);
+    case ResourceFormatType::S8: bytesPerPixel = 1; break;
+    case ResourceFormatType::R10G10B10A2:
+    case ResourceFormatType::R9G9B9E5:
+    case ResourceFormatType::R11G11B10:
+    case ResourceFormatType::D24S8: bytesPerPixel = 4; break;
+    case ResourceFormatType::R5G6B5:
+    case ResourceFormatType::R5G5B5A1:
+    case ResourceFormatType::R4G4B4A4: bytesPerPixel = 2; break;
+    case ResourceFormatType::D32S8: bytesPerPixel = 8; break;
+    case ResourceFormatType::D16S8:
+    case ResourceFormatType::YUV:
+    case ResourceFormatType::R4G4:
+      RDCERR("Unsupported file format %u", ret.format.type);
       return error;
     default: bytesPerPixel = ret.format.compCount * ret.format.compByteWidth;
   }
 
   bool blockFormat = false;
 
-  if(ret.format.special)
+  if(ret.format.Special())
   {
-    switch(ret.format.specialFormat)
+    switch(ret.format.type)
     {
-      case eSpecial_BC1:
-      case eSpecial_BC2:
-      case eSpecial_BC3:
-      case eSpecial_BC4:
-      case eSpecial_BC5:
-      case eSpecial_BC6:
-      case eSpecial_BC7: blockFormat = true; break;
-      case eSpecial_ETC2:
-      case eSpecial_EAC:
-      case eSpecial_ASTC:
-      case eSpecial_YUV:
-        RDCERR("Unsupported file format, %u", ret.format.specialFormat);
+      case ResourceFormatType::BC1:
+      case ResourceFormatType::BC2:
+      case ResourceFormatType::BC3:
+      case ResourceFormatType::BC4:
+      case ResourceFormatType::BC5:
+      case ResourceFormatType::BC6:
+      case ResourceFormatType::BC7: blockFormat = true; break;
+      case ResourceFormatType::ETC2:
+      case ResourceFormatType::EAC:
+      case ResourceFormatType::ASTC:
+      case ResourceFormatType::YUV:
+        RDCERR("Unsupported file format, %u", ret.format.type);
         return error;
       default: break;
     }
@@ -1026,10 +1035,10 @@ dds_data load_dds_from_file(FILE *f)
       {
         numRows = RDCMAX(1, numRows / 4);
 
-        int blockSize =
-            (ret.format.specialFormat == eSpecial_BC1 || ret.format.specialFormat == eSpecial_BC4)
-                ? 8
-                : 16;
+        int blockSize = (ret.format.type == ResourceFormatType::BC1 ||
+                         ret.format.type == ResourceFormatType::BC4)
+                            ? 8
+                            : 16;
 
         pitch = RDCMAX(blockSize, (((rowlen + 3) / 4)) * blockSize);
       }

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2014-2016 Baldur Karlsson
+ * Copyright (c) 2014-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -27,6 +27,7 @@
 
 class WrappedOpenGL;
 
+int ParseVersionStatement(const char *version);
 void MakeShaderReflection(const GLHookSet &gl, GLenum shadType, GLuint sepProg,
                           ShaderReflection &refl, bool pointSizeUsed, bool clipDistanceUsed);
 GLuint MakeSeparableShaderProgram(WrappedOpenGL &gl, GLenum type, std::vector<std::string> sources,

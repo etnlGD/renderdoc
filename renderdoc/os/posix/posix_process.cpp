@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,6 +24,7 @@
 
 #include <dlfcn.h>
 #include <errno.h>
+#include <limits.h>
 #include <pwd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,17 +32,42 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include "api/app/renderdoc_app.h"
-#include "api/replay/capture_options.h"
 #include "os/os_specific.h"
-#include "serialise/string_utils.h"
+#include "strings/string_utils.h"
 
 // defined in foo/foo_process.cpp
 char **GetCurrentEnvironment();
 int GetIdentPort(pid_t childPid);
 
-static vector<Process::EnvironmentModification> &GetEnvModifications()
+namespace FileIO
 {
-  static vector<Process::EnvironmentModification> envCallbacks;
+void ReleaseFDAfterFork();
+string FindFileInPath(const string &fileName);
+};
+
+static const string GetAbsoluteAppPathFromName(const string &appName)
+{
+  string appPath;
+
+  // If the application name contains a slash character convert it to an absolute path and return it
+  if(appName.find("/") != string::npos)
+  {
+    char realpathBuffer[PATH_MAX];
+    string appDir = dirname(appName);
+    string appBasename = basename(appName);
+    realpath(appDir.c_str(), realpathBuffer);
+    appPath = realpathBuffer;
+    appPath += "/" + appBasename;
+    return appPath;
+  }
+
+  // Otherwise, go search PATH for it
+  return FileIO::FindFileInPath(appName);
+}
+
+static vector<EnvironmentModification> &GetEnvModifications()
+{
+  static vector<EnvironmentModification> envCallbacks;
   return envCallbacks;
 }
 
@@ -54,6 +80,12 @@ static map<string, string> EnvStringToEnvMap(const char **envstring)
   while(*e)
   {
     const char *equals = strchr(*e, '=');
+
+    if(equals == NULL)
+    {
+      e++;
+      continue;
+    }
 
     string name;
     string value;
@@ -116,7 +148,7 @@ static string shellExpand(const string &in)
   return path;
 }
 
-void Process::RegisterEnvironmentModification(Process::EnvironmentModification modif)
+void Process::RegisterEnvironmentModification(EnvironmentModification modif)
 {
   GetEnvModifications().push_back(modif);
 }
@@ -139,38 +171,40 @@ void Process::ApplyEnvironmentModification()
   {
     EnvironmentModification &m = modifications[i];
 
-    string value = currentEnv[m.name];
+    string value = currentEnv[m.name.c_str()];
 
-    switch(m.type)
+    switch(m.mod)
     {
-      case eEnvModification_Replace: value = m.value; break;
-      case eEnvModification_Append: value += m.value; break;
-      case eEnvModification_AppendPlatform:
-      case eEnvModification_AppendColon:
+      case EnvMod::Set: value = m.value.c_str(); break;
+      case EnvMod::Append:
+      {
         if(!value.empty())
-          value += ":";
-        value += m.value;
+        {
+          if(m.sep == EnvSep::Platform || m.sep == EnvSep::Colon)
+            value += ":";
+          else if(m.sep == EnvSep::SemiColon)
+            value += ";";
+        }
+        value += m.value.c_str();
         break;
-      case eEnvModification_AppendSemiColon:
+      }
+      case EnvMod::Prepend:
+      {
         if(!value.empty())
-          value += ";";
-        value += m.value;
-        break;
-      case eEnvModification_Prepend: value = m.value + value; break;
-      case eEnvModification_PrependColon:
-        if(!value.empty())
-          value = m.value + ":" + value;
+        {
+          std::string prep = m.value;
+          if(m.sep == EnvSep::Platform || m.sep == EnvSep::Colon)
+            prep += ":";
+          else if(m.sep == EnvSep::SemiColon)
+            prep += ";";
+          value = prep + value;
+        }
         else
-          value = m.value;
+        {
+          value = m.value.c_str();
+        }
         break;
-      case eEnvModification_PrependPlatform:
-      case eEnvModification_PrependSemiColon:
-        if(!value.empty())
-          value = m.value + ";" + value;
-        else
-          value = m.value;
-        break;
-      default: RDCERR("Unexpected environment modification type");
+      }
     }
 
     setenv(m.name.c_str(), value.c_str(), true);
@@ -180,7 +214,24 @@ void Process::ApplyEnvironmentModification()
   modifications.clear();
 }
 
-static pid_t RunProcess(const char *app, const char *workingDir, const char *cmdLine, char **envp)
+static void CleanupStringArray(char **arr, char **invalid)
+{
+  if(arr != invalid)
+  {
+    char **arr_delete = arr;
+
+    while(*arr)
+    {
+      delete[] * arr;
+      arr++;
+    }
+
+    delete[] arr_delete;
+  }
+}
+
+static pid_t RunProcess(const char *app, const char *workingDir, const char *cmdLine, char **envp,
+                        int stdoutPipe[2] = NULL, int stderrPipe[2] = NULL)
 {
   if(!app)
     return (pid_t)0;
@@ -213,6 +264,7 @@ static pid_t RunProcess(const char *app, const char *workingDir, const char *cmd
     }
 
     argv = new char *[argc + 2];
+    memset(argv, 0, (argc + 2) * sizeof(char *));
 
     c = cmdLine;
 
@@ -275,6 +327,7 @@ static pid_t RunProcess(const char *app, const char *workingDir, const char *cmd
           }
           else
           {
+            CleanupStringArray(argv, emptyargv);
             RDCERR("Malformed command line:\n%s", cmdLine);
             return 0;
           }
@@ -300,56 +353,67 @@ static pid_t RunProcess(const char *app, const char *workingDir, const char *cmd
       argc++;
     }
 
-    argv[argc] = NULL;
-
     if(squot || dquot)
     {
+      CleanupStringArray(argv, emptyargv);
       RDCERR("Malformed command line\n%s", cmdLine);
       return 0;
     }
   }
 
-  // don't care about child processes, just ignore them
-  signal(SIGCHLD, SIG_IGN);
+  const string appPath(GetAbsoluteAppPathFromName(appName));
 
-  pid_t childPid = fork();
-  if(childPid == 0)
+  pid_t childPid = 0;
+
+  // don't fork if we didn't find anything to execute.
+  if(!appPath.empty())
   {
-    chdir(workDir.c_str());
+    // don't care about child processes, just ignore them
+    // signal(SIGCHLD, SIG_IGN);
 
-    // in child process, so we can change environment
-    environ = envp;
-    execvp(appName.c_str(), argv);
-
-    RDCERR("Failed to execute %s: %s", appName.c_str(), strerror(errno));
-    exit(0);
-  }
-
-  char **argv_delete = argv;
-
-  if(argv != emptyargv)
-  {
-    while(*argv)
+    childPid = fork();
+    if(childPid == 0)
     {
-      delete[] * argv;
-      argv++;
-    }
+      FileIO::ReleaseFDAfterFork();
+      if(stdoutPipe)
+      {
+        // Redirect stdout & stderr write ends.
+        dup2(stdoutPipe[1], STDOUT_FILENO);
+        dup2(stderrPipe[1], STDERR_FILENO);
 
-    delete[] argv_delete;
+        // Close read ends, as the child will write.
+        close(stdoutPipe[0]);
+        close(stderrPipe[0]);
+      }
+
+      chdir(workDir.c_str());
+      execve(appPath.c_str(), argv, envp);
+      fprintf(stderr, "exec failed\n");
+      _exit(1);
+    }
   }
 
+  if(stdoutPipe)
+  {
+    // Close write ends, as parent will read.
+    close(stdoutPipe[1]);
+    close(stderrPipe[1]);
+  }
+
+  CleanupStringArray(argv, emptyargv);
   return childPid;
 }
 
-uint32_t Process::InjectIntoProcess(uint32_t pid, EnvironmentModification *env, const char *logfile,
-                                    const CaptureOptions *opts, bool waitForExit)
+ExecuteResult Process::InjectIntoProcess(uint32_t pid, const rdcarray<EnvironmentModification> &env,
+                                         const char *logfile, const CaptureOptions &opts,
+                                         bool waitForExit)
 {
   RDCUNIMPLEMENTED("Injecting into already running processes on linux");
-  return 0;
+  return {ReplayStatus::InjectionFailed, 0};
 }
 
 uint32_t Process::LaunchProcess(const char *app, const char *workingDir, const char *cmdLine,
-                                ProcessResult *result)
+                                bool internal, ProcessResult *result)
 {
   if(app == NULL || app[0] == 0)
   {
@@ -357,19 +421,68 @@ uint32_t Process::LaunchProcess(const char *app, const char *workingDir, const c
     return 0;
   }
 
+  int stdoutPipe[2], stderrPipe[2];
+  if(result)
+  {
+    if(pipe(stdoutPipe) == -1)
+      RDCERR("Could not create stdout pipe");
+    if(pipe(stderrPipe) == -1)
+      RDCERR("Could not create stderr pipe");
+  }
+
   char **currentEnvironment = GetCurrentEnvironment();
-  return (uint32_t)RunProcess(app, workingDir, cmdLine, currentEnvironment);
+  uint32_t ret = (uint32_t)RunProcess(app, workingDir, cmdLine, currentEnvironment,
+                                      result ? stdoutPipe : NULL, result ? stderrPipe : NULL);
+
+  if(ret && result)
+  {
+    result->strStdout = "";
+    result->strStderror = "";
+
+    ssize_t stdoutRead, stderrRead;
+    char chBuf[4096];
+    do
+    {
+      stdoutRead = read(stdoutPipe[0], chBuf, sizeof(chBuf));
+      if(stdoutRead > 0)
+        result->strStdout += string(chBuf, stdoutRead);
+    } while(stdoutRead > 0);
+
+    do
+    {
+      stderrRead = read(stderrPipe[0], chBuf, sizeof(chBuf));
+      if(stderrRead > 0)
+        result->strStderror += string(chBuf, stderrRead);
+
+    } while(stderrRead > 0);
+
+    // Close read ends.
+    close(stdoutPipe[0]);
+    close(stderrPipe[0]);
+  }
+
+  return ret;
 }
 
-uint32_t Process::LaunchAndInjectIntoProcess(const char *app, const char *workingDir,
-                                             const char *cmdLine, EnvironmentModification *envList,
-                                             const char *logfile, const CaptureOptions *opts,
-                                             bool waitForExit)
+uint32_t Process::LaunchScript(const char *script, const char *workingDir, const char *argList,
+                               bool internal, ProcessResult *result)
+{
+  // Change parameters to invoke command interpreter
+  string args = "-lc \"" + string(script) + " " + string(argList) + "\"";
+
+  return LaunchProcess("bash", workingDir, args.c_str(), internal, result);
+}
+
+ExecuteResult Process::LaunchAndInjectIntoProcess(const char *app, const char *workingDir,
+                                                  const char *cmdLine,
+                                                  const rdcarray<EnvironmentModification> &envList,
+                                                  const char *logfile, const CaptureOptions &opts,
+                                                  bool waitForExit)
 {
   if(app == NULL || app[0] == 0)
   {
     RDCERR("Invalid empty 'app'");
-    return 0;
+    return {ReplayStatus::InternalError, 0};
   }
 
   // turn environment string to a UTF-8 map
@@ -377,89 +490,79 @@ uint32_t Process::LaunchAndInjectIntoProcess(const char *app, const char *workin
   map<string, string> env = EnvStringToEnvMap((const char **)currentEnvironment);
   vector<EnvironmentModification> &modifications = GetEnvModifications();
 
-  if(envList)
-  {
-    for(;;)
-    {
-      EnvironmentModification e = *envList;
-      e.name = trim(e.name);
-
-      if(e.name == "")
-        break;
-
-      modifications.push_back(e);
-
-      envList++;
-    }
-  }
+  for(const EnvironmentModification &e : envList)
+    modifications.push_back(e);
 
   if(logfile == NULL)
     logfile = "";
 
-  string libpath;
+  string binpath, libpath;
   {
-    FileIO::GetExecutableFilename(libpath);
-    libpath = dirname(libpath);
+    FileIO::GetExecutableFilename(binpath);
+    binpath = dirname(binpath);
+    libpath = binpath + "/../lib";
+
+// point to the right customiseable path
+#if defined(RENDERDOC_LIB_SUFFIX)
+    libpath += STRINGIZE(RENDERDOC_LIB_SUFFIX);
+#endif
+
+#if defined(RENDERDOC_LIB_SUBFOLDER)
+    libpath += "/" STRINGIZE(RENDERDOC_LIB_SUBFOLDER);
+#endif
   }
 
-  string optstr;
-  {
-    optstr.reserve(sizeof(CaptureOptions) * 2 + 1);
-    byte *b = (byte *)opts;
-    for(size_t i = 0; i < sizeof(CaptureOptions); i++)
-    {
-      optstr.push_back(char('a' + ((b[i] >> 4) & 0xf)));
-      optstr.push_back(char('a' + ((b[i]) & 0xf)));
-    }
-  }
+  string optstr = opts.EncodeAsString();
 
+  modifications.push_back(EnvironmentModification(EnvMod::Append, EnvSep::Platform,
+                                                  "LD_LIBRARY_PATH", binpath.c_str()));
+  modifications.push_back(EnvironmentModification(EnvMod::Append, EnvSep::Platform,
+                                                  "LD_LIBRARY_PATH", libpath.c_str()));
   modifications.push_back(
-      EnvironmentModification(eEnvModification_AppendPlatform, "LD_LIBRARY_PATH", libpath.c_str()));
+      EnvironmentModification(EnvMod::Append, EnvSep::Platform, "LD_PRELOAD", "librenderdoc.so"));
   modifications.push_back(
-      EnvironmentModification(eEnvModification_AppendPlatform, "LD_PRELOAD", "librenderdoc.so"));
+      EnvironmentModification(EnvMod::Set, EnvSep::NoSep, "RENDERDOC_LOGFILE", logfile));
   modifications.push_back(
-      EnvironmentModification(eEnvModification_Replace, "RENDERDOC_LOGFILE", logfile));
-  modifications.push_back(
-      EnvironmentModification(eEnvModification_Replace, "RENDERDOC_CAPTUREOPTS", optstr.c_str()));
-  modifications.push_back(EnvironmentModification(eEnvModification_Replace,
+      EnvironmentModification(EnvMod::Set, EnvSep::NoSep, "RENDERDOC_CAPTUREOPTS", optstr.c_str()));
+  modifications.push_back(EnvironmentModification(EnvMod::Set, EnvSep::NoSep,
                                                   "RENDERDOC_DEBUG_LOG_FILE", RDCGETLOGFILE()));
 
   for(size_t i = 0; i < modifications.size(); i++)
   {
     EnvironmentModification &m = modifications[i];
 
-    string &value = env[m.name];
+    string &value = env[m.name.c_str()];
 
-    switch(m.type)
+    switch(m.mod)
     {
-      case eEnvModification_Replace: value = m.value; break;
-      case eEnvModification_Append: value += m.value; break;
-      case eEnvModification_AppendPlatform:
-      case eEnvModification_AppendColon:
+      case EnvMod::Set: value = m.value.c_str(); break;
+      case EnvMod::Append:
+      {
         if(!value.empty())
-          value += ":";
-        value += m.value;
+        {
+          if(m.sep == EnvSep::Platform || m.sep == EnvSep::Colon)
+            value += ":";
+          else if(m.sep == EnvSep::SemiColon)
+            value += ";";
+        }
+        value += m.value.c_str();
         break;
-      case eEnvModification_AppendSemiColon:
+      }
+      case EnvMod::Prepend:
+      {
         if(!value.empty())
-          value += ";";
-        value += m.value;
-        break;
-      case eEnvModification_Prepend: value = m.value + value; break;
-      case eEnvModification_PrependColon:
-        if(!value.empty())
-          value = m.value + ":" + value;
+        {
+          if(m.sep == EnvSep::Platform || m.sep == EnvSep::Colon)
+            value += ":";
+          else if(m.sep == EnvSep::SemiColon)
+            value += ";";
+        }
         else
-          value = m.value;
+        {
+          value = m.value.c_str();
+        }
         break;
-      case eEnvModification_PrependPlatform:
-      case eEnvModification_PrependSemiColon:
-        if(!value.empty())
-          value = m.value + ";" + value;
-        else
-          value = m.value;
-        break;
-      default: RDCERR("Unexpected environment modification type");
+      }
     }
   }
 
@@ -493,22 +596,28 @@ uint32_t Process::LaunchAndInjectIntoProcess(const char *app, const char *workin
     }
   }
 
-  char **envp_delete = envp;
-
-  while(*envp)
-  {
-    delete[] * envp;
-    envp++;
-  }
-
-  delete[] envp_delete;
-
-  return ret;
+  CleanupStringArray(envp, NULL);
+  return {ret == 0 ? ReplayStatus::InjectionFailed : ReplayStatus::Succeeded, (uint32_t)ret};
 }
 
-void Process::StartGlobalHook(const char *pathmatch, const char *logfile, const CaptureOptions *opts)
+bool Process::StartGlobalHook(const char *pathmatch, const char *logfile, const CaptureOptions &opts)
 {
   RDCUNIMPLEMENTED("Global hooking of all processes on linux");
+  return false;
+}
+
+bool Process::CanGlobalHook()
+{
+  return false;
+}
+
+bool Process::IsGlobalHookActive()
+{
+  return false;
+}
+
+void Process::StopGlobalHook()
+{
 }
 
 void *Process::LoadModule(const char *module)

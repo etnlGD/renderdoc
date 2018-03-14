@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -27,10 +27,6 @@
 
 #undef min
 #undef max
-
-#if ENABLED(RDOC_MSVS)
-#pragma warning(disable : 4481)    // nonstandard extension used: override specifier 'override'
-#endif
 
 #include "3rdparty/glslang/glslang/Public/ShaderLang.h"
 

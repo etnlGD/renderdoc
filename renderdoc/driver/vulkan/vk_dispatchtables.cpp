@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -67,49 +67,10 @@ void InitReplayTables(void *vulkanModule)
   table->func =           \
       (CONCAT(PFN_vk, func))table->GetInstanceProcAddr(instance, STRINGIZE(CONCAT(vk, func)))
 
-void InitInstanceReplayTables(VkInstance instance)
-{
-  VkLayerInstanceDispatchTable *table = GetInstanceDispatchTable(instance);
-  RDCASSERT(table);
-
-  // we know we'll only have one instance, so this is safe
-
-  InstanceGPA(EnumerateDeviceExtensionProperties);
-  InstanceGPA(EnumerateDeviceLayerProperties);
-
-  InstanceGPA(GetPhysicalDeviceSurfaceCapabilitiesKHR);
-  InstanceGPA(GetPhysicalDeviceSurfaceFormatsKHR);
-  InstanceGPA(GetPhysicalDeviceSurfacePresentModesKHR);
-  InstanceGPA(GetPhysicalDeviceSurfaceSupportKHR);
-  InstanceGPA(CreateDebugReportCallbackEXT);
-  InstanceGPA(DestroyDebugReportCallbackEXT);
-  InstanceGPA(DebugReportMessageEXT);
-
-#ifdef VK_USE_PLATFORM_WIN32_KHR
-  InstanceGPA(CreateWin32SurfaceKHR);
-#endif
-
-#ifdef VK_USE_PLATFORM_ANDROID_KHR
-  InstanceGPA(CreateAndroidSurfaceKHR);
-#endif
-
-#ifdef VK_USE_PLATFORM_XCB_KHR
-  InstanceGPA(CreateXcbSurfaceKHR);
-#endif
-
-#ifdef VK_USE_PLATFORM_XLIB_KHR
-  InstanceGPA(CreateXlibSurfaceKHR);
-#endif
-
-  InstanceGPA(DestroySurfaceKHR);
-}
-
-void InitInstanceExtensionTables(VkInstance instance)
+void InitInstanceExtensionTables(VkInstance instance, InstanceDeviceInfo *info)
 {
   VkLayerInstanceDispatchTableExtended *table = GetInstanceDispatchTable(instance);
   RDCASSERT(table);
-
-  InstanceDeviceInfo *info = GetRecord(instance)->instDevInfo;
 
   instance = Unwrap(instance);
 
@@ -120,6 +81,9 @@ void InitInstanceExtensionTables(VkInstance instance)
     InstanceGPA(func);               \
   }
 
+  InstanceGPA(EnumerateDeviceExtensionProperties);
+  InstanceGPA(EnumerateDeviceLayerProperties);
+
   HookInitVulkanInstanceExts();
 }
 
@@ -128,23 +92,10 @@ void InitInstanceExtensionTables(VkInstance instance)
 #define DeviceGPA(func) \
   table->func = (CONCAT(PFN_vk, func))table->GetDeviceProcAddr(device, STRINGIZE(CONCAT(vk, func)));
 
-void InitDeviceReplayTables(VkDevice device)
-{
-  VkLayerDispatchTable *table = GetDeviceDispatchTable(device);
-  RDCASSERT(table);
-
-  // MULTIDEVICE each device will need a replay table
-
-  DeviceGPA(CreateSwapchainKHR) DeviceGPA(DestroySwapchainKHR) DeviceGPA(GetSwapchainImagesKHR)
-      DeviceGPA(AcquireNextImageKHR) DeviceGPA(QueuePresentKHR)
-}
-
-void InitDeviceExtensionTables(VkDevice device)
+void InitDeviceExtensionTables(VkDevice device, InstanceDeviceInfo *info)
 {
   VkLayerDispatchTableExtended *table = GetDeviceDispatchTable(device);
   RDCASSERT(table);
-
-  InstanceDeviceInfo *info = GetRecord(device)->instDevInfo;
 
   device = Unwrap(device);
 

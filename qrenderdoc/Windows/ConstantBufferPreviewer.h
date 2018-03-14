@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -25,52 +25,66 @@
 #pragma once
 
 #include <QFrame>
-#include "Code/CaptureContext.h"
+#include "Code/Interface/QRDInterface.h"
 
 namespace Ui
 {
 class ConstantBufferPreviewer;
 }
 
+class QTextStream;
+class RDTreeWidgetItem;
 struct FormatElement;
 
-class ConstantBufferPreviewer : public QFrame, public ILogViewerForm
+class ConstantBufferPreviewer : public QFrame, public IConstantBufferPreviewer, public ICaptureViewer
 {
   Q_OBJECT
 
 public:
-  explicit ConstantBufferPreviewer(CaptureContext *ctx, const ShaderStageType stage, uint32_t slot,
+  explicit ConstantBufferPreviewer(ICaptureContext &ctx, const ShaderStage stage, uint32_t slot,
                                    uint32_t idx, QWidget *parent = 0);
   ~ConstantBufferPreviewer();
 
-  static ConstantBufferPreviewer *has(ShaderStageType stage, uint32_t slot, uint32_t idx);
+  static ConstantBufferPreviewer *has(ShaderStage stage, uint32_t slot, uint32_t idx);
 
-  void OnLogfileLoaded();
-  void OnLogfileClosed();
-  void OnEventSelected(uint32_t eventID);
+  // IConstantBufferPreviewer
+  QWidget *Widget() override { return this; }
+  // ICaptureViewer
+  void OnCaptureLoaded() override;
+  void OnCaptureClosed() override;
+  void OnSelectedEventChanged(uint32_t eventId) override {}
+  void OnEventChanged(uint32_t eventId) override;
 
 private slots:
   // automatic slots
   void on_setFormat_toggled(bool checked);
   void on_saveCSV_clicked();
+  void on_resourceDetails_clicked();
 
   // manual slots
   void processFormat(const QString &format);
 
 private:
   Ui::ConstantBufferPreviewer *ui;
-  CaptureContext *m_Ctx = NULL;
+  ICaptureContext &m_Ctx;
 
   ResourceId m_cbuffer;
   ResourceId m_shader;
-  ShaderStageType m_stage = eShaderStage_Vertex;
+  ShaderStage m_stage = ShaderStage::Vertex;
   uint32_t m_slot = 0;
   uint32_t m_arrayIdx = 0;
 
-  rdctype::array<ShaderVariable> applyFormatOverride(const rdctype::array<byte> &data);
+  void exportCSV(QTextStream &ts, const QString &prefix, RDTreeWidgetItem *item);
 
-  void addVariables(QTreeWidgetItem *root, const rdctype::array<ShaderVariable> &vars);
-  void setVariables(const rdctype::array<ShaderVariable> &vars);
+  rdcarray<ShaderVariable> applyFormatOverride(const bytebuf &data);
+
+  void addVariables(RDTreeWidgetItem *root, const rdcarray<ShaderVariable> &vars);
+  void setVariables(const rdcarray<ShaderVariable> &vars);
+
+  rdcarray<ShaderVariable> m_Vars;
+
+  bool updateVariables(RDTreeWidgetItem *root, const rdcarray<ShaderVariable> &prevVars,
+                       const rdcarray<ShaderVariable> &newVars);
 
   void updateLabels();
 

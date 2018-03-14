@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,8 +30,6 @@
 #include <uuid/uuid.h>
 #include "os/os_specific.h"
 
-typedef int Display;
-
 namespace Keyboard
 {
 void Init()
@@ -59,7 +57,7 @@ bool GetKeyState(int key)
 
 namespace FileIO
 {
-const char *GetTempRootPath()
+string GetTempRootPath()
 {
   return "/tmp";
 }
@@ -118,6 +116,10 @@ string Wide2UTF8(const std::wstring &s)
 {
   RDCFATAL("Converting wide strings to UTF-8 is not supported on Apple!");
   return "";
+}
+
+void Shutdown()
+{
 }
 };
 

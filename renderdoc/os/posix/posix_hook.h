@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -31,3 +31,21 @@ void PosixHookInit();
 // if this name is dlopen'd, the real library will be passed
 // to the callback and librenderdoc.so will be returned to user code
 void PosixHookLibrary(const char *name, dlopenCallback cb);
+
+void PosixHookFunction(const char *name, void *hook);
+
+void *PosixGetFunction(void *handle, const char *name);
+
+void PosixHookApply();
+
+// this is needed on android, when we are PLT hooking to ensure hooks are applied as soon as
+// possible.
+void PosixHookReapply();
+
+struct PosixScopedSuppressHooking
+{
+  PosixScopedSuppressHooking();
+  ~PosixScopedSuppressHooking();
+};
+
+bool PosixHookDetect(const char *identifier);

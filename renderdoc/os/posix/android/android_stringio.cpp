@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -56,9 +56,15 @@ bool GetKeyState(int key)
 
 namespace FileIO
 {
-const char *GetTempRootPath()
+string GetTempRootPath()
 {
-  return "/sdcard";
+  // Save captures in the app's private /sdcard directory, which doesnt require
+  // WRITE_EXTERNAL_STORAGE permissions. There is no security enforced here,
+  // so the replay server can load it as it has READ_EXTERNAL_STORAGE.
+  // This is the same as returned by getExternalFilesDir(). It might possibly change in the future.
+  string package;
+  GetExecutableFilename(package);
+  return "/sdcard/Android/data/" + package + "/files";
 }
 
 string GetAppFolderFilename(const string &filename)
@@ -66,7 +72,7 @@ string GetAppFolderFilename(const string &filename)
   return GetTempRootPath() + string("/") + filename;
 }
 
-// For RenderDocCmd.apk, this returns "org.renderdoc.renderdoccmd"
+// For RenderDoc's apk, this returns our package name
 // For other APKs, we use it to get the writable temp directory.
 void GetExecutableFilename(string &selfName)
 {
@@ -94,6 +100,10 @@ string Wide2UTF8(const std::wstring &s)
 {
   RDCFATAL("Converting wide strings to UTF-8 is not supported on Android!");
   return "";
+}
+
+void Shutdown()
+{
 }
 };
 

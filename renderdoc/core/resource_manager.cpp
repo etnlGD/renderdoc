@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -31,7 +31,9 @@ static volatile int64_t globalIDCounter = 1;
 
 ResourceId GetNewUniqueID()
 {
-  return ResourceId(Atomic::Inc64(&globalIDCounter), true);
+  ResourceId ret;
+  ret.id = Atomic::Inc64(&globalIDCounter);
+  return ret;
 }
 
 void SetReplayResourceIDs()
@@ -47,11 +49,54 @@ void SetReplayResourceIDs()
 }
 };
 
-void ResourceRecord::MarkResourceFrameReferenced(ResourceId id, FrameRefType refType)
+INSTANTIATE_SERIALISE_TYPE(ResourceManagerInternal::WrittenRecord);
+
+bool MarkReferenced(std::map<ResourceId, FrameRefType> &refs, ResourceId id, FrameRefType refType)
+{
+  if(refs.find(id) == refs.end())
+  {
+    if(refType == eFrameRef_Read)
+      refs[id] = eFrameRef_ReadOnly;
+    else if(refType == eFrameRef_Write)
+      refs[id] = eFrameRef_ReadAndWrite;
+    else    // unknown or existing state
+      refs[id] = refType;
+
+    return true;
+  }
+  else
+  {
+    if(refType == eFrameRef_Unknown)
+    {
+      // nothing
+    }
+    else if(refType == eFrameRef_ReadBeforeWrite)
+    {
+      // special case, explicitly set to ReadBeforeWrite for when
+      // we know that this use will likely be a partial-write
+      refs[id] = eFrameRef_ReadBeforeWrite;
+    }
+    else if(refs[id] == eFrameRef_Unknown)
+    {
+      if(refType == eFrameRef_Read || refType == eFrameRef_ReadOnly)
+        refs[id] = eFrameRef_ReadOnly;
+      else
+        refs[id] = eFrameRef_ReadAndWrite;
+    }
+    else if(refs[id] == eFrameRef_ReadOnly && refType == eFrameRef_Write)
+    {
+      refs[id] = eFrameRef_ReadBeforeWrite;
+    }
+  }
+
+  return false;
+}
+
+bool ResourceRecord::MarkResourceFrameReferenced(ResourceId id, FrameRefType refType)
 {
   if(id == ResourceId())
-    return;
-  ResourceManager<void *, void *, ResourceRecord>::MarkReferenced(m_FrameRefs, id, refType);
+    return false;
+  return MarkReferenced(m_FrameRefs, id, refType);
 }
 
 void ResourceRecord::AddResourceReferences(ResourceRecordHandler *mgr)

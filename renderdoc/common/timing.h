@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -40,6 +40,10 @@ public:
   double GetMilliseconds() const
   {
     return double(Timing::GetTick() - m_Start) / m_CounterFrequency;
+  }
+  double GetMicroseconds() const
+  {
+    return (double(Timing::GetTick() - m_Start) * 1000.0) / m_CounterFrequency;
   }
 
   void Restart() { m_Start = Timing::GetTick(); }
@@ -121,7 +125,7 @@ public:
 
   ~ScopedTimer()
   {
-    rdclog_int(RDCLog_Comment, RDCLOG_PROJECT, m_File, m_Line, "Timer %s - %.3lf ms",
+    rdclog_int(LogType::Comment, RDCLOG_PROJECT, m_File, m_Line, "Timer %s - %.3lf ms",
                m_Message.c_str(), m_Timer.GetMilliseconds());
   }
 

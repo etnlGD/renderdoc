@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,12 +24,17 @@
 
 #pragma once
 
+#include <QCheckBox>
+#include <QCoreApplication>
 #include <QDebug>
 #include <QFileDialog>
 #include <QMessageBox>
+#include <QProcess>
 #include <QSemaphore>
+#include <QSharedPointer>
 #include <QSortFilterProxyModel>
-#include "renderdoc_replay.h"
+#include <QStyledItemDelegate>
+#include "Code/Interface/QRDInterface.h"
 
 template <typename T>
 inline T AlignUp(T x, T a)
@@ -41,290 +46,39 @@ inline T AlignUp(T x, T a)
 #define ARRAY_COUNT(arr) (sizeof(arr) / sizeof(arr[0]))
 #endif
 
-// total hack, expose the same basic interface as on renderdoc side.
-// Eventually we want to move the code in the main project into header-only
-// and .inl implementations for at least the public API, so it can be compiled
-// directly without duplication
-
-struct ToStr
-{
-  static std::string Get(const ResourceId &el)
-  {
-    // super inefficient to convert to qstr then std::string then back to qstr
-    // but this is just a temporary measure
-    return QString::number(el.id).toStdString();
-  }
-
-  static std::string Get(const ReplayCreateStatus &el)
-  {
-    switch(el)
-    {
-      case eReplayCreate_Success: return "Success";
-      case eReplayCreate_UnknownError: return "Unknown error";
-      case eReplayCreate_InternalError: return "Internal error";
-      case eReplayCreate_FileNotFound: return "File not found";
-      case eReplayCreate_InjectionFailed: return "RenderDoc injection failed";
-      case eReplayCreate_IncompatibleProcess: return "Process is incompatible";
-      case eReplayCreate_NetworkIOFailed: return "Network I/O operation failed";
-      case eReplayCreate_NetworkRemoteBusy: return "Remote side of network connection is busy";
-      case eReplayCreate_NetworkVersionMismatch: return "Version mismatch between network clients";
-      case eReplayCreate_FileIOFailed: return "File I/O failed";
-      case eReplayCreate_FileIncompatibleVersion: return "File of incompatible version";
-      case eReplayCreate_FileCorrupted: return "File corrupted";
-      case eReplayCreate_APIUnsupported: return "API unsupported";
-      case eReplayCreate_APIInitFailed: return "API initialisation failed";
-      case eReplayCreate_APIIncompatibleVersion: return "API incompatible version";
-      case eReplayCreate_APIHardwareUnsupported: return "API hardware unsupported";
-      default: break;
-    }
-    return "Invalid error code";
-  }
-
-  static std::string Get(const FormatComponentType &el)
-  {
-    switch(el)
-    {
-      case eCompType_None: return "Typeless";
-      case eCompType_Float: return "Float";
-      case eCompType_UNorm: return "UNorm";
-      case eCompType_SNorm: return "SNorm";
-      case eCompType_UInt: return "UInt";
-      case eCompType_SInt: return "SInt";
-      case eCompType_UScaled: return "UScaled";
-      case eCompType_SScaled: return "SScaled";
-      case eCompType_Depth: return "Depth/Stencil";
-      case eCompType_Double: return "Double";
-      default: break;
-    }
-    return "Invalid component type";
-  }
-
-  static std::string Get(const FileType &el)
-  {
-    switch(el)
-    {
-      case eFileType_DDS: return "DDS";
-      case eFileType_PNG: return "PNG";
-      case eFileType_JPG: return "JPG";
-      case eFileType_BMP: return "BMP";
-      case eFileType_TGA: return "TGA";
-      case eFileType_HDR: return "HDR";
-      case eFileType_EXR: return "EXR";
-      default: break;
-    }
-    return "Invalid file type";
-  }
-
-  static std::string Get(const AlphaMapping &el)
-  {
-    switch(el)
-    {
-      case eAlphaMap_Discard: return "Discard";
-      case eAlphaMap_BlendToColour: return "Blend to Colour";
-      case eAlphaMap_BlendToCheckerboard: return "Blend to Checkerboard";
-      case eAlphaMap_Preserve: return "Preserve";
-      default: break;
-    }
-    return "Invalid mapping";
-  }
-
-  static std::string Get(const EnvironmentModificationType &el)
-  {
-    switch(el)
-    {
-      case eEnvMod_Set: return "Set";
-      case eEnvMod_Append: return "Append";
-      case eEnvMod_Prepend: return "Prepend";
-      default: break;
-    }
-    return "Invalid modification";
-  }
-
-  static std::string Get(const EnvironmentSeparator &el)
-  {
-    switch(el)
-    {
-      case eEnvSep_Platform: return "Platform style";
-      case eEnvSep_SemiColon: return "Semi-colon (;)";
-      case eEnvSep_Colon: return "Colon (:)";
-      case eEnvSep_None: return "No Separator";
-      default: break;
-    }
-    return "Invalid separator";
-  }
-
-  static std::string Get(const PrimitiveTopology &el)
-  {
-    switch(el)
-    {
-      case eTopology_Unknown: return "Unknown";
-      case eTopology_PointList: return "Point List";
-      case eTopology_LineList: return "Line List";
-      case eTopology_LineStrip: return "Line Strip";
-      case eTopology_LineLoop: return "Line Loop";
-      case eTopology_TriangleList: return "Triangle List";
-      case eTopology_TriangleStrip: return "Triangle Strip";
-      case eTopology_TriangleFan: return "Triangle Fan";
-      case eTopology_LineList_Adj: return "Line List with Adjacency";
-      case eTopology_LineStrip_Adj: return "Line Strip with Adjacency";
-      case eTopology_TriangleList_Adj: return "Triangle List with Adjacency";
-      case eTopology_TriangleStrip_Adj: return "Triangle Strip with Adjacency";
-      case eTopology_PatchList_1CPs:
-      case eTopology_PatchList_2CPs:
-      case eTopology_PatchList_3CPs:
-      case eTopology_PatchList_4CPs:
-      case eTopology_PatchList_5CPs:
-      case eTopology_PatchList_6CPs:
-      case eTopology_PatchList_7CPs:
-      case eTopology_PatchList_8CPs:
-      case eTopology_PatchList_9CPs:
-      case eTopology_PatchList_10CPs:
-      case eTopology_PatchList_11CPs:
-      case eTopology_PatchList_12CPs:
-      case eTopology_PatchList_13CPs:
-      case eTopology_PatchList_14CPs:
-      case eTopology_PatchList_15CPs:
-      case eTopology_PatchList_16CPs:
-      case eTopology_PatchList_17CPs:
-      case eTopology_PatchList_18CPs:
-      case eTopology_PatchList_19CPs:
-      case eTopology_PatchList_20CPs:
-      case eTopology_PatchList_21CPs:
-      case eTopology_PatchList_22CPs:
-      case eTopology_PatchList_23CPs:
-      case eTopology_PatchList_24CPs:
-      case eTopology_PatchList_25CPs:
-      case eTopology_PatchList_26CPs:
-      case eTopology_PatchList_27CPs:
-      case eTopology_PatchList_28CPs:
-      case eTopology_PatchList_29CPs:
-      case eTopology_PatchList_30CPs:
-      case eTopology_PatchList_31CPs:
-      case eTopology_PatchList_32CPs: return "Patch List";
-      default: break;
-    }
-    return "Unknown topology";
-  }
-
-  static std::string Get(const TriangleFillMode &el)
-  {
-    switch(el)
-    {
-      case eFill_Solid: return "Solid";
-      case eFill_Wireframe: return "Wireframe";
-      case eFill_Point: return "Point";
-      default: break;
-    }
-    return "Unknown";
-  }
-
-  static std::string Get(const TriangleCullMode &el)
-  {
-    switch(el)
-    {
-      case eCull_None: return "None";
-      case eCull_Front: return "Front";
-      case eCull_Back: return "Back";
-      case eCull_FrontAndBack: return "Front & Back";
-      default: break;
-    }
-    return "Unknown";
-  }
-
-  static std::string Get(const ShaderResourceType &el)
-  {
-    switch(el)
-    {
-      case eResType_None: return "None";
-      case eResType_Buffer: return "Buffer";
-      case eResType_Texture1D: return "Texture 1D";
-      case eResType_Texture1DArray: return "Texture 1D Array";
-      case eResType_Texture2D: return "Texture 2D";
-      case eResType_TextureRect: return "Texture Rect";
-      case eResType_Texture2DArray: return "Texture 2D Array";
-      case eResType_Texture2DMS: return "Texture 2D MS Array";
-      case eResType_Texture2DMSArray: return "Texture 2D MS Array";
-      case eResType_Texture3D: return "Texture 3D";
-      case eResType_TextureCube: return "Texture Cube";
-      case eResType_TextureCubeArray: return "Texture Cube Array";
-      default: break;
-    }
-    return "Unknown";
-  }
-
-  static std::string Get(const ShaderBindType &el)
-  {
-    switch(el)
-    {
-      case eBindType_ConstantBuffer: return "Constants";
-      case eBindType_Sampler: return "Sampler";
-      case eBindType_ImageSampler: return "Image&Sampler";
-      case eBindType_ReadOnlyImage: return "Image";
-      case eBindType_ReadWriteImage: return "RW Image";
-      case eBindType_ReadOnlyTBuffer: return "TexBuffer";
-      case eBindType_ReadWriteTBuffer: return "RW TexBuffer";
-      case eBindType_ReadOnlyBuffer: return "Buffer";
-      case eBindType_ReadWriteBuffer: return "RW Buffer";
-      case eBindType_InputAttachment: return "Input";
-      default: break;
-    }
-    return "Unknown";
-  }
-
-  static std::string Get(const TextureSwizzle &el)
-  {
-    switch(el)
-    {
-      case eSwizzle_Red: return "R";
-      case eSwizzle_Green: return "G";
-      case eSwizzle_Blue: return "B";
-      case eSwizzle_Alpha: return "A";
-      case eSwizzle_Zero: return "0";
-      case eSwizzle_One: return "1";
-    }
-    return "Unknown";
-  }
-
-  static std::string Get(const VarType &el)
-  {
-    switch(el)
-    {
-      case eVar_Float: return "float";
-      case eVar_Int: return "int";
-      case eVar_UInt: return "uint";
-      case eVar_Double: return "double";
-    }
-    return "Unknown";
-  }
-};
-
 // this will be here to lighten the burden of converting from std::string to
 // QString everywhere.
 
 template <typename T>
 inline QString ToQStr(const T &el)
 {
-  return QString::fromStdString(ToStr::Get(el));
-}
-
-// overload for rdctype::str
-template <>
-inline QString ToQStr(const rdctype::str &el)
-{
-  return QString::fromUtf8(el.elems, el.count);
+  return QString::fromStdString(ToStr(el));
 }
 
 // overload for a couple of things that need to know the pipeline type when converting
 QString ToQStr(const ResourceUsage usage, const GraphicsAPI apitype);
 
 // overload for a couple of things that need to know the pipeline type when converting
-QString ToQStr(const ShaderStageType stage, const GraphicsAPI apitype);
+QString ToQStr(const ShaderStage stage, const GraphicsAPI apitype);
+
+inline QMetaType::Type GetVariantMetatype(const QVariant &v)
+{
+  // this is explicitly called out by the documentation as the recommended process:
+  // "Although this function is declared as returning QVariant::Type, the return value should be
+  // interpreted as QMetaType::Type."
+  // Suppress static analysis complaints about the enums mismatching:
+  // coverity[mixed_enums]
+  return (QMetaType::Type)v.type();
+}
 
 struct FormatElement
 {
+  Q_DECLARE_TR_FUNCTIONS(FormatElement);
+
+public:
   FormatElement();
-  FormatElement(const QString &Name, int buf, uint offs, bool pi, int ir, bool rowMat, uint matDim,
-                ResourceFormat f, bool h);
+  FormatElement(const QString &Name, int buf, uint offs, bool perInst, int instRate, bool rowMat,
+                uint matDim, ResourceFormat f, bool hexDisplay, bool rgbDisplay);
 
   static QList<FormatElement> ParseFormatString(const QString &formatString, uint64_t maxLen,
                                                 bool tightPacking, QString &errors);
@@ -332,49 +86,129 @@ struct FormatElement
   QVariantList GetVariants(const byte *&data, const byte *end) const;
   ShaderVariable GetShaderVar(const byte *&data, const byte *end) const;
 
-  QString ElementString(const QVariant &var);
-
-  uint32_t byteSize();
+  uint32_t byteSize() const;
 
   QString name;
+  ResourceFormat format;
+  ShaderBuiltin systemValue;
   int buffer;
   uint32_t offset;
-  bool perinstance;
   int instancerate;
-  bool rowmajor;
   uint32_t matrixdim;
-  ResourceFormat format;
-  bool hex;
-  SystemAttribute systemValue;
+  bool perinstance;
+  bool rowmajor;
+  bool hex, rgb;
 };
 
 QString TypeString(const ShaderVariable &v);
-QString RowString(const ShaderVariable &v, uint32_t row);
+QString RowString(const ShaderVariable &v, uint32_t row, VarType type = VarType::Unknown);
 QString VarString(const ShaderVariable &v);
 QString RowTypeString(const ShaderVariable &v);
 
+QString TypeString(const SigParameter &sig);
+QString D3DSemanticString(const SigParameter &sig);
+QString GetComponentString(byte mask);
+
+void CombineUsageEvents(
+    ICaptureContext &ctx, const rdcarray<EventUsage> &usage,
+    std::function<void(uint32_t startEID, uint32_t endEID, ResourceUsage use)> callback);
+
+class RDTreeWidgetItem;
+
+void addStructuredObjects(RDTreeWidgetItem *parent, const StructuredObjectList &objs,
+                          bool parentIsArray);
+
+// this is an opaque struct that contains the data to render, hit-test, etc for some text that
+// contains links to resources. It will update and cache the names of the resources.
+struct RichResourceText;
+
+// we use QSharedPointer to refer to the text since the lifetime management of these objects would
+// get quite complicated. There's not necessarily an obvious QObject parent to assign to if the text
+// is being initialised before being assigned to a widget and we want the most seamless interface we
+// can get.
+typedef QSharedPointer<RichResourceText> RichResourceTextPtr;
+
+// this will check the variant, and if it contains a ResourceId directly or text with ResourceId
+// identifiers then it will be converted into a RichResourceTextPtr in-place. The new QVariant will
+// still convert to QString so it doesn't have to be special-cased. However it must be processed
+// through one of the functions below (generally painting) to cache the rendered text.
+// If the variant doesn't match the above conditions, it's unchanged. So it's safe to apply this
+// reasonably liberally.
+// NOTE: It is not possible to move a RichResourceText instance from one ICaptureContext to another
+// as the pointer is cached internally. Instead you should delete the old and re-initialise from
+// scratch.
+void RichResourceTextInitialise(QVariant &var);
+
+// checks if a variant is rich resource text
+bool RichResourceTextCheck(const QVariant &var);
+
+// paint the given variant containing rich text with the given parameters.
+void RichResourceTextPaint(const QWidget *owner, QPainter *painter, QRect rect, QFont font,
+                           QPalette palette, bool mouseOver, QPoint mousePos, const QVariant &var);
+
+// gives the width for a size hint for the rich text (since it might be larger than the original
+// text)
+int RichResourceTextWidthHint(const QWidget *owner, const QVariant &var);
+
+// handle a mouse event on some rich resource text.
+// returns true if the event is processed - for mouse move events, this means that the mouse is over
+// a resource link (which can be used to change the cursor to a pointing hand, for example).
+bool RichResourceTextMouseEvent(const QWidget *owner, const QVariant &var, QRect rect,
+                                QMouseEvent *event);
+
+// register runtime conversions for custom Qt metatypes
+void RegisterMetatypeConversions();
+
 struct Formatter
 {
-  static void setParams(int minFigures, int maxFigures, int expNegCutoff, int expPosCutoff);
+  static void setParams(const PersistantConfig &config);
+  static void setPalette(QPalette palette);
+  static void shutdown();
 
   static QString Format(double f, bool hex = false);
+  static QString Format(uint64_t u, bool hex = false)
+  {
+    return QFormatStr("%1").arg(u, hex ? 16 : 0, hex ? 16 : 10, QLatin1Char('0')).toUpper();
+  }
   static QString Format(uint32_t u, bool hex = false)
   {
-    return QString("%1").arg(u, hex ? 8 : 0, hex ? 16 : 10, QChar('0'));
+    return QFormatStr("%1").arg(u, hex ? 8 : 0, hex ? 16 : 10, QLatin1Char('0')).toUpper();
   }
   static QString Format(uint16_t u, bool hex = false)
   {
-    return QString("%1").arg(u, hex ? 8 : 0, hex ? 16 : 10, QChar('0'));
+    return QFormatStr("%1").arg(u, hex ? 4 : 0, hex ? 16 : 10, QLatin1Char('0')).toUpper();
+  }
+  static QString Format(uint8_t u, bool hex = false)
+  {
+    return QFormatStr("%1").arg(u, hex ? 2 : 0, hex ? 16 : 10, QLatin1Char('0')).toUpper();
+  }
+  static QString HexFormat(uint32_t u, uint32_t byteSize)
+  {
+    if(byteSize == 1)
+      return Format(uint8_t(u & 0xff), true);
+    else if(byteSize == 2)
+      return Format(uint16_t(u & 0xffff), true);
+    else
+      return Format(u, true);
   }
   static QString Format(int32_t i, bool hex = false) { return QString::number(i); }
+  static QString Format(int64_t i, bool hex = false) { return QString::number(i); }
+  static const QFont &PreferredFont() { return *m_Font; }
+  static const QColor DarkCheckerColor() { return m_DarkChecker; }
+  static const QColor LightCheckerColor() { return m_LightChecker; }
 private:
   static int m_minFigures, m_maxFigures, m_expNegCutoff, m_expPosCutoff;
   static double m_expNegValue, m_expPosValue;
+  static QFont *m_Font;
+  static QColor m_DarkChecker, m_LightChecker;
 };
 
 bool SaveToJSON(QVariantMap &data, QIODevice &f, const char *magicIdentifier, uint32_t magicVersion);
 bool LoadFromJSON(QVariantMap &data, QIODevice &f, const char *magicIdentifier,
                   uint32_t magicVersion);
+
+QString VariantToJSON(const QVariantMap &data);
+QVariantMap JSONToVariant(const QString &json);
 
 // implementation of QOverload, to avoid depending on 5.7.
 // From: http://stackoverflow.com/a/16795664/4070143
@@ -407,6 +241,10 @@ public:
   static void init();
   static void call(const std::function<void()> &f);
   static void blockcall(const std::function<void()> &f);
+  static bool onUIThread();
+
+  // same as call() above, but it doesn't check for an instant call on the UI thread
+  static void defer(const std::function<void()> &f);
 
 protected slots:
   void doInvoke()
@@ -434,7 +272,6 @@ public slots:
   {
     m_func();
     m_Thread->quit();
-    m_Thread->deleteLater();
     m_Thread = NULL;
     if(m_SelfDelete)
       deleteLater();
@@ -450,6 +287,7 @@ public:
     m_func = f;
     moveToThread(m_Thread);
     QObject::connect(m_Thread, &QThread::started, this, &LambdaThread::process);
+    QObject::connect(m_Thread, &QThread::finished, m_Thread, &QThread::deleteLater);
   }
 
   void start(QThread::Priority prio = QThread::InheritPriority) { m_Thread->start(prio); }
@@ -460,6 +298,15 @@ public:
       return m_Thread->wait(time);
     return true;
   }
+
+  bool isCurrentThread() { return QThread::currentThread() == m_Thread; }
+};
+
+class RDProcess : public QProcess
+{
+public:
+  RDProcess(QObject *parent = NULL) : QProcess(parent) {}
+  void detach() { setProcessState(QProcess::NotRunning); }
 };
 
 class QFileFilterModel : public QSortFilterProxyModel
@@ -477,6 +324,113 @@ private:
   QDir::Filters m_requireMask, m_excludeMask;
 };
 
+// Simple QStyledItemDelegate child that will either forward to an external delegate (allowing
+// chaining) or to the base implementation. Delegates can derive from this and specialise a couple
+// of functions to still be able to chain
+class ForwardingDelegate : public QStyledItemDelegate
+{
+  Q_OBJECT
+public:
+  explicit ForwardingDelegate(QObject *parent = NULL) : QStyledItemDelegate(parent) {}
+  ~ForwardingDelegate() {}
+  void setForwardDelegate(QAbstractItemDelegate *real) { m_delegate = real; }
+  void paint(QPainter *painter, const QStyleOptionViewItem &option,
+             const QModelIndex &index) const override
+  {
+    if(m_delegate)
+      return m_delegate->paint(painter, option, index);
+
+    return QStyledItemDelegate::paint(painter, option, index);
+  }
+
+  QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override
+  {
+    if(m_delegate)
+      return m_delegate->sizeHint(option, index);
+
+    return QStyledItemDelegate::sizeHint(option, index);
+  }
+
+  QWidget *createEditor(QWidget *parent, const QStyleOptionViewItem &option,
+                        const QModelIndex &index) const override
+  {
+    if(m_delegate)
+      return m_delegate->createEditor(parent, option, index);
+
+    return QStyledItemDelegate::createEditor(parent, option, index);
+  }
+
+  void destroyEditor(QWidget *editor, const QModelIndex &index) const override
+  {
+    if(m_delegate)
+      return m_delegate->destroyEditor(editor, index);
+
+    return QStyledItemDelegate::destroyEditor(editor, index);
+  }
+
+  void setEditorData(QWidget *editor, const QModelIndex &index) const override
+  {
+    if(m_delegate)
+      return m_delegate->setEditorData(editor, index);
+
+    return QStyledItemDelegate::setEditorData(editor, index);
+  }
+
+  void setModelData(QWidget *editor, QAbstractItemModel *model, const QModelIndex &index) const override
+  {
+    if(m_delegate)
+      return m_delegate->setModelData(editor, model, index);
+
+    return QStyledItemDelegate::setModelData(editor, model, index);
+  }
+
+  void updateEditorGeometry(QWidget *editor, const QStyleOptionViewItem &option,
+                            const QModelIndex &index) const override
+  {
+    if(m_delegate)
+      return m_delegate->updateEditorGeometry(editor, option, index);
+
+    return QStyledItemDelegate::updateEditorGeometry(editor, option, index);
+  }
+
+  bool eventFilter(QObject *watched, QEvent *event) override
+  {
+    if(m_delegate)
+      return m_delegate->eventFilter(watched, event);
+
+    return QStyledItemDelegate::eventFilter(watched, event);
+  }
+
+  bool editorEvent(QEvent *event, QAbstractItemModel *model, const QStyleOptionViewItem &option,
+                   const QModelIndex &index) override
+  {
+    if(m_delegate)
+      return m_delegate->editorEvent(event, model, option, index);
+
+    return QStyledItemDelegate::editorEvent(event, model, option, index);
+  }
+
+  bool helpEvent(QHelpEvent *event, QAbstractItemView *view, const QStyleOptionViewItem &option,
+                 const QModelIndex &index) override
+  {
+    if(m_delegate)
+      return m_delegate->helpEvent(event, view, option, index);
+
+    return QStyledItemDelegate::helpEvent(event, view, option, index);
+  }
+
+  QVector<int> paintingRoles() const override
+  {
+    if(m_delegate)
+      return m_delegate->paintingRoles();
+
+    return QStyledItemDelegate::paintingRoles();
+  }
+
+private:
+  QAbstractItemDelegate *m_delegate = NULL;
+};
+
 class QMenu;
 
 // helper for doing a manual blocking invoke of a dialog
@@ -489,6 +443,10 @@ struct RDDialog
   static QMessageBox::StandardButton messageBox(
       QMessageBox::Icon, QWidget *parent, const QString &title, const QString &text,
       QMessageBox::StandardButtons buttons = QMessageBox::Ok,
+      QMessageBox::StandardButton defaultButton = QMessageBox::NoButton);
+  static QMessageBox::StandardButton messageBoxChecked(
+      QMessageBox::Icon, QWidget *parent, const QString &title, const QString &text,
+      QCheckBox *checkBox, bool &checked, QMessageBox::StandardButtons buttons = QMessageBox::Ok,
       QMessageBox::StandardButton defaultButton = QMessageBox::NoButton);
 
   static QMessageBox::StandardButton information(
@@ -506,6 +464,16 @@ struct RDDialog
       QMessageBox::StandardButton defaultButton = QMessageBox::NoButton)
   {
     return messageBox(QMessageBox::Question, parent, title, text, buttons, defaultButton);
+  }
+
+  static QMessageBox::StandardButton questionChecked(
+      QWidget *parent, const QString &title, const QString &text, QCheckBox *checkBox, bool &checked,
+      QMessageBox::StandardButtons buttons = QMessageBox::StandardButtons(QMessageBox::Yes |
+                                                                          QMessageBox::No),
+      QMessageBox::StandardButton defaultButton = QMessageBox::NoButton)
+  {
+    return messageBoxChecked(QMessageBox::Question, parent, title, text, checkBox, checked, buttons,
+                             defaultButton);
   }
 
   static QMessageBox::StandardButton warning(
@@ -543,29 +511,35 @@ struct RDDialog
                                  QFileDialog::Options options = QFileDialog::Options());
 };
 
-// useful delegate for enforcing a given size
-#include <QItemDelegate>
-
-class SizeDelegate : public QItemDelegate
-{
-private:
-  Q_OBJECT
-
-  QSize m_Size;
-
-public:
-  SizeDelegate(QSize size) : m_Size(size) {}
-  QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const
-  {
-    return m_Size;
-  }
-};
-
 class QGridLayout;
 
-void addGridLines(QGridLayout *grid);
+void addGridLines(QGridLayout *grid, QColor gridColor);
 
-class QTreeWidgetItem;
+class QProgressDialog;
+class QProgressBar;
+class QElapsedTimer;
 
-QTreeWidgetItem *makeTreeNode(const std::initializer_list<QVariant> &values);
-QTreeWidgetItem *makeTreeNode(const QVariantList &values);
+typedef std::function<float()> ProgressUpdateMethod;
+typedef std::function<bool()> ProgressFinishedMethod;
+
+QStringList ParseArgsList(const QString &args);
+bool IsRunningAsAdmin();
+bool RunProcessAsAdmin(const QString &fullExecutablePath, const QStringList &params,
+                       std::function<void()> finishedCallback = std::function<void()>());
+
+void RevealFilenameInExternalFileBrowser(const QString &filePath);
+
+void ShowProgressDialog(QWidget *window, const QString &labelText, ProgressFinishedMethod finished,
+                        ProgressUpdateMethod update = ProgressUpdateMethod());
+
+void UpdateTransferProgress(qint64 xfer, qint64 total, QElapsedTimer *timer,
+                            QProgressBar *progressBar, QLabel *progressLabel, QString progressText);
+
+void setEnabledMultiple(const QList<QWidget *> &widgets, bool enabled);
+
+QString GetSystemUsername();
+
+bool IsDarkTheme();
+
+float getLuminance(const QColor &col);
+QColor contrastingColor(const QColor &col, const QColor &defaultCol);

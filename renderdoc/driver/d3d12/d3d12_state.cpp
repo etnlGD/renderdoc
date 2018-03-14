@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -34,7 +34,7 @@ D3D12RenderState::D3D12RenderState()
 
   rts.clear();
   rtSingle = false;
-  dsv = PortableHandle();
+  dsv = D3D12_CPU_DESCRIPTOR_HANDLE();
 
   m_ResourceManager = NULL;
 
@@ -89,11 +89,11 @@ vector<ResourceId> D3D12RenderState::GetRTVIDs() const
   {
     if(!rts.empty())
     {
-      const D3D12Descriptor *descs = DescriptorFromPortableHandle(GetResourceManager(), rts[0]);
+      const D3D12Descriptor *descs = GetWrapped(rts[0]);
 
       for(UINT i = 0; i < rts.size(); i++)
       {
-        RDCASSERT(descs[i].GetType() == D3D12Descriptor::TypeRTV);
+        RDCASSERT(descs[i].GetType() == D3D12DescriptorType::RTV);
         ret.push_back(GetResID(descs[i].nonsamp.resource));
       }
     }
@@ -102,13 +102,10 @@ vector<ResourceId> D3D12RenderState::GetRTVIDs() const
   {
     for(UINT i = 0; i < rts.size(); i++)
     {
-      WrappedID3D12DescriptorHeap *heap =
-          GetResourceManager()->GetLiveAs<WrappedID3D12DescriptorHeap>(rts[0].heap);
+      const D3D12Descriptor *desc = GetWrapped(rts[i]);
 
-      const D3D12Descriptor &desc = heap->GetDescriptors()[rts[i].index];
-
-      RDCASSERT(desc.GetType() == D3D12Descriptor::TypeRTV);
-      ret.push_back(GetResID(desc.nonsamp.resource));
+      RDCASSERT(desc->GetType() == D3D12DescriptorType::RTV);
+      ret.push_back(GetResID(desc->nonsamp.resource));
     }
   }
 
@@ -117,11 +114,11 @@ vector<ResourceId> D3D12RenderState::GetRTVIDs() const
 
 ResourceId D3D12RenderState::GetDSVID() const
 {
-  if(dsv.heap != ResourceId())
+  if(dsv.ptr)
   {
-    const D3D12Descriptor *desc = DescriptorFromPortableHandle(GetResourceManager(), dsv);
+    const D3D12Descriptor *desc = GetWrapped(dsv);
 
-    RDCASSERT(desc->GetType() == D3D12Descriptor::TypeDSV);
+    RDCASSERT(desc->GetType() == D3D12DescriptorType::DSV);
 
     return GetResID(desc->nonsamp.resource);
   }
@@ -131,51 +128,76 @@ ResourceId D3D12RenderState::GetDSVID() const
 
 void D3D12RenderState::ApplyState(ID3D12GraphicsCommandList *cmd) const
 {
-  if(pipe != ResourceId())
-    cmd->SetPipelineState(GetResourceManager()->GetCurrentAs<ID3D12PipelineState>(pipe));
+  D3D12_COMMAND_LIST_TYPE type = cmd->GetType();
 
-  if(!views.empty())
-    cmd->RSSetViewports((UINT)views.size(), &views[0]);
-
-  if(!scissors.empty())
-    cmd->RSSetScissorRects((UINT)scissors.size(), &scissors[0]);
-
-  if(topo != D3D_PRIMITIVE_TOPOLOGY_UNDEFINED)
-    cmd->IASetPrimitiveTopology(topo);
-
-  cmd->OMSetStencilRef(stencilRef);
-  cmd->OMSetBlendFactor(blendFactor);
-
-  if(ibuffer.buf != ResourceId())
+  if(type == D3D12_COMMAND_LIST_TYPE_DIRECT || type == D3D12_COMMAND_LIST_TYPE_BUNDLE)
   {
-    D3D12_INDEX_BUFFER_VIEW ib;
+    if(pipe != ResourceId())
+      cmd->SetPipelineState(GetResourceManager()->GetCurrentAs<ID3D12PipelineState>(pipe));
 
-    ID3D12Resource *res = GetResourceManager()->GetCurrentAs<ID3D12Resource>(ibuffer.buf);
-    if(res)
-      ib.BufferLocation = res->GetGPUVirtualAddress() + ibuffer.offs;
-    else
-      ib.BufferLocation = 0;
+    if(!views.empty())
+      cmd->RSSetViewports((UINT)views.size(), &views[0]);
 
-    ib.Format = (ibuffer.bytewidth == 2 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT);
-    ib.SizeInBytes = ibuffer.size;
+    if(!scissors.empty())
+      cmd->RSSetScissorRects((UINT)scissors.size(), &scissors[0]);
 
-    cmd->IASetIndexBuffer(&ib);
-  }
+    if(topo != D3D_PRIMITIVE_TOPOLOGY_UNDEFINED)
+      cmd->IASetPrimitiveTopology(topo);
 
-  for(size_t i = 0; i < vbuffers.size(); i++)
-  {
-    D3D12_VERTEX_BUFFER_VIEW vb;
+    cmd->OMSetStencilRef(stencilRef);
+    cmd->OMSetBlendFactor(blendFactor);
 
-    ID3D12Resource *res = GetResourceManager()->GetCurrentAs<ID3D12Resource>(vbuffers[i].buf);
-    if(res)
-      vb.BufferLocation = res->GetGPUVirtualAddress() + vbuffers[i].offs;
-    else
+    if(ibuffer.buf != ResourceId())
+    {
+      D3D12_INDEX_BUFFER_VIEW ib;
+
+      ID3D12Resource *res = GetResourceManager()->GetCurrentAs<ID3D12Resource>(ibuffer.buf);
+      if(res)
+        ib.BufferLocation = res->GetGPUVirtualAddress() + ibuffer.offs;
+      else
+        ib.BufferLocation = 0;
+
+      ib.Format = (ibuffer.bytewidth == 2 ? DXGI_FORMAT_R16_UINT : DXGI_FORMAT_R32_UINT);
+      ib.SizeInBytes = ibuffer.size;
+
+      cmd->IASetIndexBuffer(&ib);
+    }
+
+    for(size_t i = 0; i < vbuffers.size(); i++)
+    {
+      D3D12_VERTEX_BUFFER_VIEW vb;
       vb.BufferLocation = 0;
 
-    vb.StrideInBytes = vbuffers[i].stride;
-    vb.SizeInBytes = vbuffers[i].size;
+      if(vbuffers[i].buf != ResourceId())
+      {
+        ID3D12Resource *res = GetResourceManager()->GetCurrentAs<ID3D12Resource>(vbuffers[i].buf);
+        if(res)
+          vb.BufferLocation = res->GetGPUVirtualAddress() + vbuffers[i].offs;
+        else
+          vb.BufferLocation = 0;
 
-    cmd->IASetVertexBuffers((UINT)i, 1, &vb);
+        vb.StrideInBytes = vbuffers[i].stride;
+        vb.SizeInBytes = vbuffers[i].size;
+
+        cmd->IASetVertexBuffers((UINT)i, 1, &vb);
+      }
+    }
+
+    if(!rts.empty() || dsv.ptr)
+    {
+      D3D12_CPU_DESCRIPTOR_HANDLE rtHandles[8];
+      D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = Unwrap(dsv);
+
+      UINT rtCount = (UINT)rts.size();
+      UINT numActualHandles = rtSingle ? RDCMIN(1U, rtCount) : rtCount;
+
+      for(UINT i = 0; i < numActualHandles; i++)
+        rtHandles[i] = Unwrap(rts[i]);
+
+      // need to unwrap here, as FromPortableHandle unwraps too.
+      Unwrap(cmd)->OMSetRenderTargets((UINT)rts.size(), rtHandles, rtSingle ? TRUE : FALSE,
+                                      dsv.ptr ? &dsvHandle : NULL);
+    }
   }
 
   std::vector<ID3D12DescriptorHeap *> descHeaps;
@@ -186,21 +208,6 @@ void D3D12RenderState::ApplyState(ID3D12GraphicsCommandList *cmd) const
 
   if(!descHeaps.empty())
     cmd->SetDescriptorHeaps((UINT)descHeaps.size(), &descHeaps[0]);
-
-  if(!rts.empty() || dsv.heap != ResourceId())
-  {
-    D3D12_CPU_DESCRIPTOR_HANDLE rtHandles[8];
-    D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = CPUHandleFromPortableHandle(GetResourceManager(), dsv);
-
-    UINT numActualHandles = rtSingle ? 1 : (UINT)rts.size();
-
-    for(UINT i = 0; i < numActualHandles; i++)
-      rtHandles[i] = CPUHandleFromPortableHandle(GetResourceManager(), rts[i]);
-
-    // need to unwrap here, as FromPortableHandle unwraps too.
-    Unwrap(cmd)->OMSetRenderTargets((UINT)rts.size(), rtHandles, rtSingle ? TRUE : FALSE,
-                                    dsv.heap != ResourceId() ? &dsvHandle : NULL);
-  }
 
   if(graphics.rootsig != ResourceId())
   {

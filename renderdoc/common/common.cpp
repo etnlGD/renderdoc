@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -29,7 +29,7 @@
 #include <string>
 #include "common/threading.h"
 #include "os/os_specific.h"
-#include "serialise/string_utils.h"
+#include "strings/string_utils.h"
 
 using std::string;
 
@@ -81,7 +81,7 @@ float SRGB8_lookuptable[256] = {
 
 void rdcassert(const char *msg, const char *file, unsigned int line, const char *func)
 {
-  rdclog_int(RDCLog_Error, RDCLOG_PROJECT, file, line, "Assertion failed: %s", msg);
+  rdclog_int(LogType::Error, RDCLOG_PROJECT, file, line, "Assertion failed: %s", msg);
 }
 
 #if 0
@@ -238,6 +238,47 @@ uint32_t CalcNumMips(int w, int h, int d)
   return mipLevels;
 }
 
+byte *AllocAlignedBuffer(uint64_t size, uint64_t alignment)
+{
+  byte *rawAlloc = NULL;
+
+#if defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+  try
+#endif
+  {
+    rawAlloc = new byte[(size_t)size + sizeof(byte *) + (size_t)alignment];
+  }
+#if defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+  catch(std::bad_alloc &)
+  {
+    rawAlloc = NULL;
+  }
+#endif
+
+  if(rawAlloc == NULL)
+    RDCFATAL("Allocation for %llu bytes failed", size);
+
+  RDCASSERT(rawAlloc);
+
+  byte *alignedAlloc = (byte *)AlignUp(uint64_t(rawAlloc + sizeof(byte *)), alignment);
+
+  byte **realPointer = (byte **)alignedAlloc;
+  realPointer[-1] = rawAlloc;
+
+  return alignedAlloc;
+}
+
+void FreeAlignedBuffer(byte *buf)
+{
+  if(buf == NULL)
+    return;
+
+  byte **realPointer = (byte **)buf;
+  byte *rawAlloc = realPointer[-1];
+
+  delete[] rawAlloc;
+}
+
 uint32_t Log2Floor(uint32_t value)
 {
   RDCASSERT(value > 0);
@@ -253,7 +294,7 @@ uint64_t Log2Floor(uint64_t value)
 #endif
 
 static string logfile;
-static void *logfileHandle = NULL;
+static bool logfileOpened = false;
 
 const char *rdclog_getfilename()
 {
@@ -268,20 +309,21 @@ void rdclog_filename(const char *filename)
   if(filename && filename[0])
     logfile = filename;
 
-  FileIO::logfile_close(logfileHandle);
+  FileIO::logfile_close(NULL);
+
+  logfileOpened = false;
 
   if(!logfile.empty())
   {
-    logfileHandle = FileIO::logfile_open(filename);
+    logfileOpened = FileIO::logfile_open(logfile.c_str());
 
-    if(logfileHandle && previous.c_str())
+    if(logfileOpened && previous.c_str())
     {
       vector<unsigned char> previousContents;
       FileIO::slurp(previous.c_str(), previousContents);
 
       if(!previousContents.empty())
-        FileIO::logfile_append(logfileHandle, (const char *)&previousContents[0],
-                               previousContents.size());
+        FileIO::logfile_append((const char *)&previousContents[0], previousContents.size());
 
       FileIO::Delete(previous.c_str());
     }
@@ -295,11 +337,10 @@ void rdclog_enableoutput()
   log_output_enabled = true;
 }
 
-void rdclog_closelog()
+void rdclog_closelog(const char *filename)
 {
   log_output_enabled = false;
-  if(logfileHandle)
-    FileIO::logfile_close(logfileHandle);
+  FileIO::logfile_close(filename);
 }
 
 void rdclog_flush()
@@ -317,37 +358,44 @@ void rdclogprint_int(LogType type, const char *fullMsg, const char *msg)
 #endif
 #if ENABLED(OUTPUT_LOG_TO_STDOUT)
   // don't output debug messages to stdout/stderr
-  if(type != RDCLog_Debug && log_output_enabled)
+  if(type != LogType::Debug && log_output_enabled)
     OSUtility::WriteOutput(OSUtility::Output_StdOut, msg);
 #endif
 #if ENABLED(OUTPUT_LOG_TO_STDERR)
   // don't output debug messages to stdout/stderr
-  if(type != RDCLog_Debug && log_output_enabled)
+  if(type != LogType::Debug && log_output_enabled)
     OSUtility::WriteOutput(OSUtility::Output_StdErr, msg);
 #endif
 #if ENABLED(OUTPUT_LOG_TO_DISK)
-  if(logfileHandle)
+  if(logfileOpened)
   {
     // strlen used as byte length - str is UTF-8 so this is NOT number of characters
-    FileIO::logfile_append(logfileHandle, fullMsg, strlen(fullMsg));
+    FileIO::logfile_append(fullMsg, strlen(fullMsg));
   }
 #endif
 }
 
-const size_t rdclog_outBufSize = 4 * 1024;
-static char rdclog_outputBuffer[rdclog_outBufSize + 1];
+const int rdclog_outBufSize = 4 * 1024;
+static char rdclog_outputBuffer[rdclog_outBufSize + 3];
+
+static void write_newline(char *output)
+{
+#if ENABLED(RDOC_WIN32)
+  *(output++) = '\r';
+#endif
+  *(output++) = '\n';
+  *output = 0;
+}
 
 void rdclog_int(LogType type, const char *project, const char *file, unsigned int line,
                 const char *fmt, ...)
 {
-  if(type <= RDCLog_First || type >= RDCLog_NumTypes)
-  {
-    RDCFATAL("Unexpected log type");
-    return;
-  }
-
   va_list args;
   va_start(args, fmt);
+
+  // this copy is just for in case we need to print again if the buffer is oversized
+  va_list args2;
+  va_copy(args2, args);
 
   char timestamp[64] = {0};
 #if ENABLED(INCLUDE_TIMESTAMP_IN_LOG)
@@ -361,7 +409,7 @@ void rdclog_int(LogType type, const char *project, const char *file, unsigned in
   StringFormat::snprintf(location, 63, "% 20s(%4d) - ", loc.c_str(), line);
 #endif
 
-  const char *typestr[RDCLog_NumTypes] = {
+  const char *typestr[(uint32_t)LogType::Count] = {
       "Debug  ", "Log    ", "Warning", "Error  ", "Fatal  ",
   };
 
@@ -374,13 +422,16 @@ void rdclog_int(LogType type, const char *project, const char *file, unsigned in
   char *output = rdclog_outputBuffer;
   size_t available = rdclog_outBufSize;
 
-  int numWritten =
-      StringFormat::snprintf(output, available, "% 4s %06u: %s%s%s - ", project,
-                             Process::GetCurrentPID(), timestamp, location, typestr[type]);
+  char *base = output;
+
+  int numWritten = StringFormat::snprintf(output, available, "% 4s %06u: %s%s%s - ", project,
+                                          Process::GetCurrentPID(), timestamp, location,
+                                          typestr[(uint32_t)type]);
 
   if(numWritten < 0)
   {
     va_end(args);
+    va_end(args2);
     return;
   }
 
@@ -388,23 +439,88 @@ void rdclog_int(LogType type, const char *project, const char *file, unsigned in
   available -= numWritten;
 
   // -3 is for the " - " after the type.
-  const char *noPrefixOutput = (output - 3 - (sizeof(typestr[type]) - 1));
+  const char *noPrefixOutput = (output - 3 - (sizeof(typestr[(uint32_t)type]) - 1));
+
+  int totalWritten = numWritten;
 
   numWritten = StringFormat::vsnprintf(output, available, fmt, args);
+
+  totalWritten += numWritten;
 
   va_end(args);
 
   if(numWritten < 0)
+  {
+    va_end(args2);
     return;
+  }
 
   output += numWritten;
-  available -= numWritten;
 
-  if(available < 2)
-    return;
+  // we overran the static buffer. This is a 4k buffer so we won't be hitting this case often - just
+  // do the simple thing of allocating a temporary, print again, and re-assigning.
+  char *oversizedBuffer = NULL;
+  if(totalWritten > rdclog_outBufSize)
+  {
+    available = totalWritten + 3;
+    oversizedBuffer = output = new char[available + 3];
+    base = output;
 
-  *output = '\n';
-  *(output + 1) = 0;
+    numWritten = StringFormat::snprintf(output, available, "% 4s %06u: %s%s%s - ", project,
+                                        Process::GetCurrentPID(), timestamp, location,
+                                        typestr[(uint32_t)type]);
 
-  rdclogprint_int(type, rdclog_outputBuffer, noPrefixOutput);
+    output += numWritten;
+    available -= numWritten;
+
+    noPrefixOutput = (output - 3 - (sizeof(typestr[(uint32_t)type]) - 1));
+
+    numWritten = StringFormat::vsnprintf(output, available, fmt, args2);
+
+    output += numWritten;
+
+    va_end(args2);
+  }
+
+  // likely path - string contains no newlines
+  char *nl = strchr(base, '\n');
+  if(nl == NULL)
+  {
+    // append newline
+    write_newline(output);
+
+    rdclogprint_int(type, base, noPrefixOutput);
+  }
+  else
+  {
+    char backup[2];
+
+    // otherwise, print the string in sections to ensure newlines are in native format
+    while(nl)
+    {
+      // backup the two characters after the \n, to allow for DOS newlines ('\r' '\n' '\0')
+      backup[0] = nl[1];
+      backup[1] = nl[2];
+
+      write_newline(nl);
+
+      rdclogprint_int(type, base, noPrefixOutput);
+
+      // restore the characters
+      nl[1] = backup[0];
+      nl[2] = backup[1];
+
+      base = nl + 1;
+      noPrefixOutput = nl + 1;
+
+      nl = strchr(base, '\n');
+    }
+
+    // append final newline and write the last line
+    write_newline(output);
+
+    rdclogprint_int(type, base, noPrefixOutput);
+  }
+
+  SAFE_DELETE_ARRAY(oversizedBuffer);
 }

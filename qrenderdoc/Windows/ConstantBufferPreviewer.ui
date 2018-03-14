@@ -18,16 +18,16 @@
     <number>0</number>
    </property>
    <property name="leftMargin">
-    <number>0</number>
+    <number>3</number>
    </property>
    <property name="topMargin">
-    <number>0</number>
+    <number>3</number>
    </property>
    <property name="rightMargin">
-    <number>0</number>
+    <number>3</number>
    </property>
    <property name="bottomMargin">
-    <number>0</number>
+    <number>3</number>
    </property>
    <item>
     <widget class="QSplitter" name="splitter">
@@ -149,12 +149,29 @@
           </item>
           <item>
            <widget class="QToolButton" name="saveCSV">
+            <property name="toolTip">
+             <string>Export to CSV</string>
+            </property>
             <property name="text">
              <string/>
             </property>
             <property name="icon">
-             <iconset resource="../resources.qrc">
-              <normaloff>:/Resources/save.png</normaloff>:/Resources/save.png</iconset>
+             <iconset resource="../Resources/resources.qrc">
+              <normaloff>:/save.png</normaloff>:/save.png</iconset>
+            </property>
+            <property name="autoRaise">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QToolButton" name="resourceDetails">
+            <property name="toolTip">
+             <string>Open the currently buffer's resource details in the resource inspector</string>
+            </property>
+            <property name="icon">
+             <iconset resource="../Resources/resources.qrc">
+              <normaloff>:/link.png</normaloff>:/link.png</iconset>
             </property>
             <property name="autoRaise">
              <bool>true</bool>
@@ -178,7 +195,7 @@
         </widget>
        </item>
        <item>
-        <widget class="QTreeWidget" name="variables">
+        <widget class="RDTreeWidget" name="variables">
          <property name="frameShape">
           <enum>QFrame::Panel</enum>
          </property>
@@ -191,11 +208,11 @@
          <property name="showDropIndicator" stdset="0">
           <bool>false</bool>
          </property>
-         <property name="alternatingRowColors">
-          <bool>true</bool>
-         </property>
          <property name="selectionMode">
           <enum>QAbstractItemView::ContiguousSelection</enum>
+         </property>
+         <property name="verticalScrollMode">
+          <enum>QAbstractItemView::ScrollPerPixel</enum>
          </property>
          <property name="allColumnsShowFocus">
           <bool>true</bool>
@@ -203,21 +220,6 @@
          <attribute name="headerStretchLastSection">
           <bool>false</bool>
          </attribute>
-         <column>
-          <property name="text">
-           <string>Name</string>
-          </property>
-         </column>
-         <column>
-          <property name="text">
-           <string>Value</string>
-          </property>
-         </column>
-         <column>
-          <property name="text">
-           <string>Type</string>
-          </property>
-         </column>
         </widget>
        </item>
       </layout>
@@ -229,6 +231,11 @@
  </widget>
  <customwidgets>
   <customwidget>
+   <class>RDTreeWidget</class>
+   <extends>QTreeView</extends>
+   <header>Widgets/Extended/RDTreeWidget.h</header>
+  </customwidget>
+  <customwidget>
    <class>BufferFormatSpecifier</class>
    <extends>QWidget</extends>
    <header>Widgets/BufferFormatSpecifier.h</header>
@@ -236,7 +243,7 @@
   </customwidget>
  </customwidgets>
  <resources>
-  <include location="../resources.qrc"/>
+  <include location="../Resources/resources.qrc"/>
  </resources>
  <connections/>
 </ui>

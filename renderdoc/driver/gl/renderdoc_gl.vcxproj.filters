@@ -34,8 +34,11 @@
     <Filter Include="OS\Apple">
       <UniqueIdentifier>{28fbc354-c414-4647-9ce6-0fcea2cbe845}</UniqueIdentifier>
     </Filter>
-    <Filter Include="OS\Android">
+    <Filter Include="OS\EGL">
       <UniqueIdentifier>{61304e3c-ff5e-4cb6-8c25-455f37d86b48}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="PCH">
+      <UniqueIdentifier>{553d1c91-551a-455e-9247-6f69e4fec941}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -60,6 +63,9 @@
     <ClInclude Include="gl_hookset.h">
       <Filter>Hookset</Filter>
     </ClInclude>
+    <ClInclude Include="gl_hooks_linux_shared.h">
+      <Filter>OS\Linux</Filter>
+    </ClInclude>
     <ClInclude Include="gl_resources.h">
       <Filter>Util</Filter>
     </ClInclude>
@@ -78,6 +84,34 @@
     <ClInclude Include="gl_replay.h">
       <Filter>Replay</Filter>
     </ClInclude>
+    <ClInclude Include="precompiled.h">
+      <Filter>PCH</Filter>
+    </ClInclude>
+    <ClInclude Include="official\egl.h">
+      <Filter>ARB Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="official\eglext.h">
+      <Filter>ARB Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="official\eglplatform.h">
+      <Filter>ARB Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="official\glesext.h">
+      <Filter>ARB Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="official\gl3platform.h">
+      <Filter>ARB Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="official\gl32.h">
+      <Filter>ARB Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="official\khrplatform.h">
+      <Filter>ARB Headers</Filter>
+    </ClInclude>
+    <ClInclude Include="gl_library_egl.h">
+      <Filter>OS\EGL</Filter>
+    </ClInclude>
+    <ClInclude Include="gl_initstate.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="wrappers\gl_buffer_funcs.cpp">
@@ -125,6 +159,9 @@
     <ClCompile Include="gl_hooks_linux.cpp">
       <Filter>OS\Linux</Filter>
     </ClCompile>
+    <ClCompile Include="gl_hooks_linux_shared.cpp">
+      <Filter>OS\Linux</Filter>
+    </ClCompile>
     <ClCompile Include="gl_replay_linux.cpp">
       <Filter>OS\Linux</Filter>
     </ClCompile>
@@ -167,11 +204,56 @@
     <ClCompile Include="gl_replay_apple.cpp">
       <Filter>OS\Apple</Filter>
     </ClCompile>
-    <ClCompile Include="gl_hooks_android.cpp">
-      <Filter>OS\Android</Filter>
+    <ClCompile Include="gl_hooks_egl.cpp">
+      <Filter>OS\EGL</Filter>
     </ClCompile>
-    <ClCompile Include="gl_replay_android.cpp">
-      <Filter>OS\Android</Filter>
+    <ClCompile Include="gl_hooks_egl_pass.cpp">
+      <Filter>OS\EGL</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_replay_egl.cpp">
+      <Filter>OS\EGL</Filter>
+    </ClCompile>
+    <ClCompile Include="precompiled.cpp">
+      <Filter>PCH</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_initstate.cpp">
+      <Filter>Util</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_hooks_vrapi.cpp">
+      <Filter>OS\EGL</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_initstate.cpp">
+      <Filter>Util</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_stringise.cpp">
+      <Filter>Util</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_program_iterate.cpp">
+      <Filter>GLSL</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_postvs.cpp">
+      <Filter>Replay</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_overlay.cpp">
+      <Filter>Replay</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_outputwindow.cpp">
+      <Filter>Replay</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_rendermesh.cpp">
+      <Filter>Replay</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_msaa_array_conv.cpp">
+      <Filter>Replay</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_rendertexture.cpp">
+      <Filter>Replay</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_rendertext.cpp">
+      <Filter>Util</Filter>
+    </ClCompile>
+    <ClCompile Include="gl_library_egl.cpp">
+      <Filter>OS\EGL</Filter>
     </ClCompile>
   </ItemGroup>
 </Project>

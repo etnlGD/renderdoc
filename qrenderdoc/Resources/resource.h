@@ -4,11 +4,7 @@
 //
 #include "version.h"
 
-#ifdef GIT_COMMIT_HASH_LITERAL
-#define GIT_COMMIT_HASH VER_STR(GIT_COMMIT_HASH_LITERAL)
-#else
-#define GIT_COMMIT_HASH "NO_GIT_COMMIT_HASH_DEFINED"
-#endif
+#define TYPE_EMBED 256
 
 // Next default values for new objects
 //

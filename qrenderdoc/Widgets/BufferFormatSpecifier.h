@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -39,14 +39,14 @@ public:
   explicit BufferFormatSpecifier(QWidget *parent = 0);
   ~BufferFormatSpecifier();
 
-  void setErrors(const QString &errors);
-  void showHelp(bool help);
-
 signals:
   void processFormat(const QString &format);
 
 public slots:
   void toggleHelp();
+  void setFormat(const QString &format);
+  void setErrors(const QString &errors);
+  void showHelp(bool help);
 
 private slots:
   void on_apply_clicked();

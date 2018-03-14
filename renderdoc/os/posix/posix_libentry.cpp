@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -28,23 +28,13 @@
 
 void dlopen_hook_init();
 
-void readCapOpts(const char *str, CaptureOptions *opts)
-{
-  // serialise from string with two chars per byte
-  byte *b = (byte *)opts;
-  for(size_t i = 0; i < sizeof(CaptureOptions); i++)
-    *(b++) = (byte(str[i * 2 + 0] - 'a') << 4) | byte(str[i * 2 + 1] - 'a');
-}
-
 // DllMain equivalent
 void library_loaded()
 {
   string curfile;
   FileIO::GetExecutableFilename(curfile);
 
-  if(curfile.find("/renderdoccmd") != string::npos ||
-     curfile.find("/renderdocui") != string::npos || curfile.find("/qrenderdoc") != string::npos ||
-     curfile.find("org.renderdoc.renderdoccmd") != string::npos)
+  if(HOOKS_IDENTIFY("renderdoc__replay__marker"))
   {
     RDCDEBUG("Not creating hooks - in replay app");
 
@@ -58,22 +48,22 @@ void library_loaded()
   {
     RenderDoc::Inst().Initialise();
 
-    char *logfile = getenv("RENDERDOC_LOGFILE");
-    char *opts = getenv("RENDERDOC_CAPTUREOPTS");
+    const char *logfile = Process::GetEnvVariable("RENDERDOC_LOGFILE");
+    const char *opts = Process::GetEnvVariable("RENDERDOC_CAPTUREOPTS");
 
     if(opts)
     {
-      string optstr = opts;
-
       CaptureOptions optstruct;
-      readCapOpts(optstr.c_str(), &optstruct);
+      optstruct.DecodeFromString(opts);
+
+      RDCLOG("Using delay for debugger %u", optstruct.delayForDebugger);
 
       RenderDoc::Inst().SetCaptureOptions(optstruct);
     }
 
     if(logfile)
     {
-      RenderDoc::Inst().SetLogFile(logfile);
+      RenderDoc::Inst().SetCaptureFileTemplate(logfile);
     }
 
     RDCLOG("Loading into %s", curfile.c_str());
@@ -89,3 +79,10 @@ struct init
 {
   init() { library_loaded(); }
 } do_init;
+
+// we want to be sure the constructor and library_loaded are included even when this is in a static
+// library, so we have this global function that does nothing but takes the address.
+extern "C" __attribute__((visibility("default"))) void *force_include_libentry()
+{
+  return &do_init;
+}

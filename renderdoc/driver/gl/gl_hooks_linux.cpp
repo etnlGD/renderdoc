@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -28,21 +28,9 @@
 #include "common/threading.h"
 #include "driver/gl/gl_common.h"
 #include "driver/gl/gl_driver.h"
-#include "driver/gl/gl_hookset.h"
-#include "driver/gl/gl_hookset_defs.h"
 #include "hooks/hooks.h"
-#include "serialise/string_utils.h"
-
-namespace glEmulate
-{
-void EmulateUnsupportedFunctions(GLHookSet *hooks);
-}
-
-// bit of a hack
-namespace Keyboard
-{
-void CloneDisplay(Display *dpy);
-}
+#include "strings/string_utils.h"
+#include "gl_hooks_linux_shared.h"
 
 typedef GLXContext (*PFNGLXCREATECONTEXTPROC)(Display *dpy, XVisualInfo *vis, GLXContext shareList,
                                               Bool direct);
@@ -54,337 +42,9 @@ typedef XVisualInfo *(*PFNGLXGETVISUALFROMFBCONFIGPROC)(Display *dpy, GLXFBConfi
 typedef int (*PFNGLXGETCONFIGPROC)(Display *dpy, XVisualInfo *vis, int attrib, int *value);
 typedef Bool (*PFNGLXQUERYEXTENSIONPROC)(Display *dpy, int *errorBase, int *eventBase);
 typedef Bool (*PFNGLXISDIRECTPROC)(Display *dpy, GLXContext ctx);
+typedef __GLXextFuncPtr (*PFNGLXGETPROCADDRESSARBPROC)(const GLubyte *procName);
 
-void *libGLdlsymHandle =
-    RTLD_NEXT;    // default to RTLD_NEXT, but overwritten if app calls dlopen() on real libGL
-
-#define HookInit(function)                                                   \
-  if(!strcmp(func, STRINGIZE(function)))                                     \
-  {                                                                          \
-    OpenGLHook::glhooks.GL.function = (CONCAT(function, _hooktype))realFunc; \
-    return (__GLXextFuncPtr)&CONCAT(function, _renderdoc_hooked);            \
-  }
-
-#define HookExtension(funcPtrType, function)                      \
-  if(!strcmp(func, STRINGIZE(function)))                          \
-  {                                                               \
-    OpenGLHook::glhooks.GL.function = (funcPtrType)realFunc;      \
-    return (__GLXextFuncPtr)&CONCAT(function, _renderdoc_hooked); \
-  }
-
-#define HookExtensionAlias(funcPtrType, function, alias)          \
-  if(!strcmp(func, STRINGIZE(alias)))                             \
-  {                                                               \
-    OpenGLHook::glhooks.GL.function = (funcPtrType)realFunc;      \
-    return (__GLXextFuncPtr)&CONCAT(function, _renderdoc_hooked); \
-  }
-
-#if 0    // debug print for each unsupported function requested (but not used)
-#define HandleUnsupported(funcPtrType, function)                                           \
-  if(lowername == STRINGIZE(function))                                                     \
-  {                                                                                        \
-    CONCAT(unsupported_real_, function) = (CONCAT(function, _hooktype))realFunc;           \
-    RDCDEBUG("Requesting function pointer for unsupported function " STRINGIZE(function)); \
-    return (__GLXextFuncPtr)&CONCAT(function, _renderdoc_hooked);                          \
-  }
-#else
-#define HandleUnsupported(funcPtrType, function)                                 \
-  if(lowername == STRINGIZE(function))                                           \
-  {                                                                              \
-    CONCAT(unsupported_real_, function) = (CONCAT(function, _hooktype))realFunc; \
-    return (__GLXextFuncPtr)&CONCAT(function, _renderdoc_hooked);                \
-  }
-#endif
-
-/*
-  in bash:
-
-    function HookWrapper()
-    {
-        N=$1;
-        echo -n "#define HookWrapper$N(ret, function";
-            for I in `seq 1 $N`; do echo -n ", t$I, p$I"; done;
-        echo ") \\";
-
-        echo -en "\ttypedef ret (*CONCAT(function, _hooktype)) (";
-            for I in `seq 1 $N`; do echo -n "t$I"; if [ $I -ne $N ]; then echo -n ", "; fi; done;
-        echo "); \\";
-
-        echo -e "\textern \"C\" __attribute__ ((visibility (\"default\"))) \\";
-
-        echo -en "\tret function(";
-            for I in `seq 1 $N`; do echo -n "t$I p$I"; if [ $I -ne $N ]; then echo -n ", "; fi;
-  done;
-        echo ") \\";
-
-        echo -en "\t{ SCOPED_LOCK(glLock); return OpenGLHook::glhooks.GetDriver()->function(";
-            for I in `seq 1 $N`; do echo -n "p$I"; if [ $I -ne $N ]; then echo -n ", "; fi; done;
-        echo "); } \\";
-
-        echo -en "\tret CONCAT(function,_renderdoc_hooked)(";
-            for I in `seq 1 $N`; do echo -n "t$I p$I"; if [ $I -ne $N ]; then echo -n ", "; fi;
-  done;
-        echo ") \\";
-
-        echo -en "\t{ SCOPED_LOCK(glLock); return OpenGLHook::glhooks.GetDriver()->function(";
-            for I in `seq 1 $N`; do echo -n "p$I"; if [ $I -ne $N ]; then echo -n ", "; fi; done;
-        echo -n "); }";
-    }
-
-  for I in `seq 0 15`; do HookWrapper $I; echo; done
-
-  */
-
-// don't want these definitions, the only place we'll use these is as parameter/variable names
-#ifdef near
-#undef near
-#endif
-
-#ifdef far
-#undef far
-#endif
-
-// the _renderdoc_hooked variants are to make sure we always have a function symbol
-// exported that we can return from glXGetProcAddress. If another library (or the app)
-// creates a symbol called 'glEnable' we'll return the address of that, and break
-// badly. Instead we leave the 'naked' versions for applications trying to import those
-// symbols, and declare the _renderdoc_hooked for returning as a func pointer.
-
-#define HookWrapper0(ret, function)                                \
-  typedef ret (*CONCAT(function, _hooktype))();                    \
-  extern "C" __attribute__((visibility("default"))) ret function() \
-  {                                                                \
-    SCOPED_LOCK(glLock);                                           \
-    return OpenGLHook::glhooks.GetDriver()->function();            \
-  }                                                                \
-  ret CONCAT(function, _renderdoc_hooked)()                        \
-  {                                                                \
-    SCOPED_LOCK(glLock);                                           \
-    return OpenGLHook::glhooks.GetDriver()->function();            \
-  }
-#define HookWrapper1(ret, function, t1, p1)                             \
-  typedef ret (*CONCAT(function, _hooktype))(t1);                       \
-  extern "C" __attribute__((visibility("default"))) ret function(t1 p1) \
-  {                                                                     \
-    SCOPED_LOCK(glLock);                                                \
-    return OpenGLHook::glhooks.GetDriver()->function(p1);               \
-  }                                                                     \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1)                        \
-  {                                                                     \
-    SCOPED_LOCK(glLock);                                                \
-    return OpenGLHook::glhooks.GetDriver()->function(p1);               \
-  }
-#define HookWrapper2(ret, function, t1, p1, t2, p2)                            \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2);                          \
-  extern "C" __attribute__((visibility("default"))) ret function(t1 p1, t2 p2) \
-  {                                                                            \
-    SCOPED_LOCK(glLock);                                                       \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2);                  \
-  }                                                                            \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2)                        \
-  {                                                                            \
-    SCOPED_LOCK(glLock);                                                       \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2);                  \
-  }
-#define HookWrapper3(ret, function, t1, p1, t2, p2, t3, p3)                           \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3);                             \
-  extern "C" __attribute__((visibility("default"))) ret function(t1 p1, t2 p2, t3 p3) \
-  {                                                                                   \
-    SCOPED_LOCK(glLock);                                                              \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3);                     \
-  }                                                                                   \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3)                        \
-  {                                                                                   \
-    SCOPED_LOCK(glLock);                                                              \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3);                     \
-  }
-#define HookWrapper4(ret, function, t1, p1, t2, p2, t3, p3, t4, p4)                          \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4);                                \
-  extern "C" __attribute__((visibility("default"))) ret function(t1 p1, t2 p2, t3 p3, t4 p4) \
-  {                                                                                          \
-    SCOPED_LOCK(glLock);                                                                     \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4);                        \
-  }                                                                                          \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4)                        \
-  {                                                                                          \
-    SCOPED_LOCK(glLock);                                                                     \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4);                        \
-  }
-#define HookWrapper5(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5)                         \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5);                                   \
-  extern "C" __attribute__((visibility("default"))) ret function(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5) \
-  {                                                                                                 \
-    SCOPED_LOCK(glLock);                                                                            \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5);                           \
-  }                                                                                                 \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5)                        \
-  {                                                                                                 \
-    SCOPED_LOCK(glLock);                                                                            \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5);                           \
-  }
-#define HookWrapper6(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6)          \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6);                        \
-  extern "C" __attribute__((visibility("default"))) ret function(t1 p1, t2 p2, t3 p3, t4 p4, \
-                                                                 t5 p5, t6 p6)               \
-  {                                                                                          \
-    SCOPED_LOCK(glLock);                                                                     \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6);                \
-  }                                                                                          \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6)          \
-  {                                                                                          \
-    SCOPED_LOCK(glLock);                                                                     \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6);                \
-  }
-#define HookWrapper7(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6, t7, p7)  \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6, t7);                    \
-  extern "C" __attribute__((visibility("default"))) ret function(t1 p1, t2 p2, t3 p3, t4 p4, \
-                                                                 t5 p5, t6 p6, t7 p7)        \
-  {                                                                                          \
-    SCOPED_LOCK(glLock);                                                                     \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6, p7);            \
-  }                                                                                          \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7)   \
-  {                                                                                          \
-    SCOPED_LOCK(glLock);                                                                     \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6, p7);            \
-  }
-#define HookWrapper8(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6, t7, p7, t8, p8) \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6, t7, t8);                       \
-  extern "C" __attribute__((visibility("default"))) ret function(t1 p1, t2 p2, t3 p3, t4 p4,        \
-                                                                 t5 p5, t6 p6, t7 p7, t8 p8)        \
-  {                                                                                                 \
-    SCOPED_LOCK(glLock);                                                                            \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6, p7, p8);               \
-  }                                                                                                 \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8)   \
-  {                                                                                                 \
-    SCOPED_LOCK(glLock);                                                                            \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6, p7, p8);               \
-  }
-#define HookWrapper9(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6, t7, p7, t8,   \
-                     p8, t9, p9)                                                                  \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6, t7, t8, t9);                 \
-  extern "C" __attribute__((visibility("default"))) ret function(                                 \
-      t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8, t9 p9)                              \
-  {                                                                                               \
-    SCOPED_LOCK(glLock);                                                                          \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6, p7, p8, p9);         \
-  }                                                                                               \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8, \
-                                          t9 p9)                                                  \
-  {                                                                                               \
-    SCOPED_LOCK(glLock);                                                                          \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6, p7, p8, p9);         \
-  }
-#define HookWrapper10(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6, t7, p7, t8,  \
-                      p8, t9, p9, t10, p10)                                                       \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10);            \
-  extern "C" __attribute__((visibility("default"))) ret function(                                 \
-      t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8, t9 p9, t10 p10)                     \
-  {                                                                                               \
-    SCOPED_LOCK(glLock);                                                                          \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10);    \
-  }                                                                                               \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8, \
-                                          t9 p9, t10 p10)                                         \
-  {                                                                                               \
-    SCOPED_LOCK(glLock);                                                                          \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10);    \
-  }
-#define HookWrapper11(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6, t7, p7, t8,    \
-                      p8, t9, p9, t10, p10, t11, p11)                                               \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11);         \
-  extern "C" __attribute__((visibility("default"))) ret function(                                   \
-      t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8, t9 p9, t10 p10, t11 p11)              \
-  {                                                                                                 \
-    SCOPED_LOCK(glLock);                                                                            \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11); \
-  }                                                                                                 \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8,   \
-                                          t9 p9, t10 p10, t11 p11)                                  \
-  {                                                                                                 \
-    SCOPED_LOCK(glLock);                                                                            \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11); \
-  }
-#define HookWrapper12(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6, t7, p7, t8,   \
-                      p8, t9, p9, t10, p10, t11, p11, t12, p12)                                    \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12);   \
-  extern "C" __attribute__((visibility("default"))) ret function(                                  \
-      t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8, t9 p9, t10 p10, t11 p11, t12 p12)    \
-  {                                                                                                \
-    SCOPED_LOCK(glLock);                                                                           \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, \
-                                                     p12);                                         \
-  }                                                                                                \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8,  \
-                                          t9 p9, t10 p10, t11 p11, t12 p12)                        \
-  {                                                                                                \
-    SCOPED_LOCK(glLock);                                                                           \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, \
-                                                     p12);                                         \
-  }
-#define HookWrapper13(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6, t7, p7, t8,   \
-                      p8, t9, p9, t10, p10, t11, p11, t12, p12, t13, p13)                          \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12,    \
-                                             t13);                                                 \
-  extern "C" __attribute__((visibility("default"))) ret function(                                  \
-      t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8, t9 p9, t10 p10, t11 p11, t12 p12,    \
-      t13 p13)                                                                                     \
-  {                                                                                                \
-    SCOPED_LOCK(glLock);                                                                           \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, \
-                                                     p12, p13);                                    \
-  }                                                                                                \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8,  \
-                                          t9 p9, t10 p10, t11 p11, t12 p12, t13 p13)               \
-  {                                                                                                \
-    SCOPED_LOCK(glLock);                                                                           \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, \
-                                                     p12, p13);                                    \
-  }
-#define HookWrapper14(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6, t7, p7, t8,   \
-                      p8, t9, p9, t10, p10, t11, p11, t12, p12, t13, p13, t14, p14)                \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12,    \
-                                             t13, t14);                                            \
-  extern "C" __attribute__((visibility("default"))) ret function(                                  \
-      t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8, t9 p9, t10 p10, t11 p11, t12 p12,    \
-      t13 p13, t14 p14)                                                                            \
-  {                                                                                                \
-    SCOPED_LOCK(glLock);                                                                           \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, \
-                                                     p12, p13, p14);                               \
-  }                                                                                                \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8,  \
-                                          t9 p9, t10 p10, t11 p11, t12 p12, t13 p13, t14 p14)      \
-  {                                                                                                \
-    SCOPED_LOCK(glLock);                                                                           \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, \
-                                                     p12, p13, p14);                               \
-  }
-#define HookWrapper15(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6, t7, p7, t8,   \
-                      p8, t9, p9, t10, p10, t11, p11, t12, p12, t13, p13, t14, p14, t15, p15)      \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12,    \
-                                             t13, t14, t15);                                       \
-  extern "C" __attribute__((visibility("default"))) ret function(                                  \
-      t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8, t9 p9, t10 p10, t11 p11, t12 p12,    \
-      t13 p13, t14 p14, t15 p15)                                                                   \
-  {                                                                                                \
-    SCOPED_LOCK(glLock);                                                                           \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, \
-                                                     p12, p13, p14, p15);                          \
-  }                                                                                                \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8,  \
-                                          t9 p9, t10 p10, t11 p11, t12 p12, t13 p13, t14 p14,      \
-                                          t15 p15)                                                 \
-  {                                                                                                \
-    SCOPED_LOCK(glLock);                                                                           \
-    return OpenGLHook::glhooks.GetDriver()->function(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, \
-                                                     p12, p13, p14, p15);                          \
-  }
-
-Threading::CriticalSection glLock;
-
-class OpenGLHook : LibraryHook
+class OpenGLHook : LibraryHook, public GLPlatform
 {
 public:
   OpenGLHook()
@@ -400,12 +60,12 @@ public:
     m_EnabledHooks = true;
     m_PopulatedHooks = false;
   }
-  ~OpenGLHook() { delete m_GLDriver; }
-  static void libHooked(void *realLib)
+  ~OpenGLHook()
   {
-    libGLdlsymHandle = realLib;
-    OpenGLHook::glhooks.CreateHooks(NULL);
+    delete m_GLDriver;
+    m_GLDriver = NULL;
   }
+  static void libHooked(void *realLib);
 
   bool CreateHooks(const char *libName)
   {
@@ -415,7 +75,7 @@ public:
     if(libName)
       PosixHookLibrary("libGL.so", &libHooked);
 
-    bool success = SetupHooks(GL);
+    bool success = SetupHooks();
 
     if(!success)
       return false;
@@ -427,8 +87,6 @@ public:
 
   void EnableHooks(const char *libName, bool enable) { m_EnabledHooks = enable; }
   void OptionsUpdated(const char *libName) {}
-  static OpenGLHook glhooks;
-
   // see callsite in glXSwapBuffers for explanation of why this is necessary
   XID UnwrapGLXWindow(XID id)
   {
@@ -467,7 +125,7 @@ public:
     // functions like glXCreateContext etc have the 'real' pointers to call into, otherwise even the
     // replay app will resolve to our hooks first before the real libGL and call in.
     if(RenderDoc::Inst().IsReplayApp())
-      SetupHooks(GL);
+      SetupHooks();
   }
 
   void MakeContextCurrent(GLWindowingData data)
@@ -495,24 +153,29 @@ public:
       };
       bool is_direct = false;
 
-      PFNGLXISDIRECTPROC glXIsDirectProc = (PFNGLXISDIRECTPROC)dlsym(RTLD_NEXT, "glXIsDirect");
-      PFNGLXCHOOSEFBCONFIGPROC glXChooseFBConfigProc =
-          (PFNGLXCHOOSEFBCONFIGPROC)dlsym(RTLD_NEXT, "glXChooseFBConfig");
+      PFNGLXISDIRECTPROC glXIsDirectProc =
+          (PFNGLXISDIRECTPROC)dlsym(libGLdlsymHandle, "glXIsDirect");
+      PFNGLXCREATEPBUFFERPROC glXCreatePbufferProc =
+          (PFNGLXCREATEPBUFFERPROC)dlsym(libGLdlsymHandle, "glXCreatePbuffer");
 
       if(glXIsDirectProc)
         is_direct = glXIsDirectProc(share.dpy, share.ctx);
 
-      if(glXChooseFBConfigProc)
+      if(glXChooseFBConfig_real && glXCreatePbufferProc)
       {
         // don't need to care about the fb config as we won't be using the default framebuffer
         // (backbuffer)
         int visAttribs[] = {0};
         int numCfgs = 0;
         GLXFBConfig *fbcfg =
-            glXChooseFBConfigProc(share.dpy, DefaultScreen(share.dpy), visAttribs, &numCfgs);
+            glXChooseFBConfig_real(share.dpy, DefaultScreen(share.dpy), visAttribs, &numCfgs);
+
+        // don't care about pbuffer properties as we won't render directly to this
+        int pbAttribs[] = {GLX_PBUFFER_WIDTH, 32, GLX_PBUFFER_HEIGHT, 32, 0};
 
         if(fbcfg)
         {
+          ret.wnd = glXCreatePbufferProc(share.dpy, fbcfg[0], pbAttribs);
           ret.dpy = share.dpy;
           ret.ctx =
               glXCreateContextAttribsARB_real(share.dpy, fbcfg[0], share.ctx, is_direct, attribs);
@@ -524,14 +187,192 @@ public:
 
   void DeleteContext(GLWindowingData context)
   {
+    PFNGLXDESTROYPBUFFERPROC glXDestroyPbufferProc =
+        (PFNGLXDESTROYPBUFFERPROC)dlsym(libGLdlsymHandle, "glXDestroyPbuffer");
+
+    if(context.wnd && glXDestroyPbufferProc)
+      glXDestroyPbufferProc(context.dpy, context.wnd);
+
     if(context.ctx && glXDestroyContext_real)
       glXDestroyContext_real(context.dpy, context.ctx);
   }
 
+  void DeleteReplayContext(GLWindowingData context)
+  {
+    if(glXDestroyContext_real)
+    {
+      glXMakeContextCurrent_real(context.dpy, 0L, 0L, NULL);
+      glXDestroyContext_real(context.dpy, context.ctx);
+    }
+  }
+
+  void SwapBuffers(GLWindowingData context) { glXSwapBuffers_real(context.dpy, context.wnd); }
+  void GetOutputWindowDimensions(GLWindowingData context, int32_t &w, int32_t &h)
+  {
+    glXQueryDrawable_real(context.dpy, context.wnd, GLX_WIDTH, (unsigned int *)&w);
+    glXQueryDrawable_real(context.dpy, context.wnd, GLX_HEIGHT, (unsigned int *)&h);
+  }
+
+  bool IsOutputWindowVisible(GLWindowingData context)
+  {
+    GLNOTIMP("Optimisation missing - output window always returning true");
+
+    return true;
+  }
+
+  GLWindowingData MakeOutputWindow(WindowingData window, bool depth, GLWindowingData share_context)
+  {
+    GLWindowingData ret;
+
+    Display *dpy = NULL;
+    Drawable draw = 0;
+
+    if(window.system == WindowingSystem::Xlib)
+    {
+#if ENABLED(RDOC_XLIB)
+      dpy = window.xlib.display;
+      draw = window.xlib.window;
+#else
+      RDCERR(
+          "Xlib windowing system data passed in, but support is not compiled in. GL must have xlib "
+          "support compiled in");
+#endif
+    }
+    else if(window.system == WindowingSystem::Unknown)
+    {
+      // allow WindowingSystem::Unknown so that internally we can create a window-less context
+      dpy = RenderDoc::Inst().GetGlobalEnvironment().xlibDisplay;
+
+      if(dpy == NULL)
+        return ret;
+    }
+    else
+    {
+      RDCERR("Unexpected window system %u", system);
+    }
+
+    // GLX_FRAMEBUFFER_SRGB_CAPABLE_ARB MUST be the last attrib so that we can remove it to retry
+    // if we find no srgb fbconfigs
+    static int visAttribs[] = {GLX_X_RENDERABLE,
+                               True,
+                               GLX_DRAWABLE_TYPE,
+                               GLX_WINDOW_BIT,
+                               GLX_RENDER_TYPE,
+                               GLX_RGBA_BIT,
+                               GLX_X_VISUAL_TYPE,
+                               GLX_TRUE_COLOR,
+                               GLX_RED_SIZE,
+                               8,
+                               GLX_GREEN_SIZE,
+                               8,
+                               GLX_BLUE_SIZE,
+                               8,
+                               GLX_DOUBLEBUFFER,
+                               True,
+                               GLX_FRAMEBUFFER_SRGB_CAPABLE_ARB,
+                               True,
+                               0};
+
+    int numCfgs = 0;
+    GLXFBConfig *fbcfg = glXChooseFBConfig_real(dpy, DefaultScreen(dpy), visAttribs, &numCfgs);
+
+    if(fbcfg == NULL)
+    {
+      const size_t len = ARRAY_COUNT(visAttribs);
+      if(visAttribs[len - 3] != GLX_FRAMEBUFFER_SRGB_CAPABLE_ARB)
+      {
+        RDCERR(
+            "GLX_FRAMEBUFFER_SRGB_CAPABLE_ARB isn't the last attribute, and no SRGB fbconfigs were "
+            "found!");
+      }
+      else
+      {
+        visAttribs[len - 3] = 0;
+        fbcfg = glXChooseFBConfig_real(dpy, DefaultScreen(dpy), visAttribs, &numCfgs);
+      }
+    }
+
+    if(fbcfg == NULL)
+    {
+      RDCERR("Couldn't choose default framebuffer config");
+      return ret;
+    }
+
+    if(draw != 0)
+    {
+      // Choose FB config with a GLX_VISUAL_ID that matches the X screen.
+      VisualID visualid_correct = DefaultVisual(dpy, DefaultScreen(dpy))->visualid;
+      for(int i = 0; i < numCfgs; i++)
+      {
+        int visualid;
+        glXGetFBConfigAttrib(dpy, fbcfg[i], GLX_VISUAL_ID, &visualid);
+        if((VisualID)visualid == visualid_correct)
+        {
+          fbcfg[0] = fbcfg[i];
+          break;
+        }
+      }
+    }
+
+    int attribs[64] = {0};
+    int i = 0;
+
+    attribs[i++] = GLX_CONTEXT_MAJOR_VERSION_ARB;
+    attribs[i++] = GLCoreVersion / 10;
+    attribs[i++] = GLX_CONTEXT_MINOR_VERSION_ARB;
+    attribs[i++] = GLCoreVersion % 10;
+    attribs[i++] = GLX_CONTEXT_FLAGS_ARB;
+#if ENABLED(RDOC_DEVEL)
+    attribs[i++] = GLX_CONTEXT_DEBUG_BIT_ARB;
+#else
+    attribs[i++] = 0;
+#endif
+    attribs[i++] = GLX_CONTEXT_PROFILE_MASK_ARB;
+    attribs[i++] = GLX_CONTEXT_CORE_PROFILE_BIT_ARB;
+
+    GLXContext ctx = glXCreateContextAttribsARB_real(dpy, fbcfg[0], share_context.ctx, true, attribs);
+
+    if(ctx == NULL)
+    {
+      RDCERR("Couldn't create %d.%d context - something changed since creation", GLCoreVersion / 10,
+             GLCoreVersion % 10);
+      return ret;
+    }
+
+    GLXDrawable wnd = 0;
+
+    if(draw == 0)
+    {
+      // don't care about pbuffer properties as we won't render directly to this
+      int pbAttribs[] = {GLX_PBUFFER_WIDTH, 32, GLX_PBUFFER_HEIGHT, 32, 0};
+
+      wnd = glXCreatePbuffer(dpy, fbcfg[0], pbAttribs);
+    }
+    else
+    {
+      // on NV and AMD creating this window causes problems rendering to any widgets in Qt, with the
+      // width/height queries failing to return any values and the framebuffer blitting not working.
+      // For the moment, we use the passed-in drawable directly as this works in testing on
+      // renderdoccmd and qrenderdoc
+      wnd = draw;
+      // glXCreateWindow(dpy, fbcfg[0], draw, 0);
+    }
+
+    XFree(fbcfg);
+
+    ret.dpy = dpy;
+    ret.ctx = ctx;
+    ret.wnd = wnd;
+
+    return ret;
+  }
+
+  bool DrawQuads(float width, float height, const std::vector<Vec4f> &vertices);
+
   WrappedOpenGL *GetDriver()
   {
     if(m_GLDriver == NULL)
-      m_GLDriver = new WrappedOpenGL("", GL);
+      m_GLDriver = new WrappedOpenGL(GL, *this);
 
     return m_GLDriver;
   }
@@ -540,6 +381,7 @@ public:
   PFNGLXDESTROYCONTEXTPROC glXDestroyContext_real;
   PFNGLXCREATECONTEXTATTRIBSARBPROC glXCreateContextAttribsARB_real;
   PFNGLXGETPROCADDRESSPROC glXGetProcAddress_real;
+  PFNGLXGETPROCADDRESSARBPROC glXGetProcAddressARB_real;
   PFNGLXMAKECURRENTPROC glXMakeCurrent_real;
   PFNGLXMAKECONTEXTCURRENTPROC glXMakeContextCurrent_real;
   PFNGLXSWAPBUFFERSPROC glXSwapBuffers_real;
@@ -547,10 +389,8 @@ public:
   PFNGLXGETVISUALFROMFBCONFIGPROC glXGetVisualFromFBConfig_real;
   PFNGLXCREATEWINDOWPROC glXCreateWindow_real;
   PFNGLXDESTROYWINDOWPROC glXDestroyWindow_real;
-
-  WrappedOpenGL *m_GLDriver;
-
-  GLHookSet GL;
+  PFNGLXCHOOSEFBCONFIGPROC glXChooseFBConfig_real;
+  PFNGLXQUERYDRAWABLEPROC glXQueryDrawable_real;
 
   set<GLXContext> m_Contexts;
 
@@ -560,13 +400,16 @@ public:
   bool m_HasHooks;
   bool m_EnabledHooks;
 
-  bool SetupHooks(GLHookSet &GL)
+  bool SetupHooks()
   {
     bool success = true;
 
     if(glXGetProcAddress_real == NULL)
       glXGetProcAddress_real =
           (PFNGLXGETPROCADDRESSPROC)dlsym(libGLdlsymHandle, "glXGetProcAddress");
+    if(glXGetProcAddressARB_real == NULL)
+      glXGetProcAddressARB_real =
+          (PFNGLXGETPROCADDRESSPROC)dlsym(libGLdlsymHandle, "glXGetProcAddressARB");
     if(glXCreateContext_real == NULL)
       glXCreateContext_real = (PFNGLXCREATECONTEXTPROC)dlsym(libGLdlsymHandle, "glXCreateContext");
     if(glXDestroyContext_real == NULL)
@@ -591,313 +434,32 @@ public:
       glXCreateWindow_real = (PFNGLXCREATEWINDOWPROC)dlsym(libGLdlsymHandle, "glXCreateWindow");
     if(glXDestroyWindow_real == NULL)
       glXDestroyWindow_real = (PFNGLXDESTROYWINDOWPROC)dlsym(libGLdlsymHandle, "glXDestroyWindow");
+    if(glXChooseFBConfig_real == NULL)
+      glXChooseFBConfig_real =
+          (PFNGLXCHOOSEFBCONFIGPROC)dlsym(libGLdlsymHandle, "glXChooseFBConfig");
+    if(glXQueryDrawable_real == NULL)
+      glXQueryDrawable_real = (PFNGLXQUERYDRAWABLEPROC)dlsym(libGLdlsymHandle, "glXQueryDrawable");
+
+    // glXCreateContextAttribsARB may not be directly exported by libGL.so, so try to fetch it
+    // through the glXGetProcAddress function, favouring the ARB variant.
+    if(glXCreateContextAttribsARB_real == NULL && glXGetProcAddressARB_real)
+      glXCreateContextAttribsARB_real = (PFNGLXCREATECONTEXTATTRIBSARBPROC)glXGetProcAddressARB_real(
+          (const GLubyte *)"glXCreateContextAttribsARB");
+    if(glXCreateContextAttribsARB_real == NULL && glXGetProcAddress_real)
+      glXCreateContextAttribsARB_real = (PFNGLXCREATECONTEXTATTRIBSARBPROC)glXGetProcAddress_real(
+          (const GLubyte *)"glXCreateContextAttribsARB");
 
     return success;
   }
 
   bool PopulateHooks();
-};
+} glhooks;
 
-DefineDLLExportHooks();
-DefineGLExtensionHooks();
-
-/*
-  in bash:
-
-    function HookWrapper()
-    {
-        N=$1;
-        echo "#undef HookWrapper$N";
-        echo -n "#define HookWrapper$N(ret, function";
-            for I in `seq 1 $N`; do echo -n ", t$I, p$I"; done;
-        echo ") \\";
-
-        echo -en "\ttypedef ret (*CONCAT(function, _hooktype)) (";
-            for I in `seq 1 $N`; do echo -n "t$I"; if [ $I -ne $N ]; then echo -n ", "; fi; done;
-        echo "); \\";
-
-        echo -en "\tCONCAT(function, _hooktype) CONCAT(unsupported_real_,function) = NULL;";
-
-        echo -en "\tret CONCAT(function,_renderdoc_hooked)(";
-            for I in `seq 1 $N`; do echo -n "t$I p$I"; if [ $I -ne $N ]; then echo -n ", "; fi;
-  done;
-        echo ") \\";
-
-        echo -e "\t{ \\";
-        echo -e "\tstatic bool hit = false; if(hit == false) { RDCERR(\"Function \"
-  STRINGIZE(function) \" not supported - capture may be broken\"); hit = true; } \\";
-        echo -en "\treturn CONCAT(unsupported_real_,function)(";
-            for I in `seq 1 $N`; do echo -n "p$I"; if [ $I -ne $N ]; then echo -n ", "; fi; done;
-        echo -e "); \\";
-        echo -e "\t}";
-    }
-
-  for I in `seq 0 15`; do HookWrapper $I; echo; done
-
-  */
-
-#undef HookWrapper0
-#define HookWrapper0(ret, function)                                                     \
-  typedef ret (*CONCAT(function, _hooktype))();                                         \
-  CONCAT(function, _hooktype) CONCAT(unsupported_real_, function) = NULL;               \
-  ret CONCAT(function, _renderdoc_hooked)()                                             \
-  {                                                                                     \
-    static bool hit = false;                                                            \
-    if(hit == false)                                                                    \
-    {                                                                                   \
-      RDCERR("Function " STRINGIZE(function) " not supported - capture may be broken"); \
-      hit = true;                                                                       \
-    }                                                                                   \
-    return CONCAT(unsupported_real_, function)();                                       \
-  }
-
-#undef HookWrapper1
-#define HookWrapper1(ret, function, t1, p1)                                             \
-  typedef ret (*CONCAT(function, _hooktype))(t1);                                       \
-  CONCAT(function, _hooktype) CONCAT(unsupported_real_, function) = NULL;               \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1)                                        \
-  {                                                                                     \
-    static bool hit = false;                                                            \
-    if(hit == false)                                                                    \
-    {                                                                                   \
-      RDCERR("Function " STRINGIZE(function) " not supported - capture may be broken"); \
-      hit = true;                                                                       \
-    }                                                                                   \
-    return CONCAT(unsupported_real_, function)(p1);                                     \
-  }
-
-#undef HookWrapper2
-#define HookWrapper2(ret, function, t1, p1, t2, p2)                                     \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2);                                   \
-  CONCAT(function, _hooktype) CONCAT(unsupported_real_, function) = NULL;               \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2)                                 \
-  {                                                                                     \
-    static bool hit = false;                                                            \
-    if(hit == false)                                                                    \
-    {                                                                                   \
-      RDCERR("Function " STRINGIZE(function) " not supported - capture may be broken"); \
-      hit = true;                                                                       \
-    }                                                                                   \
-    return CONCAT(unsupported_real_, function)(p1, p2);                                 \
-  }
-
-#undef HookWrapper3
-#define HookWrapper3(ret, function, t1, p1, t2, p2, t3, p3)                             \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3);                               \
-  CONCAT(function, _hooktype) CONCAT(unsupported_real_, function) = NULL;               \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3)                          \
-  {                                                                                     \
-    static bool hit = false;                                                            \
-    if(hit == false)                                                                    \
-    {                                                                                   \
-      RDCERR("Function " STRINGIZE(function) " not supported - capture may be broken"); \
-      hit = true;                                                                       \
-    }                                                                                   \
-    return CONCAT(unsupported_real_, function)(p1, p2, p3);                             \
-  }
-
-#undef HookWrapper4
-#define HookWrapper4(ret, function, t1, p1, t2, p2, t3, p3, t4, p4)                     \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4);                           \
-  CONCAT(function, _hooktype) CONCAT(unsupported_real_, function) = NULL;               \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4)                   \
-  {                                                                                     \
-    static bool hit = false;                                                            \
-    if(hit == false)                                                                    \
-    {                                                                                   \
-      RDCERR("Function " STRINGIZE(function) " not supported - capture may be broken"); \
-      hit = true;                                                                       \
-    }                                                                                   \
-    return CONCAT(unsupported_real_, function)(p1, p2, p3, p4);                         \
-  }
-
-#undef HookWrapper5
-#define HookWrapper5(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5)             \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5);                       \
-  CONCAT(function, _hooktype) CONCAT(unsupported_real_, function) = NULL;               \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5)            \
-  {                                                                                     \
-    static bool hit = false;                                                            \
-    if(hit == false)                                                                    \
-    {                                                                                   \
-      RDCERR("Function " STRINGIZE(function) " not supported - capture may be broken"); \
-      hit = true;                                                                       \
-    }                                                                                   \
-    return CONCAT(unsupported_real_, function)(p1, p2, p3, p4, p5);                     \
-  }
-
-#undef HookWrapper6
-#define HookWrapper6(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6)     \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6);                   \
-  CONCAT(function, _hooktype) CONCAT(unsupported_real_, function) = NULL;               \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6)     \
-  {                                                                                     \
-    static bool hit = false;                                                            \
-    if(hit == false)                                                                    \
-    {                                                                                   \
-      RDCERR("Function " STRINGIZE(function) " not supported - capture may be broken"); \
-      hit = true;                                                                       \
-    }                                                                                   \
-    return CONCAT(unsupported_real_, function)(p1, p2, p3, p4, p5, p6);                 \
-  }
-
-#undef HookWrapper7
-#define HookWrapper7(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6, t7, p7) \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6, t7);                   \
-  CONCAT(function, _hooktype) CONCAT(unsupported_real_, function) = NULL;                   \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7)  \
-  {                                                                                         \
-    static bool hit = false;                                                                \
-    if(hit == false)                                                                        \
-    {                                                                                       \
-      RDCERR("Function " STRINGIZE(function) " not supported - capture may be broken");     \
-      hit = true;                                                                           \
-    }                                                                                       \
-    return CONCAT(unsupported_real_, function)(p1, p2, p3, p4, p5, p6, p7);                 \
-  }
-
-#undef HookWrapper8
-#define HookWrapper8(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6, t7, p7, t8, p8) \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6, t7, t8);                       \
-  CONCAT(function, _hooktype) CONCAT(unsupported_real_, function) = NULL;                           \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8)   \
-  {                                                                                                 \
-    static bool hit = false;                                                                        \
-    if(hit == false)                                                                                \
-    {                                                                                               \
-      RDCERR("Function " STRINGIZE(function) " not supported - capture may be broken");             \
-      hit = true;                                                                                   \
-    }                                                                                               \
-    return CONCAT(unsupported_real_, function)(p1, p2, p3, p4, p5, p6, p7, p8);                     \
-  }
-
-#undef HookWrapper9
-#define HookWrapper9(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6, t7, p7, t8,   \
-                     p8, t9, p9)                                                                  \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6, t7, t8, t9);                 \
-  CONCAT(function, _hooktype) CONCAT(unsupported_real_, function) = NULL;                         \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8, \
-                                          t9 p9)                                                  \
-  {                                                                                               \
-    static bool hit = false;                                                                      \
-    if(hit == false)                                                                              \
-    {                                                                                             \
-      RDCERR("Function " STRINGIZE(function) " not supported - capture may be broken");           \
-      hit = true;                                                                                 \
-    }                                                                                             \
-    return CONCAT(unsupported_real_, function)(p1, p2, p3, p4, p5, p6, p7, p8, p9);               \
-  }
-
-#undef HookWrapper10
-#define HookWrapper10(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6, t7, p7, t8,  \
-                      p8, t9, p9, t10, p10)                                                       \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10);            \
-  CONCAT(function, _hooktype) CONCAT(unsupported_real_, function) = NULL;                         \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8, \
-                                          t9 p9, t10 p10)                                         \
-  {                                                                                               \
-    static bool hit = false;                                                                      \
-    if(hit == false)                                                                              \
-    {                                                                                             \
-      RDCERR("Function " STRINGIZE(function) " not supported - capture may be broken");           \
-      hit = true;                                                                                 \
-    }                                                                                             \
-    return CONCAT(unsupported_real_, function)(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10);          \
-  }
-
-#undef HookWrapper11
-#define HookWrapper11(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6, t7, p7, t8,  \
-                      p8, t9, p9, t10, p10, t11, p11)                                             \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11);       \
-  CONCAT(function, _hooktype) CONCAT(unsupported_real_, function) = NULL;                         \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8, \
-                                          t9 p9, t10 p10, t11 p11)                                \
-  {                                                                                               \
-    static bool hit = false;                                                                      \
-    if(hit == false)                                                                              \
-    {                                                                                             \
-      RDCERR("Function " STRINGIZE(function) " not supported - capture may be broken");           \
-      hit = true;                                                                                 \
-    }                                                                                             \
-    return CONCAT(unsupported_real_, function)(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11);     \
-  }
-
-#undef HookWrapper12
-#define HookWrapper12(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6, t7, p7, t8,   \
-                      p8, t9, p9, t10, p10, t11, p11, t12, p12)                                    \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12);   \
-  CONCAT(function, _hooktype) CONCAT(unsupported_real_, function) = NULL;                          \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8,  \
-                                          t9 p9, t10 p10, t11 p11, t12 p12)                        \
-  {                                                                                                \
-    static bool hit = false;                                                                       \
-    if(hit == false)                                                                               \
-    {                                                                                              \
-      RDCERR("Function " STRINGIZE(function) " not supported - capture may be broken");            \
-      hit = true;                                                                                  \
-    }                                                                                              \
-    return CONCAT(unsupported_real_, function)(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12); \
-  }
-
-#undef HookWrapper13
-#define HookWrapper13(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6, t7, p7, t8,  \
-                      p8, t9, p9, t10, p10, t11, p11, t12, p12, t13, p13)                         \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12,   \
-                                             t13);                                                \
-  CONCAT(function, _hooktype) CONCAT(unsupported_real_, function) = NULL;                         \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8, \
-                                          t9 p9, t10 p10, t11 p11, t12 p12, t13 p13)              \
-  {                                                                                               \
-    static bool hit = false;                                                                      \
-    if(hit == false)                                                                              \
-    {                                                                                             \
-      RDCERR("Function " STRINGIZE(function) " not supported - capture may be broken");           \
-      hit = true;                                                                                 \
-    }                                                                                             \
-    return CONCAT(unsupported_real_, function)(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, \
-                                               p13);                                              \
-  }
-
-#undef HookWrapper14
-#define HookWrapper14(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6, t7, p7, t8,  \
-                      p8, t9, p9, t10, p10, t11, p11, t12, p12, t13, p13, t14, p14)               \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12,   \
-                                             t13, t14);                                           \
-  CONCAT(function, _hooktype) CONCAT(unsupported_real_, function) = NULL;                         \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8, \
-                                          t9 p9, t10 p10, t11 p11, t12 p12, t13 p13, t14 p14)     \
-  {                                                                                               \
-    static bool hit = false;                                                                      \
-    if(hit == false)                                                                              \
-    {                                                                                             \
-      RDCERR("Function " STRINGIZE(function) " not supported - capture may be broken");           \
-      hit = true;                                                                                 \
-    }                                                                                             \
-    return CONCAT(unsupported_real_, function)(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, \
-                                               p13, p14);                                         \
-  }
-
-#undef HookWrapper15
-#define HookWrapper15(ret, function, t1, p1, t2, p2, t3, p3, t4, p4, t5, p5, t6, p6, t7, p7, t8,  \
-                      p8, t9, p9, t10, p10, t11, p11, t12, p12, t13, p13, t14, p14, t15, p15)     \
-  typedef ret (*CONCAT(function, _hooktype))(t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, t11, t12,   \
-                                             t13, t14, t15);                                      \
-  CONCAT(function, _hooktype) CONCAT(unsupported_real_, function) = NULL;                         \
-  ret CONCAT(function, _renderdoc_hooked)(t1 p1, t2 p2, t3 p3, t4 p4, t5 p5, t6 p6, t7 p7, t8 p8, \
-                                          t9 p9, t10 p10, t11 p11, t12 p12, t13 p13, t14 p14,     \
-                                          t15 p15)                                                \
-  {                                                                                               \
-    static bool hit = false;                                                                      \
-    if(hit == false)                                                                              \
-    {                                                                                             \
-      RDCERR("Function " STRINGIZE(function) " not supported - capture may be broken");           \
-      hit = true;                                                                                 \
-    }                                                                                             \
-    return CONCAT(unsupported_real_, function)(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, \
-                                               p13, p14, p15);                                    \
-  }
-
-DefineUnsupportedDummies();
+void OpenGLHook::libHooked(void *realLib)
+{
+  libGLdlsymHandle = realLib;
+  glhooks.CreateHooks(NULL);
+}
 
 // everything below here needs to have C linkage
 extern "C" {
@@ -905,10 +467,10 @@ extern "C" {
 __attribute__((visibility("default"))) GLXContext glXCreateContext(Display *dpy, XVisualInfo *vis,
                                                                    GLXContext shareList, Bool direct)
 {
-  if(OpenGLHook::glhooks.glXCreateContext_real == NULL)
-    OpenGLHook::glhooks.SetupExportedFunctions();
+  if(glhooks.glXCreateContext_real == NULL)
+    glhooks.SetupExportedFunctions();
 
-  GLXContext ret = OpenGLHook::glhooks.glXCreateContext_real(dpy, vis, shareList, direct);
+  GLXContext ret = glhooks.glXCreateContext_real(dpy, vis, shareList, direct);
 
   // don't continue if context creation failed
   if(!ret)
@@ -923,17 +485,17 @@ __attribute__((visibility("default"))) GLXContext glXCreateContext(Display *dpy,
 
   Keyboard::CloneDisplay(dpy);
 
-  OpenGLHook::glhooks.glXGetConfig_real(dpy, vis, GLX_BUFFER_SIZE, &value);
+  glhooks.glXGetConfig_real(dpy, vis, GLX_BUFFER_SIZE, &value);
   init.colorBits = value;
-  OpenGLHook::glhooks.glXGetConfig_real(dpy, vis, GLX_DEPTH_SIZE, &value);
+  glhooks.glXGetConfig_real(dpy, vis, GLX_DEPTH_SIZE, &value);
   init.depthBits = value;
-  OpenGLHook::glhooks.glXGetConfig_real(dpy, vis, GLX_STENCIL_SIZE, &value);
+  glhooks.glXGetConfig_real(dpy, vis, GLX_STENCIL_SIZE, &value);
   init.stencilBits = value;
   value = 1;    // default to srgb
-  OpenGLHook::glhooks.glXGetConfig_real(dpy, vis, GLX_FRAMEBUFFER_SRGB_CAPABLE_ARB, &value);
+  glhooks.glXGetConfig_real(dpy, vis, GLX_FRAMEBUFFER_SRGB_CAPABLE_ARB, &value);
   init.isSRGB = value;
   value = 1;
-  OpenGLHook::glhooks.glXGetConfig_real(dpy, vis, GLX_SAMPLES_ARB, &value);
+  glhooks.glXGetConfig_real(dpy, vis, GLX_SAMPLES_ARB, &value);
   init.isSRGB = RDCMAX(1, value);
 
   GLWindowingData data;
@@ -941,19 +503,25 @@ __attribute__((visibility("default"))) GLXContext glXCreateContext(Display *dpy,
   data.wnd = (GLXDrawable)NULL;
   data.ctx = ret;
 
-  OpenGLHook::glhooks.GetDriver()->CreateContext(data, shareList, init, false, false);
+  {
+    SCOPED_LOCK(glLock);
+    glhooks.GetDriver()->CreateContext(data, shareList, init, false, false);
+  }
 
   return ret;
 }
 
 __attribute__((visibility("default"))) void glXDestroyContext(Display *dpy, GLXContext ctx)
 {
-  if(OpenGLHook::glhooks.glXDestroyContext_real == NULL)
-    OpenGLHook::glhooks.SetupExportedFunctions();
+  if(glhooks.glXDestroyContext_real == NULL)
+    glhooks.SetupExportedFunctions();
 
-  OpenGLHook::glhooks.GetDriver()->DeleteContext(ctx);
+  {
+    SCOPED_LOCK(glLock);
+    glhooks.GetDriver()->DeleteContext(ctx);
+  }
 
-  OpenGLHook::glhooks.glXDestroyContext_real(dpy, ctx);
+  glhooks.glXDestroyContext_real(dpy, ctx);
 }
 
 __attribute__((visibility("default"))) GLXContext glXCreateContextAttribsARB(
@@ -975,7 +543,7 @@ __attribute__((visibility("default"))) GLXContext glXCreateContextAttribsARB(
 
       if(name == GLX_CONTEXT_FLAGS_ARB)
       {
-        if(RenderDoc::Inst().GetCaptureOptions().APIValidation)
+        if(RenderDoc::Inst().GetCaptureOptions().apiValidation)
           val |= GLX_CONTEXT_DEBUG_BIT_ARB;
         else
           val &= ~GLX_CONTEXT_DEBUG_BIT_ARB;
@@ -990,7 +558,7 @@ __attribute__((visibility("default"))) GLXContext glXCreateContextAttribsARB(
       attribVec.push_back(val);
     }
 
-    if(!flagsFound && RenderDoc::Inst().GetCaptureOptions().APIValidation)
+    if(!flagsFound && RenderDoc::Inst().GetCaptureOptions().apiValidation)
     {
       attribVec.push_back(GLX_CONTEXT_FLAGS_ARB);
       attribVec.push_back(GLX_CONTEXT_DEBUG_BIT_ARB);
@@ -1016,17 +584,16 @@ __attribute__((visibility("default"))) GLXContext glXCreateContextAttribsARB(
     a += 2;
   }
 
-  if(OpenGLHook::glhooks.glXCreateContextAttribsARB_real == NULL)
-    OpenGLHook::glhooks.SetupExportedFunctions();
+  if(glhooks.glXCreateContextAttribsARB_real == NULL)
+    glhooks.SetupExportedFunctions();
 
-  GLXContext ret =
-      OpenGLHook::glhooks.glXCreateContextAttribsARB_real(dpy, config, shareList, direct, attribs);
+  GLXContext ret = glhooks.glXCreateContextAttribsARB_real(dpy, config, shareList, direct, attribs);
 
   // don't continue if context creation failed
   if(!ret)
     return ret;
 
-  XVisualInfo *vis = OpenGLHook::glhooks.glXGetVisualFromFBConfig_real(dpy, config);
+  XVisualInfo *vis = glhooks.glXGetVisualFromFBConfig_real(dpy, config);
 
   GLInitParams init;
 
@@ -1037,17 +604,17 @@ __attribute__((visibility("default"))) GLXContext glXCreateContextAttribsARB(
 
   Keyboard::CloneDisplay(dpy);
 
-  OpenGLHook::glhooks.glXGetConfig_real(dpy, vis, GLX_BUFFER_SIZE, &value);
+  glhooks.glXGetConfig_real(dpy, vis, GLX_BUFFER_SIZE, &value);
   init.colorBits = value;
-  OpenGLHook::glhooks.glXGetConfig_real(dpy, vis, GLX_DEPTH_SIZE, &value);
+  glhooks.glXGetConfig_real(dpy, vis, GLX_DEPTH_SIZE, &value);
   init.depthBits = value;
-  OpenGLHook::glhooks.glXGetConfig_real(dpy, vis, GLX_STENCIL_SIZE, &value);
+  glhooks.glXGetConfig_real(dpy, vis, GLX_STENCIL_SIZE, &value);
   init.stencilBits = value;
   value = 1;    // default to srgb
-  OpenGLHook::glhooks.glXGetConfig_real(dpy, vis, GLX_FRAMEBUFFER_SRGB_CAPABLE_ARB, &value);
+  glhooks.glXGetConfig_real(dpy, vis, GLX_FRAMEBUFFER_SRGB_CAPABLE_ARB, &value);
   init.isSRGB = value;
   value = 1;
-  OpenGLHook::glhooks.glXGetConfig_real(dpy, vis, GLX_SAMPLES_ARB, &value);
+  glhooks.glXGetConfig_real(dpy, vis, GLX_SAMPLES_ARB, &value);
   init.isSRGB = RDCMAX(1, value);
 
   XFree(vis);
@@ -1057,7 +624,10 @@ __attribute__((visibility("default"))) GLXContext glXCreateContextAttribsARB(
   data.wnd = (GLXDrawable)NULL;
   data.ctx = ret;
 
-  OpenGLHook::glhooks.GetDriver()->CreateContext(data, shareList, init, core, true);
+  {
+    SCOPED_LOCK(glLock);
+    glhooks.GetDriver()->CreateContext(data, shareList, init, core, true);
+  }
 
   return ret;
 }
@@ -1065,16 +635,18 @@ __attribute__((visibility("default"))) GLXContext glXCreateContextAttribsARB(
 __attribute__((visibility("default"))) Bool glXMakeCurrent(Display *dpy, GLXDrawable drawable,
                                                            GLXContext ctx)
 {
-  if(OpenGLHook::glhooks.glXMakeCurrent_real == NULL)
-    OpenGLHook::glhooks.SetupExportedFunctions();
+  if(glhooks.glXMakeCurrent_real == NULL)
+    glhooks.SetupExportedFunctions();
 
-  Bool ret = OpenGLHook::glhooks.glXMakeCurrent_real(dpy, drawable, ctx);
+  Bool ret = glhooks.glXMakeCurrent_real(dpy, drawable, ctx);
 
-  if(ctx && OpenGLHook::glhooks.m_Contexts.find(ctx) == OpenGLHook::glhooks.m_Contexts.end())
+  SCOPED_LOCK(glLock);
+
+  if(ctx && glhooks.m_Contexts.find(ctx) == glhooks.m_Contexts.end())
   {
-    OpenGLHook::glhooks.m_Contexts.insert(ctx);
+    glhooks.m_Contexts.insert(ctx);
 
-    OpenGLHook::glhooks.PopulateHooks();
+    glhooks.PopulateHooks();
   }
 
   GLWindowingData data;
@@ -1082,7 +654,7 @@ __attribute__((visibility("default"))) Bool glXMakeCurrent(Display *dpy, GLXDraw
   data.wnd = drawable;
   data.ctx = ctx;
 
-  OpenGLHook::glhooks.GetDriver()->ActivateContext(data);
+  glhooks.GetDriver()->ActivateContext(data);
 
   return ret;
 }
@@ -1090,16 +662,18 @@ __attribute__((visibility("default"))) Bool glXMakeCurrent(Display *dpy, GLXDraw
 __attribute__((visibility("default"))) Bool glXMakeContextCurrent(Display *dpy, GLXDrawable draw,
                                                                   GLXDrawable read, GLXContext ctx)
 {
-  if(OpenGLHook::glhooks.glXMakeContextCurrent_real == NULL)
-    OpenGLHook::glhooks.SetupExportedFunctions();
+  if(glhooks.glXMakeContextCurrent_real == NULL)
+    glhooks.SetupExportedFunctions();
 
-  Bool ret = OpenGLHook::glhooks.glXMakeContextCurrent_real(dpy, draw, read, ctx);
+  Bool ret = glhooks.glXMakeContextCurrent_real(dpy, draw, read, ctx);
 
-  if(ctx && OpenGLHook::glhooks.m_Contexts.find(ctx) == OpenGLHook::glhooks.m_Contexts.end())
+  SCOPED_LOCK(glLock);
+
+  if(ctx && glhooks.m_Contexts.find(ctx) == glhooks.m_Contexts.end())
   {
-    OpenGLHook::glhooks.m_Contexts.insert(ctx);
+    glhooks.m_Contexts.insert(ctx);
 
-    OpenGLHook::glhooks.PopulateHooks();
+    glhooks.PopulateHooks();
   }
 
   GLWindowingData data;
@@ -1107,15 +681,15 @@ __attribute__((visibility("default"))) Bool glXMakeContextCurrent(Display *dpy, 
   data.wnd = draw;
   data.ctx = ctx;
 
-  OpenGLHook::glhooks.GetDriver()->ActivateContext(data);
+  glhooks.GetDriver()->ActivateContext(data);
 
   return ret;
 }
 
 __attribute__((visibility("default"))) void glXSwapBuffers(Display *dpy, GLXDrawable drawable)
 {
-  if(OpenGLHook::glhooks.glXSwapBuffers_real == NULL)
-    OpenGLHook::glhooks.SetupExportedFunctions();
+  if(glhooks.glXSwapBuffers_real == NULL)
+    glhooks.SetupExportedFunctions();
 
   SCOPED_LOCK(glLock);
 
@@ -1125,26 +699,26 @@ __attribute__((visibility("default"))) void glXSwapBuffers(Display *dpy, GLXDraw
   // created from to use that.
   // If the drawable didn't come through there, it just passes through unscathed
   // through this function
-  Drawable d = OpenGLHook::glhooks.UnwrapGLXWindow(drawable);
+  Drawable d = glhooks.UnwrapGLXWindow(drawable);
 
   Window root;
   int x, y;
   unsigned int width, height, border_width, depth;
   XGetGeometry(dpy, d, &root, &x, &y, &width, &height, &border_width, &depth);
 
-  OpenGLHook::glhooks.GetDriver()->WindowSize((void *)drawable, width, height);
+  glhooks.GetDriver()->WindowSize((void *)drawable, width, height);
 
-  OpenGLHook::glhooks.GetDriver()->SwapBuffers((void *)drawable);
+  glhooks.GetDriver()->SwapBuffers((void *)drawable);
 
-  OpenGLHook::glhooks.glXSwapBuffers_real(dpy, drawable);
+  glhooks.glXSwapBuffers_real(dpy, drawable);
 }
 
 __attribute__((visibility("default"))) __GLXextFuncPtr glXGetProcAddress(const GLubyte *f)
 {
-  if(OpenGLHook::glhooks.glXGetProcAddress_real == NULL)
-    OpenGLHook::glhooks.SetupExportedFunctions();
+  if(glhooks.glXGetProcAddress_real == NULL)
+    glhooks.SetupExportedFunctions();
 
-  __GLXextFuncPtr realFunc = OpenGLHook::glhooks.glXGetProcAddress_real(f);
+  __GLXextFuncPtr realFunc = glhooks.glXGetProcAddress_real(f);
   const char *func = (const char *)f;
 
   // if the client code did dlopen on libGL then tried to fetch some functions
@@ -1160,9 +734,8 @@ __attribute__((visibility("default"))) __GLXextFuncPtr glXGetProcAddress(const G
   }
 
   // this might not be dlsym exported, so if it's GPA'd, record the real pointer for oureslves
-  if(!strcmp(func, "glXCreateContextAttribsARB") &&
-     OpenGLHook::glhooks.glXCreateContextAttribsARB_real == NULL)
-    OpenGLHook::glhooks.glXCreateContextAttribsARB_real = (PFNGLXCREATECONTEXTATTRIBSARBPROC)realFunc;
+  if(!strcmp(func, "glXCreateContextAttribsARB") && glhooks.glXCreateContextAttribsARB_real == NULL)
+    glhooks.glXCreateContextAttribsARB_real = (PFNGLXCREATECONTEXTATTRIBSARBPROC)realFunc;
 
   // handle a few functions that we only export as real functions, just
   // in case
@@ -1178,6 +751,10 @@ __attribute__((visibility("default"))) __GLXextFuncPtr glXGetProcAddress(const G
     return (__GLXextFuncPtr)&glXSwapBuffers;
   if(!strcmp(func, "glXQueryExtension"))
     return (__GLXextFuncPtr)&glXQueryExtension;
+  if(!strcmp(func, "glXGetProcAddress"))
+    return (__GLXextFuncPtr)&glXGetProcAddress;
+  if(!strcmp(func, "glXGetProcAddressARB"))
+    return (__GLXextFuncPtr)&glXGetProcAddressARB;
   if(!strncmp(func, "glX", 3))
     return realFunc;
 
@@ -1185,18 +762,7 @@ __attribute__((visibility("default"))) __GLXextFuncPtr glXGetProcAddress(const G
   if(realFunc == NULL)
     return realFunc;
 
-  DLLExportHooks();
-  HookCheckGLExtensions();
-
-  // at the moment the unsupported functions are all lowercase (as their name is generated from the
-  // typedef name).
-  string lowername = strlower(string(func));
-
-  CheckUnsupported();
-
-  // for any other function, if it's not a core or extension function we know about,
-  // just return NULL
-  return NULL;
+  return (__GLXextFuncPtr)SharedLookupFuncPtr(func, (void *)realFunc);
 }
 
 __attribute__((visibility("default"))) __GLXextFuncPtr glXGetProcAddressARB(const GLubyte *f)
@@ -1207,88 +773,117 @@ __attribute__((visibility("default"))) __GLXextFuncPtr glXGetProcAddressARB(cons
 __attribute__((visibility("default"))) GLXWindow glXCreateWindow(Display *dpy, GLXFBConfig config,
                                                                  Window win, const int *attribList)
 {
-  if(OpenGLHook::glhooks.glXCreateWindow_real == NULL)
-    OpenGLHook::glhooks.SetupExportedFunctions();
+  if(glhooks.glXCreateWindow_real == NULL)
+    glhooks.SetupExportedFunctions();
 
-  GLXWindow ret = OpenGLHook::glhooks.glXCreateWindow_real(dpy, config, win, attribList);
+  GLXWindow ret = glhooks.glXCreateWindow_real(dpy, config, win, attribList);
 
-  OpenGLHook::glhooks.AddGLXWindow(ret, win);
+  {
+    SCOPED_LOCK(glLock);
+    glhooks.AddGLXWindow(ret, win);
+  }
 
   return ret;
 }
 
 __attribute__((visibility("default"))) void glXDestroyWindow(Display *dpy, GLXWindow window)
 {
-  if(OpenGLHook::glhooks.glXDestroyWindow_real == NULL)
-    OpenGLHook::glhooks.SetupExportedFunctions();
+  if(glhooks.glXDestroyWindow_real == NULL)
+    glhooks.SetupExportedFunctions();
 
-  OpenGLHook::glhooks.RemoveGLXWindow(window);
+  {
+    SCOPED_LOCK(glLock);
+    glhooks.RemoveGLXWindow(window);
+  }
 
-  return OpenGLHook::glhooks.glXDestroyWindow_real(dpy, window);
+  return glhooks.glXDestroyWindow_real(dpy, window);
+}
+
+// because we intercept all dlopen calls to "libGL.so*" to ourselves, we can interfere with some
+// vulkan ICDs. For some reason they point the vulkan ICD to that file and so the vulkan loader
+// tries to get the bootstrap entry points from us. I think this is a distribution thing and is not
+// true in the official nvidia package, I'm not sure.
+// Unfortunately there's no perfect way to fix this, since if we declare a function the ICD doesn't
+// support we're screwed. We just have to hope the ICD exports all these functions that we can
+// forward on to.
+
+// declare minimal typedefs to get by
+typedef void *VkInstance;
+enum VkResult
+{
+  VK_ERROR_INCOMPATIBLE_DRIVER = -9
+};
+struct VkNegotiateLayerInterface;
+
+typedef void (*PFN_vkVoidFunction)(void);
+typedef PFN_vkVoidFunction (*PFN_vkGetInstanceProcAddr)(VkInstance instance, const char *pName);
+typedef PFN_vkVoidFunction (*PFN_GetPhysicalDeviceProcAddr)(VkInstance instance, const char *pName);
+typedef VkResult (*PFN_vkNegotiateLoaderLayerInterfaceVersion)(VkNegotiateLayerInterface *pVersionStruct);
+
+__attribute__((visibility("default"))) PFN_vkVoidFunction vk_icdGetInstanceProcAddr(
+    VkInstance instance, const char *pName)
+{
+  PFN_vkGetInstanceProcAddr real =
+      (PFN_vkGetInstanceProcAddr)dlsym(libGLdlsymHandle, "vk_icdGetInstanceProcAddr");
+
+  if(real)
+    return real(instance, pName);
+
+  return NULL;
+}
+
+__attribute__((visibility("default"))) PFN_vkVoidFunction vk_icdGetPhysicalDeviceProcAddr(
+    VkInstance instance, const char *pName)
+{
+  PFN_GetPhysicalDeviceProcAddr real =
+      (PFN_GetPhysicalDeviceProcAddr)dlsym(libGLdlsymHandle, "vk_icdGetPhysicalDeviceProcAddr");
+
+  if(real)
+    return real(instance, pName);
+
+  return NULL;
+}
+
+__attribute__((visibility("default"))) VkResult vk_icdNegotiateLoaderLayerInterfaceVersion(
+    VkNegotiateLayerInterface *pVersionStruct)
+{
+  PFN_vkNegotiateLoaderLayerInterfaceVersion real = (PFN_vkNegotiateLoaderLayerInterfaceVersion)dlsym(
+      libGLdlsymHandle, "vk_icdNegotiateLoaderLayerInterfaceVersion");
+
+  if(real)
+    return real(pVersionStruct);
+
+  return VK_ERROR_INCOMPATIBLE_DRIVER;
 }
 
 };    // extern "C"
 
 bool OpenGLHook::PopulateHooks()
 {
-  bool success = true;
+  SetupHooks();
 
-  SetupHooks(GL);
+  glXGetProcAddress((const GLubyte *)"glXCreateContextAttribsARB");
 
-  if(glXGetProcAddress_real == NULL)
-    glXGetProcAddress_real = (PFNGLXGETPROCADDRESSPROC)dlsym(libGLdlsymHandle, "glXGetProcAddress");
+  bool ret = SharedPopulateHooks(true, [](const char *funcName) {
+    return (void *)glXGetProcAddress((const GLubyte *)funcName);
+  });
 
-  glXGetProcAddress_real((const GLubyte *)"glXCreateContextAttribsARB");
+  if(!ret)
+    return false;
 
-#undef HookInit
-#define HookInit(function)                                                                   \
-  if(GL.function == NULL)                                                                    \
-  {                                                                                          \
-    GL.function = (CONCAT(function, _hooktype))dlsym(libGLdlsymHandle, STRINGIZE(function)); \
-    glXGetProcAddress((const GLubyte *)STRINGIZE(function));                                 \
-  }
-
-// cheeky
-#undef HookExtension
-#define HookExtension(funcPtrType, function) glXGetProcAddress((const GLubyte *)STRINGIZE(function))
-#undef HookExtensionAlias
-#define HookExtensionAlias(funcPtrType, function, alias)
-
-  DLLExportHooks();
-  HookCheckGLExtensions();
-
-  // see gl_emulated.cpp
-  if(RenderDoc::Inst().IsReplayApp())
-    glEmulate::EmulateUnsupportedFunctions(&GL);
+  SharedCheckContext();
 
   return true;
 }
 
-OpenGLHook OpenGLHook::glhooks;
-
 const GLHookSet &GetRealGLFunctions()
 {
-  return OpenGLHook::glhooks.GetRealGLFunctions();
+  return glhooks.GetRealGLFunctions();
 }
 
-Threading::CriticalSection &GetGLLock()
+GLPlatform &GetGLPlatform()
 {
-  return glLock;
-}
-
-void MakeContextCurrent(GLWindowingData data)
-{
-  OpenGLHook::glhooks.MakeContextCurrent(data);
-}
-
-GLWindowingData MakeContext(GLWindowingData share)
-{
-  return OpenGLHook::glhooks.MakeContext(share);
-}
-
-void DeleteContext(GLWindowingData context)
-{
-  OpenGLHook::glhooks.DeleteContext(context);
+  return glhooks;
 }
 
 // dirty immediate mode rendering functions for backwards compatible
@@ -1321,38 +916,38 @@ const GLenum MAT_PROJ = (GLenum)0x1701;
 
 static bool immediateInited = false;
 
-bool immediateBegin(GLenum mode, float width, float height)
+bool OpenGLHook::DrawQuads(float width, float height, const std::vector<Vec4f> &vertices)
 {
   if(!immediateInited)
   {
-    getInt = (GLGETINTEGERVPROC)dlsym(RTLD_NEXT, "glGetIntegerv");
+    getInt = (GLGETINTEGERVPROC)dlsym(libGLdlsymHandle, "glGetIntegerv");
     if(!getInt)
       return false;
-    pushm = (GLPUSHMATRIXPROC)dlsym(RTLD_NEXT, "glPushMatrix");
+    pushm = (GLPUSHMATRIXPROC)dlsym(libGLdlsymHandle, "glPushMatrix");
     if(!pushm)
       return false;
-    loadident = (GLLOADIDENTITYPROC)dlsym(RTLD_NEXT, "glLoadIdentity");
+    loadident = (GLLOADIDENTITYPROC)dlsym(libGLdlsymHandle, "glLoadIdentity");
     if(!loadident)
       return false;
-    matMode = (GLMATRIXMODEPROC)dlsym(RTLD_NEXT, "glMatrixMode");
+    matMode = (GLMATRIXMODEPROC)dlsym(libGLdlsymHandle, "glMatrixMode");
     if(!matMode)
       return false;
-    ortho = (GLORTHOPROC)dlsym(RTLD_NEXT, "glOrtho");
+    ortho = (GLORTHOPROC)dlsym(libGLdlsymHandle, "glOrtho");
     if(!ortho)
       return false;
-    popm = (GLPOPMATRIXPROC)dlsym(RTLD_NEXT, "glPopMatrix");
+    popm = (GLPOPMATRIXPROC)dlsym(libGLdlsymHandle, "glPopMatrix");
     if(!popm)
       return false;
-    begin = (GLBEGINPROC)dlsym(RTLD_NEXT, "glBegin");
+    begin = (GLBEGINPROC)dlsym(libGLdlsymHandle, "glBegin");
     if(!begin)
       return false;
-    v2f = (GLVERTEX2FPROC)dlsym(RTLD_NEXT, "glVertex2f");
+    v2f = (GLVERTEX2FPROC)dlsym(libGLdlsymHandle, "glVertex2f");
     if(!v2f)
       return false;
-    t2f = (GLTEXCOORD2FPROC)dlsym(RTLD_NEXT, "glTexCoord2f");
+    t2f = (GLTEXCOORD2FPROC)dlsym(libGLdlsymHandle, "glTexCoord2f");
     if(!t2f)
       return false;
-    end = (GLENDPROC)dlsym(RTLD_NEXT, "glEnd");
+    end = (GLENDPROC)dlsym(libGLdlsymHandle, "glEnd");
     if(!end)
       return false;
 
@@ -1373,22 +968,16 @@ bool immediateBegin(GLenum mode, float width, float height)
 
   matMode(prevMatMode);
 
-  begin(mode);
+  begin(eGL_QUADS);
 
-  return true;
-}
+  for(size_t i = 0; i < vertices.size(); i++)
+  {
+    t2f(vertices[i].z, vertices[i].w);
+    v2f(vertices[i].x, vertices[i].y);
+  }
 
-void immediateVert(float x, float y, float u, float v)
-{
-  t2f(u, v);
-  v2f(x, y);
-}
-
-void immediateEnd()
-{
   end();
 
-  GLenum prevMatMode = eGL_NONE;
   getInt(MAT_MODE, (GLint *)&prevMatMode);
 
   matMode(MAT_PROJ);
@@ -1397,4 +986,6 @@ void immediateEnd()
   popm();
 
   matMode(prevMatMode);
+
+  return true;
 }

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,192 +22,248 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
+#include <algorithm>
+#include <iterator>
+#include "driver/ihv/amd/amd_counters.h"
+#include "d3d12_command_list.h"
 #include "d3d12_command_queue.h"
 #include "d3d12_common.h"
 #include "d3d12_device.h"
 
-void D3D12Replay::PreDeviceInitCounters()
+vector<GPUCounter> D3D12Replay::EnumerateCounters()
 {
-}
+  vector<GPUCounter> ret;
 
-void D3D12Replay::PostDeviceInitCounters()
-{
-}
+  ret.push_back(GPUCounter::EventGPUDuration);
+  ret.push_back(GPUCounter::InputVerticesRead);
+  ret.push_back(GPUCounter::IAPrimitives);
+  ret.push_back(GPUCounter::GSPrimitives);
+  ret.push_back(GPUCounter::RasterizerInvocations);
+  ret.push_back(GPUCounter::RasterizedPrimitives);
+  ret.push_back(GPUCounter::SamplesWritten);
+  ret.push_back(GPUCounter::VSInvocations);
+  ret.push_back(GPUCounter::HSInvocations);
+  ret.push_back(GPUCounter::DSInvocations);
+  ret.push_back(GPUCounter::GSInvocations);
+  ret.push_back(GPUCounter::PSInvocations);
+  ret.push_back(GPUCounter::CSInvocations);
 
-void D3D12Replay::PreDeviceShutdownCounters()
-{
-}
-
-void D3D12Replay::PostDeviceShutdownCounters()
-{
-}
-
-vector<uint32_t> D3D12Replay::EnumerateCounters()
-{
-  vector<uint32_t> ret;
-
-  ret.push_back(eCounter_EventGPUDuration);
-  ret.push_back(eCounter_InputVerticesRead);
-  ret.push_back(eCounter_IAPrimitives);
-  ret.push_back(eCounter_VSInvocations);
-  ret.push_back(eCounter_GSInvocations);
-  ret.push_back(eCounter_GSPrimitives);
-  ret.push_back(eCounter_RasterizerInvocations);
-  ret.push_back(eCounter_RasterizedPrimitives);
-  ret.push_back(eCounter_PSInvocations);
-  ret.push_back(eCounter_HSInvocations);
-  ret.push_back(eCounter_DSInvocations);
-  ret.push_back(eCounter_CSInvocations);
-  ret.push_back(eCounter_SamplesWritten);
+  if(m_pAMDCounters)
+  {
+    vector<GPUCounter> amdCounters = m_pAMDCounters->GetPublicCounterIds();
+    ret.insert(ret.end(), amdCounters.begin(), amdCounters.end());
+  }
 
   return ret;
 }
 
-void D3D12Replay::DescribeCounter(uint32_t counterID, CounterDescription &desc)
+CounterDescription D3D12Replay::DescribeCounter(GPUCounter counterID)
 {
-  desc.counterID = counterID;
+  CounterDescription desc;
+  desc.counter = counterID;
+  /////AMD//////
+  if(IsAMDCounter(counterID))
+  {
+    if(m_pAMDCounters)
+    {
+      desc = m_pAMDCounters->GetCounterDescription(counterID);
+
+      return desc;
+    }
+  }
+
+  // 0808CC9B-79DF-4549-81F7-85494E648F22
+  desc.uuid.words[0] = 0x0808CC9B;
+  desc.uuid.words[1] = 0x79DF4549;
+  desc.uuid.words[2] = 0x81F78549;
+  desc.uuid.words[3] = 0x4E648F22 ^ (uint32_t)counterID;
+
+  desc.category = "D3D12 Built-in";
 
   switch(counterID)
   {
-    case eCounter_EventGPUDuration:
+    case GPUCounter::EventGPUDuration:
       desc.name = "GPU Duration";
       desc.description =
           "Time taken for this event on the GPU, as measured by delta between two GPU timestamps.";
       desc.resultByteWidth = 8;
-      desc.resultCompType = eCompType_Double;
-      desc.units = eUnits_Seconds;
+      desc.resultType = CompType::Double;
+      desc.unit = CounterUnit::Seconds;
       break;
-    case eCounter_InputVerticesRead:
+    case GPUCounter::InputVerticesRead:
       desc.name = "Input Vertices Read";
       desc.description = "Number of vertices read by input assembler.";
       desc.resultByteWidth = 8;
-      desc.resultCompType = eCompType_UInt;
-      desc.units = eUnits_Absolute;
+      desc.resultType = CompType::UInt;
+      desc.unit = CounterUnit::Absolute;
       break;
-    case eCounter_IAPrimitives:
+    case GPUCounter::IAPrimitives:
       desc.name = "Input Primitives";
       desc.description = "Number of primitives read by the input assembler.";
       desc.resultByteWidth = 8;
-      desc.resultCompType = eCompType_UInt;
-      desc.units = eUnits_Absolute;
+      desc.resultType = CompType::UInt;
+      desc.unit = CounterUnit::Absolute;
       break;
-    case eCounter_GSPrimitives:
+    case GPUCounter::GSPrimitives:
       desc.name = "GS Primitives";
       desc.description = "Number of primitives output by a geometry shader.";
       desc.resultByteWidth = 8;
-      desc.resultCompType = eCompType_UInt;
-      desc.units = eUnits_Absolute;
+      desc.resultType = CompType::UInt;
+      desc.unit = CounterUnit::Absolute;
       break;
-    case eCounter_RasterizerInvocations:
-      desc.name = "RasterizerInvocations";
+    case GPUCounter::RasterizerInvocations:
+      desc.name = "Rasterizer Invocations";
       desc.description = "Number of primitives that were sent to the rasterizer.";
       desc.resultByteWidth = 8;
-      desc.resultCompType = eCompType_UInt;
-      desc.units = eUnits_Absolute;
+      desc.resultType = CompType::UInt;
+      desc.unit = CounterUnit::Absolute;
       break;
-    case eCounter_RasterizedPrimitives:
+    case GPUCounter::RasterizedPrimitives:
       desc.name = "Rasterized Primitives";
       desc.description = "Number of primitives that were rendered.";
       desc.resultByteWidth = 8;
-      desc.resultCompType = eCompType_UInt;
-      desc.units = eUnits_Absolute;
+      desc.resultType = CompType::UInt;
+      desc.unit = CounterUnit::Absolute;
       break;
-    case eCounter_SamplesWritten:
+    case GPUCounter::SamplesWritten:
       desc.name = "Samples Written";
       desc.description = "Number of samples that passed depth/stencil test.";
       desc.resultByteWidth = 8;
-      desc.resultCompType = eCompType_UInt;
-      desc.units = eUnits_Absolute;
+      desc.resultType = CompType::UInt;
+      desc.unit = CounterUnit::Absolute;
       break;
-    case eCounter_VSInvocations:
+    case GPUCounter::VSInvocations:
       desc.name = "VS Invocations";
       desc.description = "Number of times a vertex shader was invoked.";
       desc.resultByteWidth = 8;
-      desc.resultCompType = eCompType_UInt;
-      desc.units = eUnits_Absolute;
+      desc.resultType = CompType::UInt;
+      desc.unit = CounterUnit::Absolute;
       break;
-    case eCounter_GSInvocations:
+    case GPUCounter::GSInvocations:
       desc.name = "GS Invocations";
       desc.description = "Number of times a geometry shader was invoked.";
       desc.resultByteWidth = 8;
-      desc.resultCompType = eCompType_UInt;
-      desc.units = eUnits_Absolute;
+      desc.resultType = CompType::UInt;
+      desc.unit = CounterUnit::Absolute;
       break;
-    case eCounter_HSInvocations:
+    case GPUCounter::HSInvocations:
       desc.name = "HS Invocations";
       desc.description = "Number of times a hull shader was invoked.";
       desc.resultByteWidth = 8;
-      desc.resultCompType = eCompType_UInt;
-      desc.units = eUnits_Absolute;
+      desc.resultType = CompType::UInt;
+      desc.unit = CounterUnit::Absolute;
       break;
-    case eCounter_DSInvocations:
+    case GPUCounter::DSInvocations:
       desc.name = "DS Invocations";
       desc.description =
           "Number of times a domain shader (or tesselation evaluation shader in OpenGL) was "
           "invoked.";
       desc.resultByteWidth = 8;
-      desc.resultCompType = eCompType_UInt;
-      desc.units = eUnits_Absolute;
+      desc.resultType = CompType::UInt;
+      desc.unit = CounterUnit::Absolute;
       break;
-    case eCounter_PSInvocations:
+    case GPUCounter::PSInvocations:
       desc.name = "PS Invocations";
       desc.description = "Number of times a pixel shader was invoked.";
       desc.resultByteWidth = 8;
-      desc.resultCompType = eCompType_UInt;
-      desc.units = eUnits_Absolute;
+      desc.resultType = CompType::UInt;
+      desc.unit = CounterUnit::Absolute;
       break;
-    case eCounter_CSInvocations:
+    case GPUCounter::CSInvocations:
       desc.name = "CS Invocations";
       desc.description = "Number of times a compute shader was invoked.";
       desc.resultByteWidth = 8;
-      desc.resultCompType = eCompType_UInt;
-      desc.units = eUnits_Absolute;
+      desc.resultType = CompType::UInt;
+      desc.unit = CounterUnit::Absolute;
       break;
     default:
       desc.name = "Unknown";
       desc.description = "Unknown counter ID";
       desc.resultByteWidth = 0;
-      desc.resultCompType = eCompType_None;
-      desc.units = eUnits_Absolute;
+      desc.resultType = CompType::Typeless;
+      desc.unit = CounterUnit::Absolute;
       break;
   }
+
+  return desc;
 }
 
-struct D3D12GPUTimerCallback : public D3D12DrawcallCallback
+struct D3D12AMDDrawCallback : public D3D12DrawcallCallback
 {
-  D3D12GPUTimerCallback(WrappedID3D12Device *dev, D3D12Replay *rp, ID3D12QueryHeap *qh)
-      : m_pDevice(dev), m_pReplay(rp), m_QueryHeap(qh)
+  D3D12AMDDrawCallback(WrappedID3D12Device *dev, D3D12Replay *rp, uint32_t &sampleIndex,
+                       vector<uint32_t> &eventIDs)
+      : m_pDevice(dev), m_pReplay(rp), m_pSampleId(&sampleIndex), m_pEventIds(&eventIDs)
   {
     m_pDevice->GetQueue()->GetCommandData()->m_DrawcallCallback = this;
   }
-  ~D3D12GPUTimerCallback() { m_pDevice->GetQueue()->GetCommandData()->m_DrawcallCallback = NULL; }
-  void PreDraw(uint32_t eid, ID3D12GraphicsCommandList *cmd)
+
+  virtual ~D3D12AMDDrawCallback()
   {
-    cmd->EndQuery(m_QueryHeap, D3D12_QUERY_TYPE_TIMESTAMP, (uint32_t)(m_Results.size() * 2 + 0));
+    m_pDevice->GetQueue()->GetCommandData()->m_DrawcallCallback = NULL;
   }
 
-  bool PostDraw(uint32_t eid, ID3D12GraphicsCommandList *cmd)
+  void PreDraw(uint32_t eid, ID3D12GraphicsCommandList *cmd) override
   {
-    cmd->EndQuery(m_QueryHeap, D3D12_QUERY_TYPE_TIMESTAMP, (uint32_t)(m_Results.size() * 2 + 1));
-    m_Results.push_back(eid);
+    m_pEventIds->push_back(eid);
+
+    WrappedID3D12GraphicsCommandList *pWrappedCmdList = (WrappedID3D12GraphicsCommandList *)cmd;
+
+    if(m_begunCommandLists.find(pWrappedCmdList->GetReal()) == m_begunCommandLists.end())
+    {
+      m_begunCommandLists.insert(pWrappedCmdList->GetReal());
+
+      m_pReplay->GetAMDCounters()->BeginSampleList(pWrappedCmdList->GetReal());
+    }
+
+    m_pReplay->GetAMDCounters()->BeginSampleInSampleList(*m_pSampleId, pWrappedCmdList->GetReal());
+
+    ++*m_pSampleId;
+  }
+
+  bool PostDraw(uint32_t eid, ID3D12GraphicsCommandList *cmd) override
+  {
+    WrappedID3D12GraphicsCommandList *pWrappedCmdList = (WrappedID3D12GraphicsCommandList *)cmd;
+
+    m_pReplay->GetAMDCounters()->EndSampleInSampleList(pWrappedCmdList->GetReal());
     return false;
   }
 
-  void PostRedraw(uint32_t eid, ID3D12GraphicsCommandList *cmd) {}
+  void PreCloseCommandList(ID3D12GraphicsCommandList *cmd) override
+  {
+    WrappedID3D12GraphicsCommandList *pWrappedCmdList = (WrappedID3D12GraphicsCommandList *)cmd;
+
+    auto iter = m_begunCommandLists.find(pWrappedCmdList->GetReal());
+
+    if(iter != m_begunCommandLists.end())
+    {
+      m_pReplay->GetAMDCounters()->EndSampleList(*iter);
+      m_begunCommandLists.erase(iter);
+    }
+  }
+
+  void PostRedraw(uint32_t eid, ID3D12GraphicsCommandList *cmd) override {}
   // we don't need to distinguish, call the Draw functions
-  void PreDispatch(uint32_t eid, ID3D12GraphicsCommandList *cmd) { PreDraw(eid, cmd); }
-  bool PostDispatch(uint32_t eid, ID3D12GraphicsCommandList *cmd) { return PostDraw(eid, cmd); }
-  void PostRedispatch(uint32_t eid, ID3D12GraphicsCommandList *cmd) { PostRedraw(eid, cmd); }
-  bool RecordAllCmds() { return true; }
-  void AliasEvent(uint32_t primary, uint32_t alias)
+  void PreDispatch(uint32_t eid, ID3D12GraphicsCommandList *cmd) override { PreDraw(eid, cmd); }
+  bool PostDispatch(uint32_t eid, ID3D12GraphicsCommandList *cmd) override
+  {
+    return PostDraw(eid, cmd);
+  }
+  void PostRedispatch(uint32_t eid, ID3D12GraphicsCommandList *cmd) override
+  {
+    PostRedraw(eid, cmd);
+  }
+
+  void AliasEvent(uint32_t primary, uint32_t alias) override
   {
     m_AliasEvents.push_back(std::make_pair(primary, alias));
   }
 
+  uint32_t *m_pSampleId;
   WrappedID3D12Device *m_pDevice;
   D3D12Replay *m_pReplay;
-  ID3D12QueryHeap *m_QueryHeap;
-  vector<uint32_t> m_Results;
+  vector<uint32_t> *m_pEventIds;
+  set<ID3D12GraphicsCommandList *> m_begunCommandLists;
+
   // events which are the 'same' from being the same command buffer resubmitted
   // multiple times in the frame. We will only get the full callback when we're
   // recording the command buffer, and will be given the first EID. After that
@@ -215,11 +271,198 @@ struct D3D12GPUTimerCallback : public D3D12DrawcallCallback
   vector<pair<uint32_t, uint32_t> > m_AliasEvents;
 };
 
-vector<CounterResult> D3D12Replay::FetchCounters(const vector<uint32_t> &counters)
+void D3D12Replay::FillTimersAMD(uint32_t *eventStartID, uint32_t *sampleIndex,
+                                vector<uint32_t> *eventIDs)
+{
+  uint32_t maxEID = m_pDevice->GetQueue()->GetMaxEID();
+
+  m_pAMDDrawCallback = new D3D12AMDDrawCallback(m_pDevice, this, *sampleIndex, *eventIDs);
+
+  // replay the events to perform all the queries
+  m_pDevice->ReplayLog(*eventStartID, maxEID, eReplay_Full);
+}
+
+vector<CounterResult> D3D12Replay::FetchCountersAMD(const vector<GPUCounter> &counters)
+{
+  m_pAMDCounters->DisableAllCounters();
+
+  // enable counters it needs
+  for(size_t i = 0; i < counters.size(); i++)
+  {
+    // This function is only called internally, and violating this assertion means our
+    // caller has invoked this method incorrectly
+    RDCASSERT(IsAMDCounter(counters[i]));
+    m_pAMDCounters->EnableCounter(counters[i]);
+  }
+
+  uint32_t sessionID = m_pAMDCounters->BeginSession();
+
+  uint32_t passCount = m_pAMDCounters->GetPassCount();
+
+  uint32_t sampleIndex = 0;
+
+  vector<uint32_t> eventIDs;
+
+  for(uint32_t i = 0; i < passCount; i++)
+  {
+    m_pAMDCounters->BeginPass();
+
+    uint32_t eventStartID = 0;
+
+    sampleIndex = 0;
+
+    eventIDs.clear();
+
+    FillTimersAMD(&eventStartID, &sampleIndex, &eventIDs);
+
+    m_pAMDCounters->EndPass();
+  }
+
+  m_pAMDCounters->EndSesssion();
+
+  vector<CounterResult> ret =
+      m_pAMDCounters->GetCounterData(sessionID, sampleIndex, eventIDs, counters);
+
+  for(size_t i = 0; i < m_pAMDDrawCallback->m_AliasEvents.size(); i++)
+  {
+    for(size_t c = 0; c < counters.size(); c++)
+    {
+      CounterResult search;
+      search.counter = counters[c];
+      search.eventId = m_pAMDDrawCallback->m_AliasEvents[i].first;
+
+      // find the result we're aliasing
+      auto it = std::find(ret.begin(), ret.end(), search);
+      if(it != ret.end())
+      {
+        // duplicate the result and append
+        CounterResult aliased = *it;
+        aliased.eventId = m_pAMDDrawCallback->m_AliasEvents[i].second;
+        ret.push_back(aliased);
+      }
+      else
+      {
+        RDCERR("Expected to find alias-target result for EID %u counter %u, but didn't",
+               search.eventId, search.counter);
+      }
+    }
+  }
+
+  SAFE_DELETE(m_pAMDDrawCallback);
+
+  return ret;
+}
+
+struct D3D12GPUTimerCallback : public D3D12DrawcallCallback
+{
+  D3D12GPUTimerCallback(WrappedID3D12Device *dev, D3D12Replay *rp, ID3D12QueryHeap *tqh,
+                        ID3D12QueryHeap *psqh, ID3D12QueryHeap *oqh)
+      : m_pDevice(dev),
+        m_pReplay(rp),
+        m_TimerQueryHeap(tqh),
+        m_PipeStatsQueryHeap(psqh),
+        m_OcclusionQueryHeap(oqh),
+        m_NumStatsQueries(0),
+        m_NumTimestampQueries(0)
+  {
+    m_pDevice->GetQueue()->GetCommandData()->m_DrawcallCallback = this;
+  }
+  ~D3D12GPUTimerCallback() { m_pDevice->GetQueue()->GetCommandData()->m_DrawcallCallback = NULL; }
+  void PreDraw(uint32_t eid, ID3D12GraphicsCommandList *cmd) override
+  {
+    if(cmd->GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT)
+    {
+      cmd->BeginQuery(m_OcclusionQueryHeap, D3D12_QUERY_TYPE_OCCLUSION, m_NumStatsQueries);
+      cmd->BeginQuery(m_PipeStatsQueryHeap, D3D12_QUERY_TYPE_PIPELINE_STATISTICS, m_NumStatsQueries);
+    }
+    cmd->EndQuery(m_TimerQueryHeap, D3D12_QUERY_TYPE_TIMESTAMP, m_NumTimestampQueries * 2 + 0);
+  }
+
+  bool PostDraw(uint32_t eid, ID3D12GraphicsCommandList *cmd) override
+  {
+    cmd->EndQuery(m_TimerQueryHeap, D3D12_QUERY_TYPE_TIMESTAMP, m_NumTimestampQueries * 2 + 1);
+    m_NumTimestampQueries++;
+
+    bool direct = (cmd->GetType() == D3D12_COMMAND_LIST_TYPE_DIRECT);
+    if(direct)
+    {
+      cmd->EndQuery(m_PipeStatsQueryHeap, D3D12_QUERY_TYPE_PIPELINE_STATISTICS, m_NumStatsQueries);
+      cmd->EndQuery(m_OcclusionQueryHeap, D3D12_QUERY_TYPE_OCCLUSION, m_NumStatsQueries);
+
+      m_NumStatsQueries++;
+    }
+    m_Results.push_back(std::make_pair(eid, direct));
+    return false;
+  }
+
+  void PostRedraw(uint32_t eid, ID3D12GraphicsCommandList *cmd) override {}
+  // we don't need to distinguish, call the Draw functions
+  void PreDispatch(uint32_t eid, ID3D12GraphicsCommandList *cmd) override { PreDraw(eid, cmd); }
+  bool PostDispatch(uint32_t eid, ID3D12GraphicsCommandList *cmd) override
+  {
+    return PostDraw(eid, cmd);
+  }
+  void PostRedispatch(uint32_t eid, ID3D12GraphicsCommandList *cmd) override
+  {
+    PostRedraw(eid, cmd);
+  }
+  void PreCloseCommandList(ID3D12GraphicsCommandList *cmd) override{};
+  void AliasEvent(uint32_t primary, uint32_t alias) override
+  {
+    m_AliasEvents.push_back(std::make_pair(primary, alias));
+  }
+
+  WrappedID3D12Device *m_pDevice;
+  D3D12Replay *m_pReplay;
+  ID3D12QueryHeap *m_TimerQueryHeap;
+  ID3D12QueryHeap *m_PipeStatsQueryHeap;
+  ID3D12QueryHeap *m_OcclusionQueryHeap;
+  vector<pair<uint32_t, bool> > m_Results;
+
+  uint32_t m_NumStatsQueries;
+  uint32_t m_NumTimestampQueries;
+
+  // events which are the 'same' from being the same command buffer resubmitted
+  // multiple times in the frame. We will only get the full callback when we're
+  // recording the command buffer, and will be given the first EID. After that
+  // we'll just be told which other EIDs alias this event.
+  vector<pair<uint32_t, uint32_t> > m_AliasEvents;
+};
+
+vector<CounterResult> D3D12Replay::FetchCounters(const vector<GPUCounter> &counters)
 {
   uint32_t maxEID = m_pDevice->GetQueue()->GetMaxEID();
 
   vector<CounterResult> ret;
+  if(counters.empty())
+  {
+    RDCERR("No counters specified to FetchCounters");
+    return ret;
+  }
+
+  SCOPED_TIMER("Fetch Counters, counters to fetch %u", counters.size());
+
+  vector<GPUCounter> d3dCounters;
+  std::copy_if(counters.begin(), counters.end(), std::back_inserter(d3dCounters),
+               [](const GPUCounter &c) { return !IsAMDCounter(c); });
+
+  if(m_pAMDCounters)
+  {
+    // Filter out the AMD counters
+    vector<GPUCounter> amdCounters;
+    std::copy_if(counters.begin(), counters.end(), std::back_inserter(amdCounters),
+                 [](const GPUCounter &c) { return IsAMDCounter(c); });
+
+    if(!amdCounters.empty())
+    {
+      ret = FetchCountersAMD(amdCounters);
+    }
+  }
+
+  if(d3dCounters.empty())
+  {
+    return ret;
+  }
 
   D3D12_HEAP_PROPERTIES heapProps;
   heapProps.Type = D3D12_HEAP_TYPE_READBACK;
@@ -231,7 +474,7 @@ vector<CounterResult> D3D12Replay::FetchCounters(const vector<uint32_t> &counter
   D3D12_RESOURCE_DESC bufDesc;
   bufDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
   bufDesc.Alignment = 0;
-  bufDesc.Width = sizeof(uint64_t) * maxEID * 2;
+  bufDesc.Width = (sizeof(uint64_t) * 3 + sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS)) * maxEID;
   bufDesc.Height = 1;
   bufDesc.DepthOrArraySize = 1;
   bufDesc.MipLevels = 1;
@@ -247,87 +490,198 @@ vector<CounterResult> D3D12Replay::FetchCounters(const vector<uint32_t> &counter
                                                   __uuidof(ID3D12Resource), (void **)&readbackBuf);
   if(FAILED(hr))
   {
-    RDCERR("Failed to create query readback buffer %08x", hr);
+    RDCERR("Failed to create query readback buffer HRESULT: %s", ToStr(hr).c_str());
     return ret;
   }
 
-  D3D12_QUERY_HEAP_DESC queryDesc;
-  queryDesc.Count = maxEID * 2;
-  queryDesc.NodeMask = 1;
-  queryDesc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
-  ID3D12QueryHeap *queryHeap = NULL;
-  hr = m_pDevice->CreateQueryHeap(&queryDesc, __uuidof(queryHeap), (void **)&queryHeap);
+  D3D12_QUERY_HEAP_DESC timerQueryDesc;
+  timerQueryDesc.Count = maxEID * 2;
+  timerQueryDesc.NodeMask = 1;
+  timerQueryDesc.Type = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+  ID3D12QueryHeap *timerQueryHeap = NULL;
+  hr = m_pDevice->CreateQueryHeap(&timerQueryDesc, __uuidof(timerQueryHeap),
+                                  (void **)&timerQueryHeap);
   if(FAILED(hr))
   {
-    RDCERR("Failed to create query heap %08x", hr);
+    RDCERR("Failed to create timer query heap HRESULT: %s", ToStr(hr).c_str());
     return ret;
   }
 
-  m_pDevice->SetStablePowerState(TRUE);
+  D3D12_QUERY_HEAP_DESC pipestatsQueryDesc;
+  pipestatsQueryDesc.Count = maxEID;
+  pipestatsQueryDesc.NodeMask = 1;
+  pipestatsQueryDesc.Type = D3D12_QUERY_HEAP_TYPE_PIPELINE_STATISTICS;
+  ID3D12QueryHeap *pipestatsQueryHeap = NULL;
+  hr = m_pDevice->CreateQueryHeap(&pipestatsQueryDesc, __uuidof(pipestatsQueryHeap),
+                                  (void **)&pipestatsQueryHeap);
+  if(FAILED(hr))
+  {
+    RDCERR("Failed to create pipeline statistics query heap HRESULT: %s", ToStr(hr).c_str());
+    return ret;
+  }
 
-  D3D12GPUTimerCallback cb(m_pDevice, this, queryHeap);
+  D3D12_QUERY_HEAP_DESC occlusionQueryDesc;
+  occlusionQueryDesc.Count = maxEID;
+  occlusionQueryDesc.NodeMask = 1;
+  occlusionQueryDesc.Type = D3D12_QUERY_HEAP_TYPE_OCCLUSION;
+  ID3D12QueryHeap *occlusionQueryHeap = NULL;
+  hr = m_pDevice->CreateQueryHeap(&occlusionQueryDesc, __uuidof(occlusionQueryHeap),
+                                  (void **)&occlusionQueryHeap);
+  if(FAILED(hr))
+  {
+    RDCERR("Failed to create occlusion query heap HRESULT: %s", ToStr(hr).c_str());
+    return ret;
+  }
+
+  // Only supported with developer mode drivers!!!
+  hr = m_pDevice->SetStablePowerState(TRUE);
+  if(FAILED(hr))
+    MessageBoxA(NULL,
+                "D3D12 counters require Win10 developer mode enabled: Settings > Update & Security "
+                "> For Developers > Developer Mode",
+                "D3D12 Counters Error", MB_ICONWARNING | MB_OK);
+
+  D3D12GPUTimerCallback cb(m_pDevice, this, timerQueryHeap, pipestatsQueryHeap, occlusionQueryHeap);
 
   // replay the events to perform all the queries
   m_pDevice->ReplayLog(0, maxEID, eReplay_Full);
 
+#if ENABLED(SINGLE_FLUSH_VALIDATE)
+  m_pDevice->ExecuteLists();
+  m_pDevice->FlushLists(true);
+#endif
+
+  // Only supported with developer mode drivers!!!
   m_pDevice->SetStablePowerState(FALSE);
 
   ID3D12GraphicsCommandList *list = m_pDevice->GetNewList();
 
-  list->ResolveQueryData(queryHeap, D3D12_QUERY_TYPE_TIMESTAMP, 0, maxEID * 2, readbackBuf, 0);
+  UINT64 bufferOffset = 0;
+
+  list->ResolveQueryData(timerQueryHeap, D3D12_QUERY_TYPE_TIMESTAMP, 0,
+                         cb.m_NumTimestampQueries * 2, readbackBuf, bufferOffset);
+
+  bufferOffset += sizeof(uint64_t) * 2 * cb.m_NumTimestampQueries;
+
+  list->ResolveQueryData(pipestatsQueryHeap, D3D12_QUERY_TYPE_PIPELINE_STATISTICS, 0,
+                         cb.m_NumStatsQueries, readbackBuf, bufferOffset);
+
+  bufferOffset += sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS) * cb.m_NumStatsQueries;
+
+  list->ResolveQueryData(occlusionQueryHeap, D3D12_QUERY_TYPE_OCCLUSION, 0, cb.m_NumStatsQueries,
+                         readbackBuf, bufferOffset);
 
   list->Close();
 
   m_pDevice->ExecuteLists();
   m_pDevice->FlushLists();
 
-  D3D12_RANGE range = {0, (SIZE_T)bufDesc.Width};
-  void *data;
-  hr = readbackBuf->Map(0, &range, &data);
+  D3D12_RANGE range;
+  range.Begin = 0;
+  range.End = (SIZE_T)bufDesc.Width;
+
+  uint8_t *data;
+  hr = readbackBuf->Map(0, &range, (void **)&data);
   if(FAILED(hr))
   {
-    RDCERR("Failed to create query heap %08x", hr);
-    SAFE_RELEASE(queryHeap);
+    RDCERR("Failed to read timer query heap data HRESULT: %s", ToStr(hr).c_str());
     SAFE_RELEASE(readbackBuf);
+    SAFE_RELEASE(timerQueryHeap);
+    SAFE_RELEASE(pipestatsQueryHeap);
+    SAFE_RELEASE(occlusionQueryHeap);
     return ret;
   }
 
   uint64_t *timestamps = (uint64_t *)data;
+  data += cb.m_NumTimestampQueries * 2 * sizeof(uint64_t);
+  D3D12_QUERY_DATA_PIPELINE_STATISTICS *pipelinestats = (D3D12_QUERY_DATA_PIPELINE_STATISTICS *)data;
+  data += cb.m_NumStatsQueries * sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS);
+  uint64_t *occlusion = (uint64_t *)data;
 
   uint64_t freq;
   m_pDevice->GetQueue()->GetTimestampFrequency(&freq);
 
   for(size_t i = 0; i < cb.m_Results.size(); i++)
   {
-    CounterResult result;
+    bool direct = cb.m_Results[i].second;
 
-    uint64_t delta = timestamps[i * 2 + 1] - timestamps[i * 2 + 0];
+    D3D12_QUERY_DATA_PIPELINE_STATISTICS pipeStats = {};
+    uint64_t occl = 0;
 
-    result.eventID = cb.m_Results[i];
-    result.counterID = eCounter_EventGPUDuration;
-    result.value.d = double(delta) / double(freq);
+    // only events on direct lists recorded pipeline stats or occlusion queries
+    if(direct)
+    {
+      pipeStats = *pipelinestats;
+      occl = *occlusion;
 
-    ret.push_back(result);
+      pipelinestats++;
+      occlusion++;
+    }
+
+    for(size_t c = 0; c < counters.size(); c++)
+    {
+      CounterResult result;
+
+      result.eventId = cb.m_Results[i].first;
+      result.counter = counters[c];
+
+      switch(counters[c])
+      {
+        case GPUCounter::EventGPUDuration:
+        {
+          uint64_t delta = timestamps[i * 2 + 1] - timestamps[i * 2 + 0];
+          result.value.d = double(delta) / double(freq);
+        }
+        break;
+        case GPUCounter::InputVerticesRead: result.value.u64 = pipeStats.IAVertices; break;
+        case GPUCounter::IAPrimitives: result.value.u64 = pipeStats.IAPrimitives; break;
+        case GPUCounter::GSPrimitives: result.value.u64 = pipeStats.GSPrimitives; break;
+        case GPUCounter::RasterizerInvocations: result.value.u64 = pipeStats.CInvocations; break;
+        case GPUCounter::RasterizedPrimitives: result.value.u64 = pipeStats.CPrimitives; break;
+        case GPUCounter::SamplesWritten: result.value.u64 = occl; break;
+        case GPUCounter::VSInvocations: result.value.u64 = pipeStats.VSInvocations; break;
+        case GPUCounter::HSInvocations: result.value.u64 = pipeStats.HSInvocations; break;
+        case GPUCounter::DSInvocations: result.value.u64 = pipeStats.DSInvocations; break;
+        case GPUCounter::GSInvocations: result.value.u64 = pipeStats.GSInvocations; break;
+        case GPUCounter::PSInvocations: result.value.u64 = pipeStats.PSInvocations; break;
+        case GPUCounter::CSInvocations: result.value.u64 = pipeStats.CSInvocations; break;
+      }
+      ret.push_back(result);
+    }
   }
 
   for(size_t i = 0; i < cb.m_AliasEvents.size(); i++)
   {
-    CounterResult search;
-    search.counterID = eCounter_EventGPUDuration;
-    search.eventID = cb.m_AliasEvents[i].first;
+    for(size_t c = 0; c < counters.size(); c++)
+    {
+      CounterResult search;
+      search.counter = counters[c];
+      search.eventId = cb.m_AliasEvents[i].first;
 
-    // find the result we're aliasing
-    auto it = std::find(ret.begin(), ret.end(), search);
-    RDCASSERT(it != ret.end());
-
-    // duplicate the result and append
-    CounterResult aliased = *it;
-    aliased.eventID = cb.m_AliasEvents[i].second;
-    ret.push_back(aliased);
+      // find the result we're aliasing
+      auto it = std::find(ret.begin(), ret.end(), search);
+      if(it != ret.end())
+      {
+        // duplicate the result and append
+        CounterResult aliased = *it;
+        aliased.eventId = cb.m_AliasEvents[i].second;
+        ret.push_back(aliased);
+      }
+      else
+      {
+        RDCERR("Expected to find alias-target result for EID %u counter %u, but didn't",
+               search.eventId, search.counter);
+      }
+    }
   }
 
   // sort so that the alias results appear in the right places
   std::sort(ret.begin(), ret.end());
+
+  SAFE_RELEASE(readbackBuf);
+  SAFE_RELEASE(timerQueryHeap);
+  SAFE_RELEASE(pipestatsQueryHeap);
+  SAFE_RELEASE(occlusionQueryHeap);
 
   return ret;
 }

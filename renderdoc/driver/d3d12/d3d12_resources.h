@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -56,17 +56,20 @@ class WrappedDeviceChild12 : public RefCounter12<NestedType>,
 {
 protected:
   WrappedID3D12Device *m_pDevice;
+  ULONG m_InternalRefcount;
 
   WrappedDeviceChild12(NestedType *real, WrappedID3D12Device *device)
       : RefCounter12(real), m_pDevice(device)
   {
+    m_InternalRefcount = 0;
+
     m_pDevice->SoftRef();
 
     if(real)
     {
       bool ret = m_pDevice->GetResourceManager()->AddWrapper(this, real);
       if(!ret)
-        RDCERR("Error adding wrapper for type %s", ToStr::Get(__uuidof(NestedType)).c_str());
+        RDCERR("Error adding wrapper for type %s", ToStr(__uuidof(NestedType)).c_str());
     }
 
     m_pDevice->GetResourceManager()->AddCurrentResource(GetResourceID(), this);
@@ -93,9 +96,31 @@ protected:
 public:
   typedef NestedType InnerType;
 
+  // some applications wrongly check refcount return values and expect them to
+  // match D3D's values. When we have some internal refs we need to hide, we
+  // add them here and they're subtracted from return values
+  void AddInternalRef() { InterlockedIncrement(&m_InternalRefcount); }
+  void ReleaseInternalRef() { InterlockedDecrement(&m_InternalRefcount); }
   NestedType *GetReal() { return m_pReal; }
-  ULONG STDMETHODCALLTYPE AddRef() { return RefCounter12::SoftRef(m_pDevice); }
-  ULONG STDMETHODCALLTYPE Release() { return RefCounter12::SoftRelease(m_pDevice); }
+  ULONG STDMETHODCALLTYPE AddRef()
+  {
+    ULONG ret = RefCounter12::SoftRef(m_pDevice);
+
+    if(ret >= m_InternalRefcount)
+      ret -= m_InternalRefcount;
+
+    return ret;
+  }
+  ULONG STDMETHODCALLTYPE Release()
+  {
+    ULONG ret = RefCounter12::SoftRelease(m_pDevice);
+
+    if(ret >= m_InternalRefcount)
+      ret -= m_InternalRefcount;
+
+    return ret;
+  }
+
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppvObject)
   {
     if(riid == __uuidof(IUnknown))
@@ -214,7 +239,7 @@ public:
       }
       else
       {
-        RDCWARN("Unexpected guid %s", ToStr::Get(riid).c_str());
+        RDCWARN("Unexpected guid %s", ToStr(riid).c_str());
         SAFE_DELETE(dxgiWrapper);
       }
 
@@ -245,7 +270,7 @@ public:
       return m_pDevice->SetShaderDebugPath(this, (const char *)pData);
 
     if(guid == WKPDID_D3DDebugObjectName)
-      m_pDevice->SetResourceName(this, (const char *)pData);
+      m_pDevice->SetName(this, (const char *)pData);
 
     if(!m_pReal)
       return S_OK;
@@ -263,8 +288,8 @@ public:
 
   HRESULT STDMETHODCALLTYPE SetName(LPCWSTR Name)
   {
-    string utf8 = StringFormat::Wide2UTF8(Name);
-    m_pDevice->SetResourceName(this, utf8.c_str());
+    string utf8 = Name ? StringFormat::Wide2UTF8(Name) : "";
+    m_pDevice->SetName(this, utf8.c_str());
 
     if(!m_pReal)
       return S_OK;
@@ -491,6 +516,13 @@ public:
     static const int AllocMaxByteSize = 8 * 1024 * 1024;
     ALLOCATE_WITH_WRAPPED_POOL(ShaderEntry, AllocPoolCount, AllocMaxByteSize);
 
+    static bool m_InternalResources;
+
+    static void InternalResources(bool internalResources)
+    {
+      m_InternalResources = internalResources;
+    }
+
     ShaderEntry(const D3D12_SHADER_BYTECODE &byteCode, WrappedID3D12Device *device)
         : WrappedDeviceChild12(NULL, device), m_Key(byteCode)
     {
@@ -500,6 +532,19 @@ public:
       m_DXBCFile = NULL;
 
       device->GetResourceManager()->AddLiveResource(GetResourceID(), this);
+
+      if(!m_InternalResources)
+      {
+        device->AddResource(GetResourceID(), ResourceType::Shader, "Shader");
+
+        ResourceDescription &desc = device->GetReplay()->GetResourceDesc(GetResourceID());
+        // this will be appended to in the function above.
+        desc.initialisationChunks.clear();
+
+        // since these don't have live IDs, let's use the first uint of the hash as the name. Slight
+        // chance of collision but not that bad.
+        desc.name = StringFormat::Fmt("Shader {%08x}", m_Key.hash[0]);
+      }
 
       m_Built = false;
     }
@@ -565,14 +610,15 @@ public:
     ShaderReflection &GetDetails()
     {
       if(!m_Built && GetDXBC() != NULL)
-        MakeShaderReflection(m_DXBCFile, &m_Details, &m_Mapping);
+        BuildReflection();
       m_Built = true;
       return m_Details;
     }
+
     const ShaderBindpointMapping &GetMapping()
     {
       if(!m_Built && GetDXBC() != NULL)
-        MakeShaderReflection(m_DXBCFile, &m_Details, &m_Mapping);
+        BuildReflection();
       m_Built = true;
       return m_Mapping;
     }
@@ -583,6 +629,8 @@ public:
     ShaderEntry(const ShaderEntry &e);
     void TryReplaceOriginalByteCode();
     ShaderEntry &operator=(const ShaderEntry &e);
+
+    void BuildReflection();
 
     DXBCKey m_Key;
 
@@ -675,6 +723,10 @@ public:
       ShaderEntry::ReleaseShader(GS());
       ShaderEntry::ReleaseShader(PS());
 
+      SAFE_DELETE_ARRAY(graphics->InputLayout.pInputElementDescs);
+      SAFE_DELETE_ARRAY(graphics->StreamOutput.pSODeclaration);
+      SAFE_DELETE_ARRAY(graphics->StreamOutput.pBufferStrides);
+
       SAFE_DELETE(graphics);
     }
 
@@ -720,9 +772,11 @@ class WrappedID3D12Resource : public WrappedDeviceChild12<ID3D12Resource>
 
   bool resident;
 
+  WriteSerialiser &GetThreadSerialiser();
+
 public:
   static const int AllocPoolCount = 16384;
-  static const int AllocMaxByteSize = 1024 * 1024;
+  static const int AllocMaxByteSize = 1536 * 1024;
   ALLOCATE_WITH_WRAPPED_POOL(WrappedID3D12Resource, AllocPoolCount, AllocMaxByteSize, false);
 
   static std::map<ResourceId, WrappedID3D12Resource *> *m_List;
@@ -935,7 +989,7 @@ struct UnwrapHelper
 
 ALL_D3D12_TYPES;
 
-D3D12ResourceType IdentifyTypeByPtr(ID3D12DeviceChild *ptr);
+D3D12ResourceType IdentifyTypeByPtr(ID3D12Object *ptr);
 
 #define WRAPPING_DEBUG 0
 
@@ -987,8 +1041,24 @@ D3D12ResourceRecord *GetRecord(ifaceptr obj)
 
 // specialisations that use the IsAlloc() function to identify the real type
 template <>
+ResourceId GetResID(ID3D12Object *ptr);
+template <>
+ID3D12Object *Unwrap(ID3D12Object *ptr);
+template <>
+D3D12ResourceRecord *GetRecord(ID3D12Object *ptr);
+
+template <>
 ResourceId GetResID(ID3D12DeviceChild *ptr);
 template <>
+ResourceId GetResID(ID3D12Pageable *ptr);
+template <>
+ResourceId GetResID(ID3D12CommandList *ptr);
+template <>
+ResourceId GetResID(ID3D12GraphicsCommandList *ptr);
+template <>
+ResourceId GetResID(ID3D12CommandQueue *ptr);
+template <>
 ID3D12DeviceChild *Unwrap(ID3D12DeviceChild *ptr);
+
 template <>
 D3D12ResourceRecord *GetRecord(ID3D12DeviceChild *ptr);

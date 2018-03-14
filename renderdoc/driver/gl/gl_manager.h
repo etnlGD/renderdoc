@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -26,17 +26,23 @@
 #pragma once
 
 #include "core/resource_manager.h"
-#include "driver/gl/gl_resources.h"
+#include "gl_initstate.h"
+#include "gl_resources.h"
 
 class WrappedOpenGL;
 
-class GLResourceManager : public ResourceManager<GLResource, GLResource, GLResourceRecord>
+struct GLResourceManagerConfiguration
+{
+  typedef GLResource WrappedResourceType;
+  typedef GLResource RealResourceType;
+  typedef GLResourceRecord RecordType;
+  typedef GLInitialContents InitialContentData;
+};
+
+class GLResourceManager : public ResourceManager<GLResourceManagerConfiguration>
 {
 public:
-  GLResourceManager(LogState state, Serialiser *ser, WrappedOpenGL *gl)
-      : ResourceManager(state, ser), m_GL(gl), m_SyncName(1)
-  {
-  }
+  GLResourceManager(WrappedOpenGL *gl);
   ~GLResourceManager() {}
   void Shutdown()
   {
@@ -93,6 +99,26 @@ public:
     m_CurrentResourceIds.clear();
 
     ResourceManager::Shutdown();
+  }
+
+  void DeleteContext(void *context)
+  {
+    size_t count = 0;
+    for(auto it = m_CurrentResourceIds.begin(); it != m_CurrentResourceIds.end(); it++)
+    {
+      if(it->first.Context == context)
+      {
+        ++count;
+        ResourceId res = it->second;
+        MarkCleanResource(res);
+        if(HasResourceRecord(res))
+          GetResourceRecord(res)->Delete(this);
+        ReleaseCurrentResource(it->second);
+        it = m_CurrentResourceIds.erase(it);
+      }
+    }
+    RDCDEBUG("Removed %zu/%zu resources belonging to context %p", count,
+             m_CurrentResourceIds.size(), context);
   }
 
   inline void RemoveResourceRecord(ResourceId id)
@@ -175,7 +201,8 @@ public:
 
   void MarkResourceFrameReferenced(GLResource res, FrameRefType refType)
   {
-    if(res.name == 0)
+    // we allow VAO 0 as a special case
+    if(res.name == 0 && res.Namespace != eResVertexArray)
       return;
     ResourceManager::MarkResourceFrameReferenced(GetID(res), refType);
   }
@@ -197,6 +224,9 @@ public:
 
   GLsync GetSync(GLuint name) { return m_CurrentSyncs[name]; }
   ResourceId GetSyncID(GLsync sync) { return m_SyncIDs[sync]; }
+  // KHR_debug storage on replay
+  const std::string &GetName(ResourceId id) { return m_Names[id]; }
+  void SetName(ResourceId id, const std::string &name) { m_Names[id] = name; }
   // we need to find all the children bound to VAOs/FBOs and mark them referenced. The reason for
   // this is that say a VAO became high traffic and we stopped serialising buffer binds, but then it
   // is never modified in a frame and none of the buffers are ever referenced. They would be
@@ -205,8 +235,14 @@ public:
   void MarkVAOReferenced(GLResource res, FrameRefType ref, bool allowFake0 = false);
   void MarkFBOReferenced(GLResource res, FrameRefType ref);
 
-  bool Prepare_InitialState(GLResource res, byte *blob);
-  bool Serialise_InitialState(ResourceId resid, GLResource res);
+  template <typename SerialiserType>
+  bool Serialise_InitialState(SerialiserType &ser, ResourceId resid, GLResource res);
+
+  void ContextPrepare_InitialState(GLResource res);
+  bool Serialise_InitialState(WriteSerialiser &ser, ResourceId resid, GLResource res)
+  {
+    return Serialise_InitialState<WriteSerialiser>(ser, resid, res);
+  }
 
 private:
   bool SerialisableResource(ResourceId id, GLResourceRecord *record);
@@ -215,11 +251,14 @@ private:
   bool Force_InitialState(GLResource res, bool prepare);
   bool Need_InitialStateChunk(GLResource res);
   bool Prepare_InitialState(GLResource res);
+  uint32_t GetSize_InitialState(ResourceId resid, GLResource res);
 
+  void CreateTextureImage(GLuint tex, GLenum internalFormat, GLenum textype, GLint dim, GLint width,
+                          GLint height, GLint depth, GLint samples, int mips);
   void PrepareTextureInitialContents(ResourceId liveid, ResourceId origid, GLResource res);
 
   void Create_InitialState(ResourceId id, GLResource live, bool hasData);
-  void Apply_InitialState(GLResource live, InitialContentData initial);
+  void Apply_InitialState(GLResource live, GLInitialContents initial);
 
   map<GLResource, GLResourceRecord *> m_GLResourceRecords;
 
@@ -229,7 +268,9 @@ private:
   // We manually give them GLuint names so they're otherwise namespaced as (eResSync, GLuint)
   map<GLsync, ResourceId> m_SyncIDs;
   map<GLuint, GLsync> m_CurrentSyncs;
+  map<ResourceId, std::string> m_Names;
   volatile int64_t m_SyncName;
 
+  CaptureState m_State;
   WrappedOpenGL *m_GL;
 };

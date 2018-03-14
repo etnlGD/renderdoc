@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -29,7 +29,7 @@
 #include "common/common.h"
 #include "core/core.h"
 #include "hooks/hooks.h"
-#include "serialise/string_utils.h"
+#include "strings/string_utils.h"
 
 static BOOL add_hooks()
 {
@@ -48,10 +48,8 @@ static BOOL add_hooks()
     return TRUE;
   }
 
-  if(f.find(CONCAT(L, STRINGIZE(RDOC_DLL_FILE)) L"cmd.exe") != wstring::npos ||
-     f.find(CONCAT(L, STRINGIZE(RDOC_DLL_FILE)) L"ui.vshost.exe") != wstring::npos ||
-     f.find(L"q" CONCAT(L, STRINGIZE(RDOC_DLL_FILE)) L".exe") != wstring::npos ||
-     f.find(CONCAT(L, STRINGIZE(RDOC_DLL_FILE)) L"ui.exe") != wstring::npos)
+  // search for an exported symbol with this name, typically renderdoc__replay__marker
+  if(HOOKS_IDENTIFY(STRINGIZE(RDOC_DLL_FILE) "__replay__marker"))
   {
     RDCDEBUG("Not creating hooks - in replay app");
 

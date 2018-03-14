@@ -7,32 +7,24 @@ set(RDOC_INCLUDES
     PRIVATE ${RDOC_SOURCE_DIR}/3rdparty)
 set(RDOC_LIBRARIES)
 
-# get git commit hash
-get_git_hash(GIT_COMMIT_HASH)
-string(STRIP ${GIT_COMMIT_HASH} GIT_COMMIT_HASH)
-list(APPEND RDOC_DEFINITIONS
-    PRIVATE -DGIT_COMMIT_HASH="${GIT_COMMIT_HASH}")
-
 if(ANDROID)
     list(APPEND RDOC_LIBRARIES
-        PRIVATE m
-        PRIVATE dl
-        PRIVATE log
-        PRIVATE android
-        PRIVATE ${CMAKE_THREAD_LIBS_INIT})
+        PRIVATE -lm
+        PRIVATE -ldl
+        PRIVATE -llog
+        PRIVATE -landroid)
 elseif(APPLE)
     list(APPEND RDOC_LIBRARIES
-        PRIVATE m
-        PRIVATE dl
-        PRIVATE ${CMAKE_THREAD_LIBS_INIT})
+        PRIVATE -lm
+        PRIVATE -ldl)
 elseif(UNIX)
     find_package(PkgConfig REQUIRED)
     find_package(Threads REQUIRED)
 
     list(APPEND RDOC_LIBRARIES
-        PRIVATE m
-        PRIVATE dl
-        PRIVATE ${CMAKE_THREAD_LIBS_INIT})
+        PRIVATE -lm
+        PRIVATE -ldl
+        PRIVATE -lrt)
 
     if(ENABLE_XLIB)
         find_package(X11 REQUIRED)
@@ -54,15 +46,22 @@ elseif(UNIX)
             PRIVATE ${XCB_INCLUDE_DIRS})
 
         list(APPEND RDOC_LIBRARIES
-            PRIVATE ${XCB_LIBRARIES})
+            PRIVATE -l${XCB_LIBRARIES})
     endif()
+endif()
+
+if(NOT "x${CMAKE_THREAD_LIBS_INIT}" STREQUAL "x")
+    list(APPEND RDOC_LIBRARIES PRIVATE ${CMAKE_THREAD_LIBS_INIT})
 endif()
 
 set(sources
     api/app/renderdoc_app.h
     api/replay/basic_types.h
+    api/replay/stringise.h
+    api/replay/structured_data.h
     api/replay/capture_options.h
     api/replay/control_types.h
+    api/replay/common_pipestate.h
     api/replay/d3d11_pipestate.h
     api/replay/data_types.h
     api/replay/gl_pipestate.h
@@ -71,6 +70,8 @@ set(sources
     api/replay/shader_types.h
     api/replay/vk_pipestate.h
     api/replay/version.h
+    api/replay/renderdoc_tostr.inl
+    api/replay/version.cpp
     common/common.cpp
     common/common.h
     common/custom_assert.h
@@ -89,13 +90,26 @@ set(sources
     core/remote_server.cpp
     core/replay_proxy.cpp
     core/replay_proxy.h
+    android/android.cpp
+    android/android_patch.cpp
+    android/android_tools.cpp
+    android/android_utils.cpp
+    android/android_manifest.cpp
+    android/android.h
+    android/android_utils.h
+    android/jdwp.h
+    android/jdwp.cpp
+    android/jdwp_util.cpp
+    android/jdwp_connection.cpp
+    core/plugins.cpp
+    core/plugins.h
     core/resource_manager.cpp
     core/resource_manager.h
-    core/socket_helpers.h
     data/hlsl/debugcbuffers.h
     data/glsl/debuguniforms.h
     data/glsl/vk_texsample.h
     data/glsl/gl_texsample.h
+    data/glsl/gles_texsample.h
     data/glsl_shaders.cpp
     data/glsl_shaders.h
     hooks/hooks.cpp
@@ -111,33 +125,83 @@ set(sources
     os/os_specific.cpp
     os/os_specific.h
     replay/app_api.cpp
+    replay/basic_types_tests.cpp
     replay/capture_options.cpp
+    replay/renderdoc_serialise.inl
+    replay/capture_file.cpp
     replay/entry_points.cpp
+    replay/replay_driver.cpp
     replay/replay_driver.h
     replay/replay_output.cpp
-    replay/replay_renderer.cpp
-    replay/replay_renderer.h
-    replay/type_helpers.cpp
-    replay/type_helpers.h
-    serialise/grisu2.cpp
+    replay/replay_controller.cpp
+    replay/replay_controller.h
     serialise/serialiser.cpp
     serialise/serialiser.h
-    serialise/string_utils.cpp
-    serialise/string_utils.h
-    serialise/utf8printf.cpp
+    serialise/lz4io.cpp
+    serialise/lz4io.h
+    serialise/zstdio.cpp
+    serialise/zstdio.h
+    serialise/streamio.cpp
+    serialise/streamio.h
+    serialise/rdcfile.cpp
+    serialise/rdcfile.h
+    serialise/codecs/xml_codec.cpp
+    serialise/codecs/chrome_json_codec.cpp
+    serialise/comp_io_tests.cpp
+    serialise/serialiser_tests.cpp
+    serialise/streamio_tests.cpp
+    strings/grisu2.cpp
+    strings/string_utils.cpp
+    strings/string_utils.h
+    strings/utf8printf.cpp
     3rdparty/jpeg-compressor/jpgd.cpp
     3rdparty/jpeg-compressor/jpgd.h
     3rdparty/jpeg-compressor/jpge.cpp
     3rdparty/jpeg-compressor/jpge.h
+    3rdparty/android/android_manifest.h
+    3rdparty/catch/catch.cpp
+    3rdparty/catch/catch.hpp
+    3rdparty/pugixml/pugixml.cpp
+    3rdparty/pugixml/pugixml.hpp
+    3rdparty/pugixml/pugiconfig.hpp
     3rdparty/lz4/lz4.c
     3rdparty/lz4/lz4.h
+    3rdparty/zstd/bitstream.h
+    3rdparty/zstd/compiler.h
+    3rdparty/zstd/entropy_common.c
+    3rdparty/zstd/error_private.c
+    3rdparty/zstd/error_private.h
+    3rdparty/zstd/fse.h
+    3rdparty/zstd/fse_decompress.c
+    3rdparty/zstd/huf.h
+    3rdparty/zstd/mem.h
+    3rdparty/zstd/pool.c
+    3rdparty/zstd/pool.h
+    3rdparty/zstd/threading.c
+    3rdparty/zstd/threading.h
+    3rdparty/zstd/xxhash.c
+    3rdparty/zstd/xxhash.h
+    3rdparty/zstd/zstd_common.c
+    3rdparty/zstd/zstd_errors.h
+    3rdparty/zstd/zstd_internal.h
+    3rdparty/zstd/fse_compress.c
+    3rdparty/zstd/huf_compress.c
+    3rdparty/zstd/zstdmt_compress.c
+    3rdparty/zstd/zstdmt_compress.h
+    3rdparty/zstd/zstd_compress.c
+    3rdparty/zstd/zstd_opt.h
+    3rdparty/zstd/huf_decompress.c
+    3rdparty/zstd/zstd_decompress.c
+    3rdparty/zstd/zstd.h
     3rdparty/stb/stb_image.h
     3rdparty/stb/stb_image_write.h
     3rdparty/stb/stb_image_resize.h
     3rdparty/stb/stb_impl.c
     3rdparty/stb/stb_truetype.h
     3rdparty/tinyexr/tinyexr.cpp
-    3rdparty/tinyexr/tinyexr.h)
+    3rdparty/tinyexr/tinyexr.h
+    3rdparty/tinyfiledialogs/tinyfiledialogs.c
+    3rdparty/tinyfiledialogs/tinyfiledialogs.h)
 
 if(ANDROID)
     list(APPEND sources
@@ -147,15 +211,14 @@ if(ANDROID)
         os/posix/android/android_process.cpp
         os/posix/android/android_threading.cpp
         os/posix/android/android_hook.cpp
+        os/posix/android/android_network.cpp
         os/posix/posix_hook.h
+        os/posix/posix_network.h
         os/posix/posix_network.cpp
         os/posix/posix_process.cpp
         os/posix/posix_stringio.cpp
         os/posix/posix_threading.cpp
         os/posix/posix_specific.h)
-    # posix_libentry must be the last so that library_loaded is called after
-    # static objects are constructed.
-    list(APPEND sources os/posix/posix_libentry.cpp)
 elseif(APPLE)
     list(APPEND sources
         data/embedded_files.h
@@ -164,15 +227,14 @@ elseif(APPLE)
         os/posix/apple/apple_process.cpp
         os/posix/apple/apple_threading.cpp
         os/posix/apple/apple_hook.cpp
+        os/posix/apple/apple_network.cpp
         os/posix/posix_hook.h
+        os/posix/posix_network.h
         os/posix/posix_network.cpp
         os/posix/posix_process.cpp
         os/posix/posix_stringio.cpp
         os/posix/posix_threading.cpp
         os/posix/posix_specific.h)
-    # posix_libentry must be the last so that library_loaded is called after
-    # static objects are constructed.
-    list(APPEND sources os/posix/posix_libentry.cpp)
 elseif(UNIX)
     list(APPEND sources
         data/embedded_files.h
@@ -181,17 +243,16 @@ elseif(UNIX)
         os/posix/linux/linux_process.cpp
         os/posix/linux/linux_threading.cpp
         os/posix/linux/linux_hook.cpp
+        os/posix/linux/linux_network.cpp
         3rdparty/plthook/plthook.h
         3rdparty/plthook/plthook_elf.c
         os/posix/posix_hook.h
+        os/posix/posix_network.h
         os/posix/posix_network.cpp
         os/posix/posix_process.cpp
         os/posix/posix_stringio.cpp
         os/posix/posix_threading.cpp
         os/posix/posix_specific.h)
-    # posix_libentry must be the last so that library_loaded is called after
-    # static objects are constructed.
-    list(APPEND sources os/posix/posix_libentry.cpp)
 endif()
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR APPLE)
@@ -202,11 +263,15 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR APPLE)
     # -Wno-shift-negative-value available
     set_source_files_properties(3rdparty/jpeg-compressor/jpgd.cpp
         PROPERTIES COMPILE_FLAGS "-Wno-unknown-warning-option -Wno-shift-negative-value")
-endif()
 
-add_library(rdoc OBJECT ${sources})
-target_compile_definitions(rdoc ${RDOC_DEFINITIONS})
-target_include_directories(rdoc ${RDOC_INCLUDES})
+    if(CMAKE_COMPILER_IS_GNUCXX)
+        set_property(SOURCE 3rdparty/jpeg-compressor/jpgd.cpp
+            APPEND_STRING PROPERTY COMPILE_FLAGS " -Wno-unknown-warning -Wno-implicit-fallthrough")
+
+        set_property(SOURCE strings/utf8printf.cpp
+            APPEND_STRING PROPERTY COMPILE_FLAGS " -Wno-unknown-warning -Wno-format-truncation")
+    endif()
+endif()
 
 set(data
     data/glsl/blit.vert
@@ -225,6 +290,7 @@ set(data
     data/glsl/quadwrite.frag
     data/glsl/texdisplay.frag
     data/glsl/gl_texsample.h
+    data/glsl/gles_texsample.h
     data/glsl/vk_texsample.h
     data/glsl/text.frag
     data/glsl/text.vert
@@ -274,7 +340,7 @@ endif()
 
 set(renderdoc_objects)
 
-if(ENABLE_GL)
+if(ENABLE_GL OR ENABLE_GLES)
     add_subdirectory(driver/gl)
     list(APPEND renderdoc_objects $<TARGET_OBJECTS:rdoc_gl>)
 endif()
@@ -284,24 +350,85 @@ if(ENABLE_VULKAN)
     list(APPEND renderdoc_objects $<TARGET_OBJECTS:rdoc_vulkan>)
 endif()
 
-if(ENABLE_GL OR ENABLE_VULKAN)
+if(ENABLE_GL OR ENABLE_GLES OR ENABLE_VULKAN)
     add_subdirectory(driver/shaders/spirv)
     list(APPEND renderdoc_objects $<TARGET_OBJECTS:rdoc_spirv>)
 endif()
 
-# rdoc must be after its drivers because of linux_libentry.cpp
+option(USE_INTERCEPTOR_LIB OFF)
+
+# on Android, pull in interceptor-lib only if we have LLVM available
+if(ANDROID AND USE_INTERCEPTOR_LIB )
+    find_package(LLVM CONFIG)
+
+    if(NOT LLVM_FOUND)
+        message(FATAL_ERROR "LLVM not found - interceptor-lib requires LLVM 4.0 available.")
+    elseif(${LLVM_PACKAGE_VERSION} VERSION_LESS "4.0.0" OR ${LLVM_PACKAGE_VERSION} VERSION_GREATER "4.0.1")
+        message(FATAL_ERROR "LLVM ${LLVM_PACKAGE_VERSION} found - we require precisely 4.0.")
+    else()
+        message(STATUS "LLVM ${LLVM_PACKAGE_VERSION} found - enabling android hooking using interceptor-lib.")
+        add_subdirectory(3rdparty/interceptor-lib)
+        list(APPEND renderdoc_objects $<TARGET_OBJECTS:interceptor_lib>)
+        link_directories(${LLVM_DIR}/../..)
+        set(RDOC_DEFINITIONS ${RDOC_DEFINITIONS} PRIVATE -DRENDERDOC_HAVE_INTERCEPTOR_LIB)
+
+        foreach(lib ${interceptor_libs})
+            list(APPEND RDOC_LIBRARIES PRIVATE -l${lib})
+        endforeach()
+    endif()
+endif()
+
+if(ANDROID AND NOT USE_INTERCEPTOR_LIB)
+    message(STATUS "Interceptor-lib not enabled (USE_INTERCEPTOR_LIB) - android hooking will use sometimes less reliable PLT-interception method. ")
+endif()
+
+# always pull in the amd folder
+add_subdirectory(driver/ihv/amd)
+list(APPEND renderdoc_objects $<TARGET_OBJECTS:rdoc_amd>)
+
+add_library(rdoc OBJECT ${sources})
+target_compile_definitions(rdoc ${RDOC_DEFINITIONS})
+target_include_directories(rdoc ${RDOC_INCLUDES})
+
 list(APPEND renderdoc_objects
     $<TARGET_OBJECTS:rdoc>
     ${data_objects})
+
+# posix_libentry must be the last so that library_loaded is called after
+# static objects are constructed. We guarantee this happens after even
+# any other static libraries that we link by making it its own static
+# library and appending it to the end of the link list.
+add_library(renderdoc_libentry STATIC os/posix/posix_libentry.cpp)
+target_compile_definitions(renderdoc_libentry ${RDOC_DEFINITIONS})
+target_include_directories(renderdoc_libentry ${RDOC_INCLUDES})
+link_directories(${CMAKE_CURRENT_BINARY_DIR})
+list(APPEND RDOC_LIBRARIES PRIVATE -lrenderdoc_libentry)
 
 add_library(renderdoc SHARED ${renderdoc_objects})
 target_compile_definitions(renderdoc ${RDOC_DEFINITIONS})
 target_include_directories(renderdoc ${RDOC_INCLUDES})
 target_link_libraries(renderdoc ${RDOC_LIBRARIES})
 
-install (TARGETS renderdoc DESTINATION lib)
+add_dependencies(renderdoc renderdoc_libentry)
 
-add_custom_command(TARGET renderdoc POST_BUILD
-	COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/bin/)
-add_custom_command(TARGET renderdoc POST_BUILD
-	COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:renderdoc> ${CMAKE_SOURCE_DIR}/bin/)
+if(UNIX AND NOT ANDROID AND NOT APPLE)
+    set_target_properties(renderdoc PROPERTIES LINK_FLAGS "-Wl,--undefined,force_include_libentry -Wl,--version-script,${CMAKE_CURRENT_SOURCE_DIR}/renderdoc.version -Wl,--no-undefined")
+endif()
+
+if(ANDROID)
+    set_target_properties(renderdoc PROPERTIES LINK_FLAGS "-Wl,--undefined,force_include_libentry -Wl,--build-id")
+    # rename output library
+    set_target_properties(renderdoc PROPERTIES OUTPUT_NAME "VkLayer_GLES_RenderDoc")
+
+    if(STRIP_ANDROID_LIBRARY AND CMAKE_STRIP AND CMAKE_BUILD_TYPE STREQUAL "Release")
+        add_custom_command(TARGET renderdoc POST_BUILD
+            COMMAND echo Stripping $<TARGET_FILE:renderdoc>
+            COMMAND ${CMAKE_STRIP} --strip-unneeded $<TARGET_FILE:renderdoc>)
+    endif()
+endif()
+
+install (TARGETS renderdoc DESTINATION lib${LIB_SUFFIX}/${LIB_SUBFOLDER})
+
+# Copy in application API header to include
+install (FILES api/app/renderdoc_app.h DESTINATION include RENAME renderdoc.h)
+

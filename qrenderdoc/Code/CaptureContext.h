@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,20 +30,12 @@
 #include <QMessageBox>
 #include <QString>
 #include <QtWidgets/QWidget>
-#include "CommonPipelineState.h"
-#include "PersistantConfig.h"
-#include "RenderManager.h"
+#include "Interface/QRDInterface.h"
+#include "ReplayManager.h"
 
 #if defined(RENDERDOC_PLATFORM_LINUX)
 #include <QX11Info>
 #endif
-
-struct ILogViewerForm
-{
-  virtual void OnLogfileLoaded() = 0;
-  virtual void OnLogfileClosed() = 0;
-  virtual void OnEventSelected(uint32_t eventID) = 0;
-};
 
 class MainWindow;
 class EventBrowser;
@@ -52,10 +44,18 @@ class PipelineStateViewer;
 class BufferViewer;
 class TextureViewer;
 class CaptureDialog;
-class QProgressDialog;
+class DebugMessageView;
+class CommentView;
+class PerformanceCounterViewer;
+class StatisticsViewer;
+class TimelineBar;
+class PythonShell;
+class ResourceInspector;
 
-class CaptureContext
+class CaptureContext : public ICaptureContext
 {
+  Q_DECLARE_TR_FUNCTIONS(CaptureContext);
+
 public:
   CaptureContext(QString paramFilename, QString remoteHost, uint32_t remoteIdent, bool temp,
                  PersistantConfig &cfg);
@@ -63,145 +63,293 @@ public:
 
   bool isRunning();
 
-  static QString ConfigFile(const QString &filename);
-
-  QString TempLogFilename(QString appname);
+  rdcstr TempCaptureFilename(const rdcstr &appname) override;
 
   //////////////////////////////////////////////////////////////////////////////
   // Control functions
 
-  void LoadLogfile(const QString &logFile, const QString &origFilename, bool temporary, bool local);
-  void CloseLogfile();
+  void LoadCapture(const rdcstr &captureFile, const rdcstr &origFilename, bool temporary,
+                   bool local) override;
+  bool SaveCaptureTo(const rdcstr &captureFile) override;
+  void RecompressCapture() override;
+  void CloseCapture() override;
+  bool ImportCapture(const CaptureFileFormat &fmt, const rdcstr &importfile,
+                     const rdcstr &rdcfile) override;
+  void ExportCapture(const CaptureFileFormat &fmt, const rdcstr &exportfile) override;
+  void SetEventID(const rdcarray<ICaptureViewer *> &exclude, uint32_t selectedEventID,
+                  uint32_t eventId, bool force = false) override;
 
-  void SetEventID(ILogViewerForm *exclude, uint32_t eventID, bool force = false);
-  void RefreshStatus() { SetEventID(NULL, m_EventID, true); }
-  void AddLogViewer(ILogViewerForm *f)
+  void RefreshStatus() override { SetEventID({}, m_SelectedEventID, m_EventID, true); }
+  void RefreshUIStatus(const rdcarray<ICaptureViewer *> &exclude, bool updateSelectedEvent,
+                       bool updateEvent);
+
+  void AddCaptureViewer(ICaptureViewer *f) override
   {
-    m_LogViewers.push_back(f);
+    m_CaptureViewers.push_back(f);
 
-    if(LogLoaded())
+    if(IsCaptureLoaded())
     {
-      f->OnLogfileLoaded();
-      f->OnEventSelected(CurEvent());
+      f->OnCaptureLoaded();
+      f->OnEventChanged(CurEvent());
     }
   }
 
-  void RemoveLogViewer(ILogViewerForm *f) { m_LogViewers.removeAll(f); }
+  void RemoveCaptureViewer(ICaptureViewer *f) override { m_CaptureViewers.removeAll(f); }
   //////////////////////////////////////////////////////////////////////////////
   // Accessors
 
-  RenderManager *Renderer() { return &m_Renderer; }
-  bool LogLoaded() { return m_LogLoaded; }
-  bool IsLogLocal() { return m_LogLocal; }
-  bool LogLoading() { return m_LoadInProgress; }
-  QString LogFilename() { return m_LogFile; }
-  const FetchFrameInfo &FrameInfo() { return m_FrameInfo; }
-  const APIProperties &APIProps() { return m_APIProps; }
-  uint32_t CurEvent() { return m_EventID; }
-  const FetchDrawcall *CurDrawcall() { return GetDrawcall(CurEvent()); }
-  const rdctype::array<FetchDrawcall> &CurDrawcalls() { return m_Drawcalls; }
-  FetchTexture *GetTexture(ResourceId id) { return m_Textures[id]; }
-  const rdctype::array<FetchTexture> &GetTextures() { return m_TextureList; }
-  FetchBuffer *GetBuffer(ResourceId id) { return m_Buffers[id]; }
-  const rdctype::array<FetchBuffer> &GetBuffers() { return m_BufferList; }
-  QVector<DebugMessage> DebugMessages;
-  int UnreadMessageCount;
-  void AddMessages(const rdctype::array<DebugMessage> &msgs)
+  ReplayManager &Replay() override { return m_Renderer; }
+  bool IsCaptureLoaded() override { return m_CaptureLoaded; }
+  bool IsCaptureLocal() override { return m_CaptureLocal; }
+  bool IsCaptureTemporary() override { return m_CaptureTemporary; }
+  bool IsCaptureLoading() override { return m_LoadInProgress; }
+  rdcstr GetCaptureFilename() override { return m_CaptureFile; }
+  CaptureModifications GetCaptureModifications() override { return m_CaptureMods; }
+  const FrameDescription &FrameInfo() override { return m_FrameInfo; }
+  const APIProperties &APIProps() override { return m_APIProps; }
+  uint32_t CurSelectedEvent() override { return m_SelectedEventID; }
+  uint32_t CurEvent() override { return m_EventID; }
+  const DrawcallDescription *CurSelectedDrawcall() override
   {
-    UnreadMessageCount += msgs.count;
-    for(const DebugMessage &msg : msgs)
-      DebugMessages.push_back(msg);
+    return GetDrawcall(CurSelectedEvent());
   }
+  const DrawcallDescription *CurDrawcall() override { return GetDrawcall(CurEvent()); }
+  const DrawcallDescription *GetFirstDrawcall() override { return m_FirstDrawcall; };
+  const DrawcallDescription *GetLastDrawcall() override { return m_LastDrawcall; };
+  void CreateRGPMapping(uint32_t version) override;
+  uint32_t GetRGPIdFromEventId(uint32_t eventId) override
+  {
+    if(eventId >= m_Event2RGP.size())
+      return 0;
+    return m_Event2RGP[eventId];
+  }
+  uint32_t GetEventIdFromRGPId(uint32_t RGPId) override
+  {
+    if(RGPId >= m_RGP2Event.size())
+      return 0;
+    return m_RGP2Event[RGPId];
+  }
+  const rdcarray<DrawcallDescription> &CurDrawcalls() override { return m_Drawcalls; }
+  ResourceDescription *GetResource(ResourceId id) override { return m_Resources[id]; }
+  const rdcarray<ResourceDescription> &GetResources() override { return m_ResourceList; }
+  rdcstr GetResourceName(ResourceId id) override;
+  bool IsAutogeneratedName(ResourceId id) override;
+  bool HasResourceCustomName(ResourceId id) override;
+  void SetResourceCustomName(ResourceId id, const rdcstr &name) override;
+  int ResourceNameCacheID() override;
+  TextureDescription *GetTexture(ResourceId id) override { return m_Textures[id]; }
+  const rdcarray<TextureDescription> &GetTextures() override { return m_TextureList; }
+  BufferDescription *GetBuffer(ResourceId id) override { return m_Buffers[id]; }
+  const rdcarray<BufferDescription> &GetBuffers() override { return m_BufferList; }
+  const DrawcallDescription *GetDrawcall(uint32_t eventId) override
+  {
+    return GetDrawcall(m_Drawcalls, eventId);
+  }
+  const SDFile &GetStructuredFile() override { return *m_StructuredFile; }
+  WindowingSystem CurWindowingSystem() override { return m_CurWinSystem; }
+  WindowingData CreateWindowingData(uintptr_t winId) override;
 
-  const FetchDrawcall *GetDrawcall(uint32_t eventID) { return GetDrawcall(m_Drawcalls, eventID); }
-  WindowingSystem m_CurWinSystem;
-  void *FillWindowingData(WId widget);
+  const rdcarray<DebugMessage> &DebugMessages() override { return m_DebugMessages; }
+  int UnreadMessageCount() override { return m_UnreadMessageCount; }
+  void MarkMessagesRead() override { m_UnreadMessageCount = 0; }
+  void AddMessages(const rdcarray<DebugMessage> &msgs) override;
 
-  const QIcon &winIcon() { return *m_Icon; }
-  MainWindow *mainWindow() { return m_MainWindow; }
-  EventBrowser *eventBrowser();
-  APIInspector *apiInspector();
-  TextureViewer *textureViewer();
-  BufferViewer *meshPreview();
-  PipelineStateViewer *pipelineViewer();
-  CaptureDialog *captureDialog();
+  rdcstr GetNotes(const rdcstr &key) override { return m_Notes[key]; }
+  void SetNotes(const rdcstr &key, const rdcstr &contents) override;
+  rdcarray<EventBookmark> GetBookmarks() override { return m_Bookmarks; }
+  void SetBookmark(const EventBookmark &mark) override;
+  void RemoveBookmark(uint32_t EID) override;
 
-  bool hasEventBrowser() { return m_EventBrowser != NULL; }
-  bool hasAPIInspector() { return m_APIInspector != NULL; }
-  bool hasTextureViewer() { return m_TextureViewer != NULL; }
-  bool hasPipelineViewer() { return m_PipelineViewer != NULL; }
-  bool hasMeshPreview() { return m_MeshPreview != NULL; }
-  bool hasCaptureDialog() { return m_CaptureDialog != NULL; }
-  void showEventBrowser();
-  void showAPIInspector();
-  void showTextureViewer();
-  void showMeshPreview();
-  void showPipelineViewer();
-  void showCaptureDialog();
+  IMainWindow *GetMainWindow() override;
+  IEventBrowser *GetEventBrowser() override;
+  IAPIInspector *GetAPIInspector() override;
+  ITextureViewer *GetTextureViewer() override;
+  IBufferViewer *GetMeshPreview() override;
+  IPipelineStateViewer *GetPipelineViewer() override;
+  ICaptureDialog *GetCaptureDialog() override;
+  IDebugMessageView *GetDebugMessageView() override;
+  ICommentView *GetCommentView() override;
+  IPerformanceCounterViewer *GetPerformanceCounterViewer() override;
+  IStatisticsViewer *GetStatisticsViewer() override;
+  ITimelineBar *GetTimelineBar() override;
+  IPythonShell *GetPythonShell() override;
+  IResourceInspector *GetResourceInspector() override;
 
-  QWidget *createToolWindow(const QString &objectName);
-  void windowClosed(QWidget *window);
+  bool HasEventBrowser() override { return m_EventBrowser != NULL; }
+  bool HasAPIInspector() override { return m_APIInspector != NULL; }
+  bool HasTextureViewer() override { return m_TextureViewer != NULL; }
+  bool HasPipelineViewer() override { return m_PipelineViewer != NULL; }
+  bool HasMeshPreview() override { return m_MeshPreview != NULL; }
+  bool HasCaptureDialog() override { return m_CaptureDialog != NULL; }
+  bool HasDebugMessageView() override { return m_DebugMessageView != NULL; }
+  bool HasCommentView() override { return m_CommentView != NULL; }
+  bool HasPerformanceCounterViewer() override { return m_PerformanceCounterViewer != NULL; }
+  bool HasStatisticsViewer() override { return m_StatisticsViewer != NULL; }
+  bool HasTimelineBar() override { return m_TimelineBar != NULL; }
+  bool HasPythonShell() override { return m_PythonShell != NULL; }
+  bool HasResourceInspector() override { return m_ResourceInspector != NULL; }
+  void ShowEventBrowser() override;
+  void ShowAPIInspector() override;
+  void ShowTextureViewer() override;
+  void ShowMeshPreview() override;
+  void ShowPipelineViewer() override;
+  void ShowCaptureDialog() override;
+  void ShowDebugMessageView() override;
+  void ShowCommentView() override;
+  void ShowPerformanceCounterViewer() override;
+  void ShowStatisticsViewer() override;
+  void ShowTimelineBar() override;
+  void ShowPythonShell() override;
+  void ShowResourceInspector() override;
 
-  D3D11PipelineState CurD3D11PipelineState;
-  D3D12PipelineState CurD3D12PipelineState;
-  GLPipelineState CurGLPipelineState;
-  VulkanPipelineState CurVulkanPipelineState;
-  CommonPipelineState CurPipelineState;
+  IShaderViewer *EditShader(bool customShader, const rdcstr &entryPoint, const rdcstrpairs &files,
+                            IShaderViewer::SaveCallback saveCallback,
+                            IShaderViewer::CloseCallback closeCallback) override;
 
-  PersistantConfig &Config;
+  IShaderViewer *DebugShader(const ShaderBindpointMapping *bind, const ShaderReflection *shader,
+                             ResourceId pipeline, ShaderDebugTrace *trace,
+                             const rdcstr &debugContext) override;
 
+  IShaderViewer *ViewShader(const ShaderReflection *shader, ResourceId pipeline) override;
+
+  IBufferViewer *ViewBuffer(uint64_t byteOffset, uint64_t byteSize, ResourceId id,
+                            const rdcstr &format = "") override;
+  IBufferViewer *ViewTextureAsBuffer(uint32_t arrayIdx, uint32_t mip, ResourceId id,
+                                     const rdcstr &format = "") override;
+
+  IConstantBufferPreviewer *ViewConstantBuffer(ShaderStage stage, uint32_t slot,
+                                               uint32_t idx) override;
+  IPixelHistoryView *ViewPixelHistory(ResourceId texID, int x, int y,
+                                      const TextureDisplay &display) override;
+
+  QWidget *CreateBuiltinWindow(const rdcstr &objectName) override;
+  void BuiltinWindowClosed(QWidget *window) override;
+
+  void RaiseDockWindow(QWidget *dockWindow) override;
+  void AddDockWindow(QWidget *newWindow, DockReference ref, QWidget *refWindow,
+                     float percentage = 0.5f) override;
+
+  const D3D11Pipe::State &CurD3D11PipelineState() override { return *m_CurD3D11PipelineState; }
+  const D3D12Pipe::State &CurD3D12PipelineState() override { return *m_CurD3D12PipelineState; }
+  const GLPipe::State &CurGLPipelineState() override { return *m_CurGLPipelineState; }
+  const VKPipe::State &CurVulkanPipelineState() override { return *m_CurVulkanPipelineState; }
+  CommonPipelineState &CurPipelineState() override { return m_CurPipelineState; }
+  PersistantConfig &Config() override { return m_Config; }
 private:
-  RenderManager m_Renderer;
+  ReplayManager m_Renderer;
 
-  QVector<ILogViewerForm *> m_LogViewers;
+  const D3D11Pipe::State *m_CurD3D11PipelineState;
+  const D3D12Pipe::State *m_CurD3D12PipelineState;
+  const GLPipe::State *m_CurGLPipelineState;
+  const VKPipe::State *m_CurVulkanPipelineState;
+  CommonPipelineState m_CurPipelineState;
 
-  bool m_LogLoaded, m_LoadInProgress, m_LogLocal;
-  QString m_LogFile;
+  D3D11Pipe::State m_DummyD3D11;
+  D3D12Pipe::State m_DummyD3D12;
+  GLPipe::State m_DummyGL;
+  VKPipe::State m_DummyVK;
 
-  void LoadLogfileThreaded(const QString &logFile, const QString &origFilename, bool temporary,
+  PersistantConfig &m_Config;
+
+  QVector<ICaptureViewer *> m_CaptureViewers;
+
+  bool m_CaptureLoaded = false, m_LoadInProgress = false, m_CaptureLocal = false,
+       m_CaptureTemporary = false;
+  QString m_CaptureFile;
+  CaptureModifications m_CaptureMods = CaptureModifications::NoModifications;
+
+  rdcarray<DebugMessage> m_DebugMessages;
+  int m_UnreadMessageCount = 0;
+
+  void CreateRGPMapping(const QStringList &eventNames,
+                        const rdcarray<DrawcallDescription> &drawcalls);
+
+  bool PassEquivalent(const DrawcallDescription &a, const DrawcallDescription &b);
+  bool ContainsMarker(const rdcarray<DrawcallDescription> &m_Drawcalls);
+  void AddFakeProfileMarkers();
+
+  void SaveChanges();
+
+  bool SaveRenames();
+  void LoadRenames(const QString &data);
+
+  bool SaveBookmarks();
+  void LoadBookmarks(const QString &data);
+
+  bool SaveNotes();
+  void LoadNotes(const QString &data);
+
+  void CacheResources();
+  rdcstr GetResourceName(const ResourceDescription *desc);
+
+  float m_LoadProgress = 0.0f;
+  float m_PostloadProgress = 0.0f;
+  float UpdateLoadProgress();
+
+  void LoadCaptureThreaded(const QString &captureFile, const QString &origFilename, bool temporary,
                            bool local);
 
-  uint32_t m_EventID;
+  uint32_t m_SelectedEventID = 0;
+  uint32_t m_EventID = 0;
 
-  const FetchDrawcall *GetDrawcall(const rdctype::array<FetchDrawcall> &draws, uint32_t eventID)
+  const DrawcallDescription *GetDrawcall(const rdcarray<DrawcallDescription> &draws, uint32_t eventId)
   {
-    for(const FetchDrawcall &d : draws)
+    for(const DrawcallDescription &d : draws)
     {
       if(!d.children.empty())
       {
-        const FetchDrawcall *draw = GetDrawcall(d.children, eventID);
+        const DrawcallDescription *draw = GetDrawcall(d.children, eventId);
         if(draw != NULL)
           return draw;
       }
 
-      if(d.eventID == eventID)
+      if(d.eventId == eventId)
         return &d;
     }
 
     return NULL;
   }
 
-  rdctype::array<FetchDrawcall> m_Drawcalls;
+  void setupDockWindow(QWidget *shad);
+  rdcarray<DrawcallDescription> m_Drawcalls;
 
   APIProperties m_APIProps;
-  FetchFrameInfo m_FrameInfo;
+  FrameDescription m_FrameInfo;
+  DrawcallDescription *m_FirstDrawcall = NULL;
+  DrawcallDescription *m_LastDrawcall = NULL;
 
-  QMap<ResourceId, FetchTexture *> m_Textures;
-  rdctype::array<FetchTexture> m_TextureList;
-  QMap<ResourceId, FetchBuffer *> m_Buffers;
-  rdctype::array<FetchBuffer> m_BufferList;
+  rdcarray<uint32_t> m_Event2RGP;
+  rdcarray<uint32_t> m_RGP2Event;
 
-  rdctype::array<WindowingSystem> m_WinSystems;
+  QMap<ResourceId, TextureDescription *> m_Textures;
+  rdcarray<TextureDescription> m_TextureList;
+  QMap<ResourceId, BufferDescription *> m_Buffers;
+  rdcarray<BufferDescription> m_BufferList;
+  QMap<ResourceId, ResourceDescription *> m_Resources;
+  rdcarray<ResourceDescription> m_ResourceList;
+
+  QList<EventBookmark> m_Bookmarks;
+
+  QMap<QString, QString> m_Notes;
+
+  QMap<ResourceId, QString> m_CustomNames;
+  int m_CustomNameCachedID = 1;
+
+  const SDFile *m_StructuredFile = NULL;
+  SDFile m_DummySDFile;
+
+  rdcarray<WindowingSystem> m_WinSystems;
+
+  WindowingSystem m_CurWinSystem = WindowingSystem::Unknown;
 
 #if defined(RENDERDOC_PLATFORM_LINUX)
-  xcb_connection_t *m_XCBConnection;
-  Display *m_X11Display;
+  xcb_connection_t *m_XCBConnection = NULL;
+  Display *m_X11Display = NULL;
 #endif
 
-  QIcon *m_Icon;
+  QIcon *m_Icon = NULL;
 
   // Windows
-  QProgressDialog *m_Progress;
   MainWindow *m_MainWindow = NULL;
   EventBrowser *m_EventBrowser = NULL;
   APIInspector *m_APIInspector = NULL;
@@ -209,4 +357,11 @@ private:
   BufferViewer *m_MeshPreview = NULL;
   PipelineStateViewer *m_PipelineViewer = NULL;
   CaptureDialog *m_CaptureDialog = NULL;
+  DebugMessageView *m_DebugMessageView = NULL;
+  CommentView *m_CommentView = NULL;
+  PerformanceCounterViewer *m_PerformanceCounterViewer = NULL;
+  StatisticsViewer *m_StatisticsViewer = NULL;
+  TimelineBar *m_TimelineBar = NULL;
+  PythonShell *m_PythonShell = NULL;
+  ResourceInspector *m_ResourceInspector = NULL;
 };

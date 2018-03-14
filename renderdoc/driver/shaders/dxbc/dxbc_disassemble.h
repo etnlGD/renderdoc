@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -28,7 +28,8 @@
 #include <stdint.h>
 #include <string>
 #include <vector>
-#include "api/replay/replay_enums.h"
+#include "api/replay/renderdoc_replay.h"
+#include "driver/dx/official/d3dcommon.h"
 
 using std::vector;
 using std::string;
@@ -413,6 +414,49 @@ enum OperandType
   NUM_OPERAND_TYPES,
 };
 
+enum SVSemantic
+{
+  SVNAME_UNDEFINED = 0,
+  SVNAME_POSITION,
+  SVNAME_CLIP_DISTANCE,
+  SVNAME_CULL_DISTANCE,
+  SVNAME_RENDER_TARGET_ARRAY_INDEX,
+  SVNAME_VIEWPORT_ARRAY_INDEX,
+  SVNAME_VERTEX_ID,
+  SVNAME_PRIMITIVE_ID,
+  SVNAME_INSTANCE_ID,
+  SVNAME_IS_FRONT_FACE,
+  SVNAME_SAMPLE_INDEX,
+
+  // following are non-contiguous
+  SVNAME_FINAL_QUAD_EDGE_TESSFACTOR0,
+  SVNAME_FINAL_QUAD_EDGE_TESSFACTOR = SVNAME_FINAL_QUAD_EDGE_TESSFACTOR0,
+  SVNAME_FINAL_QUAD_EDGE_TESSFACTOR1,
+  SVNAME_FINAL_QUAD_EDGE_TESSFACTOR2,
+  SVNAME_FINAL_QUAD_EDGE_TESSFACTOR3,
+
+  SVNAME_FINAL_QUAD_INSIDE_TESSFACTOR0,
+  SVNAME_FINAL_QUAD_INSIDE_TESSFACTOR = SVNAME_FINAL_QUAD_INSIDE_TESSFACTOR0,
+  SVNAME_FINAL_QUAD_INSIDE_TESSFACTOR1,
+
+  SVNAME_FINAL_TRI_EDGE_TESSFACTOR0,
+  SVNAME_FINAL_TRI_EDGE_TESSFACTOR = SVNAME_FINAL_TRI_EDGE_TESSFACTOR0,
+  SVNAME_FINAL_TRI_EDGE_TESSFACTOR1,
+  SVNAME_FINAL_TRI_EDGE_TESSFACTOR2,
+
+  SVNAME_FINAL_TRI_INSIDE_TESSFACTOR,
+
+  SVNAME_FINAL_LINE_DETAIL_TESSFACTOR,
+
+  SVNAME_FINAL_LINE_DENSITY_TESSFACTOR,
+
+  SVNAME_TARGET = 64,
+  SVNAME_DEPTH,
+  SVNAME_COVERAGE,
+  SVNAME_DEPTH_GREATER_EQUAL,
+  SVNAME_DEPTH_LESS_EQUAL,
+};
+
 enum OperandIndexType
 {
   INDEX_IMMEDIATE32 = 0,              // 0
@@ -447,8 +491,11 @@ enum MinimumPrecision
   PRECISION_DEFAULT,
   PRECISION_FLOAT16,
   PRECISION_FLOAT10,
+  PRECISION_UNUSED,
   PRECISION_SINT16,
   PRECISION_UINT16,
+  PRECISION_ANY16,
+  PRECISION_ANY10,
 
   NUM_PRECISIONS,
 };
@@ -514,22 +561,6 @@ enum InterpolationMode
   INTERPOLATION_LINEAR_NOPERSPECTIVE_SAMPLE,
 
   NUM_INTERPOLATIONS,
-};
-
-enum PrimitiveTopology
-{
-  TOPOLOGY_UNDEFINED = 0,
-  TOPOLOGY_POINTLIST,
-  TOPOLOGY_LINELIST,
-  TOPOLOGY_LINESTRIP,
-  TOPOLOGY_TRIANGLELIST,
-  TOPOLOGY_TRIANGLESTRIP,
-  TOPOLOGY_LINELIST_ADJ,
-  TOPOLOGY_LINESTRIP_ADJ,
-  TOPOLOGY_TRIANGLELIST_ADJ,
-  TOPOLOGY_TRIANGLESTRIP_ADJ,
-
-  NUM_TOPOLOGYS,
 };
 
 enum PrimitiveType
@@ -626,6 +657,7 @@ enum ResourceDimension
 
 enum ResourceRetType
 {
+  RETURN_TYPE_UNKNOWN = 0,
   RETURN_TYPE_UNORM = 1,
   RETURN_TYPE_SNORM,
   RETURN_TYPE_SINT,
@@ -653,8 +685,28 @@ enum ComponentType
 // Main structures
 /////////////////////////////////////////////////////////////////////////
 
+class DXBCFile;
+
 struct ASMIndex;
 struct ASMDecl;
+
+enum class ToString
+{
+  None = 0x0,
+  IsDecl = 0x1,
+  ShowSwizzle = 0x2,
+  FriendlyNameRegisters = 0x4,
+};
+
+constexpr inline ToString operator|(ToString a, ToString b)
+{
+  return ToString(int(a) | int(b));
+}
+
+constexpr inline bool operator&(ToString a, ToString b)
+{
+  return (int(a) & int(b)) != 0;
+}
 
 struct ASMOperand
 {
@@ -672,7 +724,7 @@ struct ASMOperand
 
   bool operator==(const ASMOperand &o) const;
 
-  string toString(bool swizzle = true) const;
+  string toString(DXBCFile *dxbc, ToString flags) const;
 
   ///////////////////////////////////////
 
@@ -756,19 +808,22 @@ struct ASMDecl
     declaration = NUM_OPCODES;
     refactoringAllowed = doublePrecisionFloats = forceEarlyDepthStencil =
         enableRawAndStructuredBuffers = skipOptimisation = enableMinPrecision =
-            enableD3D11_1DoubleExtensions = enableD3D11_1ShaderExtensions = false;
+            enableD3D11_1DoubleExtensions = enableD3D11_1ShaderExtensions =
+                enableD3D12AllResourcesBound = false;
     stride = 0;
     hasCounter = false;
+    rov = false;
     numTemps = 0;
     tempReg = 0;
     tempComponentCount = 0;
     count = 0;
     groupSize[0] = groupSize[1] = groupSize[2] = 0;
+    space = 0;
     resType[0] = resType[1] = resType[2] = resType[3] = NUM_RETURN_TYPES;
     dim = RESOURCE_DIMENSION_UNKNOWN;
     sampleCount = 0;
     interpolation = INTERPOLATION_UNDEFINED;
-    systemValue = eAttr_None;
+    systemValue = SVNAME_UNDEFINED;
     maxOut = 0;
     samplerMode = NUM_SAMPLERS;
     domain = DOMAIN_UNDEFINED;
@@ -776,7 +831,7 @@ struct ASMDecl
     partition = PARTITIONING_UNDEFINED;
     outPrim = OUTPUT_PRIMITIVE_UNDEFINED;
     inPrim = PRIMITIVE_UNDEFINED;
-    outTopology = TOPOLOGY_UNDEFINED;
+    outTopology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
     instanceCount = 0;
     indexRange = 0;
     maxTessFactor = 0.0f;
@@ -845,7 +900,7 @@ struct ASMDecl
   InterpolationMode interpolation;
 
   // OPCODE_DCL_INPUT_SIV
-  uint32_t systemValue;
+  SVSemantic systemValue;
 
   // OPCODE_DCL_MAX_OUTPUT_VERTEX_COUNT
   uint32_t maxOut;
@@ -869,7 +924,7 @@ struct ASMDecl
   PrimitiveType inPrim;
 
   // OPCODE_DCL_GS_OUTPUT_PRIMITIVE_TOPOLOGY
-  PrimitiveTopology outTopology;
+  D3D_PRIMITIVE_TOPOLOGY outTopology;
 
   // OPCODE_DCL_HS_FORK_PHASE_INSTANCE_COUNT
   // OPCODE_DCL_HS_JOIN_PHASE_INSTANCE_COUNT

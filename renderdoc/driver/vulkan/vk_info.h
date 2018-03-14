@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -49,6 +49,19 @@ struct DescSetLayout
           immutableSampler(NULL)
     {
     }
+    // Copy the immutable sampler
+    Binding(const Binding &b)
+        : descriptorType(b.descriptorType),
+          descriptorCount(b.descriptorCount),
+          stageFlags(b.stageFlags),
+          immutableSampler(NULL)
+    {
+      if(b.immutableSampler)
+      {
+        immutableSampler = new ResourceId[descriptorCount];
+        memcpy(immutableSampler, b.immutableSampler, sizeof(ResourceId) * descriptorCount);
+      }
+    }
     ~Binding() { SAFE_DELETE_ARRAY(immutableSampler); }
     VkDescriptorType descriptorType;
     uint32_t descriptorCount;
@@ -58,6 +71,9 @@ struct DescSetLayout
   vector<Binding> bindings;
 
   uint32_t dynamicCount;
+
+  bool operator==(const DescSetLayout &other) const;
+  bool operator!=(const DescSetLayout &other) const { return !(*this == other); }
 };
 
 struct VulkanCreationInfo
@@ -73,17 +89,22 @@ struct VulkanCreationInfo
     ResourceId renderpass;
     uint32_t subpass;
 
+    // a variant of the pipeline that uses subpass 0, used for when we are replaying in isolation.
+    // See loadRPs in the RenderPass info
+    VkPipeline subpass0pipe;
+
     // VkGraphicsPipelineCreateInfo
     VkPipelineCreateFlags flags;
 
     // VkPipelineShaderStageCreateInfo
     struct Shader
     {
-      Shader() : refl(NULL), mapping(NULL) {}
+      Shader() : refl(NULL), mapping(NULL), patchData(NULL) {}
       ResourceId module;
       string entryPoint;
       ShaderReflection *refl;
       ShaderBindpointMapping *mapping;
+      SPIRVPatchData *patchData;
 
       vector<byte> specdata;
       struct SpecInfo
@@ -205,6 +226,7 @@ struct VulkanCreationInfo
       // rarely used but the indices are often used
       vector<uint32_t> inputAttachments;
       vector<uint32_t> colorAttachments;
+      vector<uint32_t> resolveAttachments;
       int32_t depthstencilAttachment;
 
       vector<VkImageLayout> inputLayouts;
@@ -232,6 +254,9 @@ struct VulkanCreationInfo
     vector<Attachment> attachments;
 
     uint32_t width, height, layers;
+
+    // See above in loadRPs - we need to duplicate and make framebuffer equivalents for each
+    vector<VkFramebuffer> loadFBs;
   };
   map<ResourceId, Framebuffer> m_Framebuffer;
 
@@ -240,6 +265,7 @@ struct VulkanCreationInfo
     void Init(VulkanResourceManager *resourceMan, VulkanCreationInfo &info,
               const VkMemoryAllocateInfo *pAllocInfo);
 
+    uint32_t memoryTypeIndex;
     uint64_t size;
 
     VkBuffer wholeMemBuf;
@@ -282,7 +308,7 @@ struct VulkanCreationInfo
     VkSampleCountFlagBits samples;
 
     bool cube;
-    uint32_t creationFlags;
+    TextureCategory creationFlags;
   };
   map<ResourceId, Image> m_Image;
 
@@ -329,10 +355,15 @@ struct VulkanCreationInfo
 
     struct Reflection
     {
-      uint32_t stage;
+      uint32_t stageIndex;
       string entryPoint;
+      string disassembly;
       ShaderReflection refl;
       ShaderBindpointMapping mapping;
+      SPIRVPatchData patchData;
+
+      void Init(VulkanResourceManager *resourceMan, ResourceId id, const SPVModule &spv,
+                const std::string &entry, VkShaderStageFlagBits stage);
     };
     map<string, Reflection> m_Reflections;
   };

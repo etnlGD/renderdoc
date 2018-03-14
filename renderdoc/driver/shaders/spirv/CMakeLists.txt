@@ -5,6 +5,9 @@ set(glslang_sources
     ${glslang_dir}/SPIRV/GlslangToSpv.cpp
     ${glslang_dir}/SPIRV/GlslangToSpv.h
     ${glslang_dir}/SPIRV/GLSL.std.450.h
+    ${glslang_dir}/SPIRV/GLSL.ext.AMD.h
+    ${glslang_dir}/SPIRV/GLSL.ext.KHR.h
+    ${glslang_dir}/SPIRV/GLSL.ext.NV.h
     ${glslang_dir}/SPIRV/hex_float.h
     ${glslang_dir}/SPIRV/InReadableOrder.cpp
     ${glslang_dir}/SPIRV/Logger.cpp
@@ -62,9 +65,7 @@ set(glslang_sources
     ${glslang_dir}/glslang/MachineIndependent/preprocessor/PpContext.cpp
     ${glslang_dir}/glslang/MachineIndependent/preprocessor/PpContext.h
     ${glslang_dir}/glslang/MachineIndependent/preprocessor/Pp.cpp
-    ${glslang_dir}/glslang/MachineIndependent/preprocessor/PpMemory.cpp
     ${glslang_dir}/glslang/MachineIndependent/preprocessor/PpScanner.cpp
-    ${glslang_dir}/glslang/MachineIndependent/preprocessor/PpSymbols.cpp
     ${glslang_dir}/glslang/MachineIndependent/preprocessor/PpTokens.cpp
     ${glslang_dir}/glslang/MachineIndependent/preprocessor/PpTokens.h
     ${glslang_dir}/glslang/MachineIndependent/reflection.cpp
@@ -90,11 +91,16 @@ endif()
 set(sources
     spirv_common.cpp
     spirv_common.h
+    spirv_editor.h
+    spirv_editor.cpp
     spirv_compile.cpp
     spirv_disassemble.cpp
+    spirv_stringise.cpp
     ${glslang_sources})
 
 add_definitions(-DAMD_EXTENSIONS)
+add_definitions(-DNV_EXTENSIONS)
+add_definitions(-DENABLE_HLSL)
 
 set_source_files_properties(${glslang_sources}
     PROPERTIES COMPILE_FLAGS "-Wno-ignored-qualifiers -Wno-unknown-warning-option -Wno-inconsistent-missing-override")

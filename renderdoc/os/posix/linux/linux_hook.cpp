@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,7 +30,7 @@
 #include "common/threading.h"
 #include "os/os_specific.h"
 #include "os/posix/posix_hook.h"
-#include "serialise/string_utils.h"
+#include "strings/string_utils.h"
 
 // depending on symbol resolution, dlopen could get called really early.
 // until we've initialised, just skip any fancy stuff
@@ -42,6 +42,11 @@ void PosixHookInit()
   hookInited = HOOK_MAGIC_NUMBER;
 }
 
+bool PosixHookDetect(const char *identifier)
+{
+  return dlsym(RTLD_DEFAULT, identifier) != NULL;
+}
+
 // need to lock around use of realdlopen and libraryHooks
 Threading::CriticalSection libLock;
 
@@ -49,6 +54,9 @@ static std::map<std::string, dlopenCallback> libraryHooks;
 
 void PosixHookLibrary(const char *name, dlopenCallback cb)
 {
+  if(cb == NULL)
+    return;
+
   SCOPED_LOCK(libLock);
   libraryHooks[name] = cb;
 }
@@ -110,4 +118,30 @@ void plthook_lib(void *handle)
 
   plthook_replace(plthook, "dlopen", (void *)dlopen, NULL);
   plthook_close(plthook);
+}
+
+// android only hooking functions, not used on linux
+PosixScopedSuppressHooking::PosixScopedSuppressHooking()
+{
+}
+
+PosixScopedSuppressHooking::~PosixScopedSuppressHooking()
+{
+}
+
+void PosixHookApply()
+{
+}
+
+void PosixHookReapply()
+{
+}
+
+void PosixHookFunction(char const *, void *)
+{
+}
+
+void *PosixGetFunction(void *handle, const char *name)
+{
+  return dlsym(handle, name);
 }

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -29,20 +29,40 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////////
 // ID3D11Device3 interface
 
-bool WrappedID3D11Device::Serialise_CreateTexture2D1(const D3D11_TEXTURE2D_DESC1 *pDesc,
+template <typename SerialiserType>
+bool WrappedID3D11Device::Serialise_CreateTexture2D1(SerialiserType &ser,
+                                                     const D3D11_TEXTURE2D_DESC1 *pDesc,
                                                      const D3D11_SUBRESOURCE_DATA *pInitialData,
                                                      ID3D11Texture2D1 **ppTexture2D)
 {
-  SERIALISE_ELEMENT_PTR(D3D11_TEXTURE2D_DESC1, Descriptor, pDesc);
-  SERIALISE_ELEMENT(ResourceId, pTexture, GetIDForResource(*ppTexture2D));
+  SERIALISE_ELEMENT_LOCAL(Descriptor, *pDesc);
 
-  SERIALISE_ELEMENT(bool, HasInitialData, pInitialData != NULL);
+  // unused, just for the sake of the user
+  {
+    UINT numSubresources = Descriptor.MipLevels
+                               ? Descriptor.MipLevels
+                               : CalcNumMips(Descriptor.Width, Descriptor.Height, 1);
+    numSubresources *= Descriptor.ArraySize;
 
-  vector<D3D11_SUBRESOURCE_DATA> descs = Serialise_CreateTextureData(
-      ppTexture2D ? *ppTexture2D : NULL, pTexture, pInitialData, Descriptor.Width, Descriptor.Height,
-      1, Descriptor.Format, Descriptor.MipLevels, Descriptor.ArraySize, HasInitialData);
+    SERIALISE_ELEMENT_ARRAY(pInitialData, pInitialData ? numSubresources : 0);
+  }
 
-  if(m_State == READING)
+  SERIALISE_ELEMENT_LOCAL(pTexture, GetIDForResource(*ppTexture2D)).TypedAs("ID3D11Texture2D *");
+
+  std::vector<D3D11_SUBRESOURCE_DATA> descs =
+      Serialise_CreateTextureData(ser, ppTexture2D ? *ppTexture2D : NULL, pTexture, pInitialData,
+                                  Descriptor.Width, Descriptor.Height, 1, Descriptor.Format,
+                                  Descriptor.MipLevels, Descriptor.ArraySize, pInitialData != NULL);
+
+  if(IsReplayingAndReading() && ser.IsErrored())
+  {
+    // need to manually free the serialised buffers we stole in Serialise_CreateTextureData here,
+    // before the SERIALISE_CHECK_READ_ERRORS macro below returns out of the function
+    for(size_t i = 0; i < descs.size(); i++)
+      FreeAlignedBuffer((byte *)descs[i].pSysMem);
+  }
+
+  if(IsReplayingAndReading())
   {
     ID3D11Texture2D1 *ret = NULL;
     HRESULT hr = E_NOINTERFACE;
@@ -56,7 +76,7 @@ bool WrappedID3D11Device::Serialise_CreateTexture2D1(const D3D11_TEXTURE2D_DESC1
 
     if(m_pDevice3)
     {
-      if(HasInitialData)
+      if(pInitialData != NULL)
         hr = m_pDevice3->CreateTexture2D1(&Descriptor, &descs[0], &ret);
       else
         hr = m_pDevice3->CreateTexture2D1(&Descriptor, NULL, &ret);
@@ -68,7 +88,8 @@ bool WrappedID3D11Device::Serialise_CreateTexture2D1(const D3D11_TEXTURE2D_DESC1
 
     if(FAILED(hr))
     {
-      RDCERR("Failed on resource serialise-creation, HRESULT: 0x%08x", hr);
+      RDCERR("Failed on resource serialise-creation, HRESULT: %s", ToStr(hr).c_str());
+      return false;
     }
     else
     {
@@ -76,10 +97,20 @@ bool WrappedID3D11Device::Serialise_CreateTexture2D1(const D3D11_TEXTURE2D_DESC1
 
       GetResourceManager()->AddLiveResource(pTexture, ret);
     }
-  }
 
-  for(size_t i = 0; i < descs.size(); i++)
-    SAFE_DELETE_ARRAY(descs[i].pSysMem);
+    const char *prefix = Descriptor.ArraySize > 1 ? "2D TextureArray" : "2D Texture";
+
+    if(Descriptor.BindFlags & D3D11_BIND_RENDER_TARGET)
+      prefix = "2D Render Target";
+    else if(Descriptor.BindFlags & D3D11_BIND_DEPTH_STENCIL)
+      prefix = "2D Depth Target";
+
+    AddResource(pTexture, ResourceType::Texture, prefix);
+
+    // free the serialised buffers we stole in Serialise_CreateTextureData
+    for(size_t i = 0; i < descs.size(); i++)
+      FreeAlignedBuffer((byte *)descs[i].pSysMem);
+  }
 
   return true;
 }
@@ -97,7 +128,8 @@ HRESULT WrappedID3D11Device::CreateTexture2D1(const D3D11_TEXTURE2D_DESC1 *pDesc
 
   ID3D11Texture2D1 *real = NULL;
   ID3D11Texture2D1 *wrapped = NULL;
-  HRESULT ret = m_pDevice3->CreateTexture2D1(pDesc1, pInitialData, &real);
+  HRESULT ret;
+  SERIALISE_TIME_CALL(ret = m_pDevice3->CreateTexture2D1(pDesc1, pInitialData, &real));
 
   if(SUCCEEDED(ret))
   {
@@ -105,13 +137,14 @@ HRESULT WrappedID3D11Device::CreateTexture2D1(const D3D11_TEXTURE2D_DESC1 *pDesc
 
     wrapped = new WrappedID3D11Texture2D1((ID3D11Texture2D *)real, this);
 
-    if(m_State >= WRITING)
+    if(IsCaptureMode(m_State))
     {
       Chunk *chunk = NULL;
 
       {
-        SCOPED_SERIALISE_CONTEXT(CREATE_TEXTURE_2D1);
-        Serialise_CreateTexture2D1(pDesc1, pInitialData, &wrapped);
+        USE_SCRATCH_SERIALISER();
+        SCOPED_SERIALISE_CHUNK(D3D11Chunk::CreateTexture2D1);
+        Serialise_CreateTexture2D1(GET_SERIALISER, pDesc1, pInitialData, &wrapped);
 
         chunk = scope.Get();
       }
@@ -136,20 +169,39 @@ HRESULT WrappedID3D11Device::CreateTexture2D1(const D3D11_TEXTURE2D_DESC1 *pDesc
   return ret;
 }
 
-bool WrappedID3D11Device::Serialise_CreateTexture3D1(const D3D11_TEXTURE3D_DESC1 *pDesc,
+template <typename SerialiserType>
+bool WrappedID3D11Device::Serialise_CreateTexture3D1(SerialiserType &ser,
+                                                     const D3D11_TEXTURE3D_DESC1 *pDesc,
                                                      const D3D11_SUBRESOURCE_DATA *pInitialData,
                                                      ID3D11Texture3D1 **ppTexture3D)
 {
-  SERIALISE_ELEMENT_PTR(D3D11_TEXTURE3D_DESC1, Descriptor, pDesc);
-  SERIALISE_ELEMENT(ResourceId, pTexture, GetIDForResource(*ppTexture3D));
+  SERIALISE_ELEMENT_LOCAL(Descriptor, *pDesc);
 
-  SERIALISE_ELEMENT(bool, HasInitialData, pInitialData != NULL);
+  // unused, just for the sake of the user
+  {
+    UINT numSubresources = Descriptor.MipLevels
+                               ? Descriptor.MipLevels
+                               : CalcNumMips(Descriptor.Width, Descriptor.Height, Descriptor.Depth);
 
-  vector<D3D11_SUBRESOURCE_DATA> descs = Serialise_CreateTextureData(
-      ppTexture3D ? *ppTexture3D : NULL, pTexture, pInitialData, Descriptor.Width, Descriptor.Height,
-      Descriptor.Depth, Descriptor.Format, Descriptor.MipLevels, 1, HasInitialData);
+    SERIALISE_ELEMENT_ARRAY(pInitialData, pInitialData ? numSubresources : 0);
+  }
 
-  if(m_State == READING)
+  SERIALISE_ELEMENT_LOCAL(pTexture, GetIDForResource(*ppTexture3D)).TypedAs("ID3D11Texture3D *");
+
+  std::vector<D3D11_SUBRESOURCE_DATA> descs =
+      Serialise_CreateTextureData(ser, ppTexture3D ? *ppTexture3D : NULL, pTexture, pInitialData,
+                                  Descriptor.Width, Descriptor.Height, Descriptor.Depth,
+                                  Descriptor.Format, Descriptor.MipLevels, 1, pInitialData != NULL);
+
+  if(IsReplayingAndReading() && ser.IsErrored())
+  {
+    // need to manually free the serialised buffers we stole in Serialise_CreateTextureData here,
+    // before the SERIALISE_CHECK_READ_ERRORS macro below returns out of the function
+    for(size_t i = 0; i < descs.size(); i++)
+      FreeAlignedBuffer((byte *)descs[i].pSysMem);
+  }
+
+  if(IsReplayingAndReading())
   {
     ID3D11Texture3D1 *ret = NULL;
     HRESULT hr = E_NOINTERFACE;
@@ -163,7 +215,7 @@ bool WrappedID3D11Device::Serialise_CreateTexture3D1(const D3D11_TEXTURE3D_DESC1
 
     if(m_pDevice3)
     {
-      if(HasInitialData)
+      if(pInitialData != NULL)
         hr = m_pDevice3->CreateTexture3D1(&Descriptor, &descs[0], &ret);
       else
         hr = m_pDevice3->CreateTexture3D1(&Descriptor, NULL, &ret);
@@ -175,7 +227,8 @@ bool WrappedID3D11Device::Serialise_CreateTexture3D1(const D3D11_TEXTURE3D_DESC1
 
     if(FAILED(hr))
     {
-      RDCERR("Failed on resource serialise-creation, HRESULT: 0x%08x", hr);
+      RDCERR("Failed on resource serialise-creation, HRESULT: %s", ToStr(hr).c_str());
+      return false;
     }
     else
     {
@@ -183,10 +236,20 @@ bool WrappedID3D11Device::Serialise_CreateTexture3D1(const D3D11_TEXTURE3D_DESC1
 
       GetResourceManager()->AddLiveResource(pTexture, ret);
     }
-  }
 
-  for(size_t i = 0; i < descs.size(); i++)
-    SAFE_DELETE_ARRAY(descs[i].pSysMem);
+    const char *prefix = "3D Texture";
+
+    if(Descriptor.BindFlags & D3D11_BIND_RENDER_TARGET)
+      prefix = "3D Render Target";
+    else if(Descriptor.BindFlags & D3D11_BIND_DEPTH_STENCIL)
+      prefix = "3D Depth Target";
+
+    AddResource(pTexture, ResourceType::Texture, prefix);
+
+    // free the serialised buffers we stole in Serialise_CreateTextureData
+    for(size_t i = 0; i < descs.size(); i++)
+      FreeAlignedBuffer((byte *)descs[i].pSysMem);
+  }
 
   return true;
 }
@@ -204,7 +267,8 @@ HRESULT WrappedID3D11Device::CreateTexture3D1(const D3D11_TEXTURE3D_DESC1 *pDesc
 
   ID3D11Texture3D1 *real = NULL;
   ID3D11Texture3D1 *wrapped = NULL;
-  HRESULT ret = m_pDevice3->CreateTexture3D1(pDesc1, pInitialData, &real);
+  HRESULT ret;
+  SERIALISE_TIME_CALL(ret = m_pDevice3->CreateTexture3D1(pDesc1, pInitialData, &real));
 
   if(SUCCEEDED(ret))
   {
@@ -212,13 +276,14 @@ HRESULT WrappedID3D11Device::CreateTexture3D1(const D3D11_TEXTURE3D_DESC1 *pDesc
 
     wrapped = new WrappedID3D11Texture3D1((ID3D11Texture3D *)real, this);
 
-    if(m_State >= WRITING)
+    if(IsCaptureMode(m_State))
     {
       Chunk *chunk = NULL;
 
       {
-        SCOPED_SERIALISE_CONTEXT(CREATE_TEXTURE_3D1);
-        Serialise_CreateTexture3D1(pDesc1, pInitialData, &wrapped);
+        USE_SCRATCH_SERIALISER();
+        SCOPED_SERIALISE_CHUNK(D3D11Chunk::CreateTexture3D1);
+        Serialise_CreateTexture3D1(GET_SERIALISER, pDesc1, pInitialData, &wrapped);
 
         chunk = scope.Get();
       }
@@ -243,32 +308,31 @@ HRESULT WrappedID3D11Device::CreateTexture3D1(const D3D11_TEXTURE3D_DESC1 *pDesc
   return ret;
 }
 
+template <typename SerialiserType>
 bool WrappedID3D11Device::Serialise_CreateShaderResourceView1(
-    ID3D11Resource *pResource, const D3D11_SHADER_RESOURCE_VIEW_DESC1 *pDesc,
+    SerialiserType &ser, ID3D11Resource *pResource, const D3D11_SHADER_RESOURCE_VIEW_DESC1 *pDesc,
     ID3D11ShaderResourceView1 **ppSRView)
 {
-  SERIALISE_ELEMENT(ResourceId, Resource, GetIDForResource(pResource));
-  SERIALISE_ELEMENT(bool, HasDesc, pDesc != NULL);
-  SERIALISE_ELEMENT_PTR_OPT(D3D11_SHADER_RESOURCE_VIEW_DESC1, Descriptor, pDesc, HasDesc);
-  SERIALISE_ELEMENT(ResourceId, pView, GetIDForResource(*ppSRView));
+  SERIALISE_ELEMENT(pResource);
+  SERIALISE_ELEMENT_OPT(pDesc);
+  SERIALISE_ELEMENT_LOCAL(pView, GetIDForResource(*ppSRView))
+      .TypedAs("ID3D11ShaderResourceView1 *");
 
-  if(m_State == READING && GetResourceManager()->HasLiveResource(Resource))
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading() && pResource)
   {
     ID3D11ShaderResourceView1 *ret = NULL;
 
-    D3D11_SHADER_RESOURCE_VIEW_DESC1 *pSRVDesc = NULL;
-    if(HasDesc)
-      pSRVDesc = &Descriptor;
+    D3D11_SHADER_RESOURCE_VIEW_DESC1 *pSRVDesc = (D3D11_SHADER_RESOURCE_VIEW_DESC1 *)pDesc;
 
-    ID3D11Resource *live = (ID3D11Resource *)GetResourceManager()->GetLiveResource(Resource);
-
-    WrappedID3D11Texture2D1 *tex2d = (WrappedID3D11Texture2D1 *)live;
+    WrappedID3D11Texture2D1 *tex2d = (WrappedID3D11Texture2D1 *)pResource;
 
     D3D11_SHADER_RESOURCE_VIEW_DESC1 backbufferTypedDesc = {};
 
     // need to fixup typeless backbuffer fudging, if a descriptor isn't specified then
     // we need to make one to give the correct type
-    if(!HasDesc && WrappedID3D11Texture2D1::IsAlloc(live) && tex2d->m_RealDescriptor)
+    if(!pDesc && WrappedID3D11Texture2D1::IsAlloc(pResource) && tex2d->m_RealDescriptor)
     {
       backbufferTypedDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
 
@@ -290,7 +354,7 @@ bool WrappedID3D11Device::Serialise_CreateShaderResourceView1(
     // This behaviour is documented only for render targets, but seems to be used & work for
     // SRVs, so apply it here too.
     if(pSRVDesc && pSRVDesc->Format == DXGI_FORMAT_UNKNOWN &&
-       WrappedID3D11Texture2D1::IsAlloc(live) && tex2d->m_RealDescriptor)
+       WrappedID3D11Texture2D1::IsAlloc(pResource) && tex2d->m_RealDescriptor)
     {
       pSRVDesc->Format = tex2d->m_RealDescriptor->Format;
     }
@@ -299,7 +363,7 @@ bool WrappedID3D11Device::Serialise_CreateShaderResourceView1(
 
     if(m_pDevice3)
     {
-      hr = m_pDevice3->CreateShaderResourceView1(GetResourceManager()->UnwrapResource(live),
+      hr = m_pDevice3->CreateShaderResourceView1(GetResourceManager()->UnwrapResource(pResource),
                                                  pSRVDesc, &ret);
     }
     else
@@ -309,14 +373,18 @@ bool WrappedID3D11Device::Serialise_CreateShaderResourceView1(
 
     if(FAILED(hr))
     {
-      RDCERR("Failed on resource serialise-creation, HRESULT: 0x%08x", hr);
+      RDCERR("Failed on resource serialise-creation, HRESULT: %s", ToStr(hr).c_str());
+      return false;
     }
     else
     {
-      ret = new WrappedID3D11ShaderResourceView1(ret, live, this);
+      ret = new WrappedID3D11ShaderResourceView1(ret, pResource, this);
 
       GetResourceManager()->AddLiveResource(pView, ret);
     }
+
+    AddResource(pView, ResourceType::View, "Shader Resource View");
+    DerivedResource(pResource, pView);
   }
 
   return true;
@@ -336,8 +404,9 @@ HRESULT WrappedID3D11Device::CreateShaderResourceView1(ID3D11Resource *pResource
 
   ID3D11ShaderResourceView1 *real = NULL;
   ID3D11ShaderResourceView1 *wrapped = NULL;
-  HRESULT ret = m_pDevice3->CreateShaderResourceView1(
-      GetResourceManager()->UnwrapResource(pResource), pDesc, &real);
+  HRESULT ret;
+  SERIALISE_TIME_CALL(ret = m_pDevice3->CreateShaderResourceView1(
+                          GetResourceManager()->UnwrapResource(pResource), pDesc, &real));
 
   if(SUCCEEDED(ret))
   {
@@ -347,10 +416,11 @@ HRESULT WrappedID3D11Device::CreateShaderResourceView1(ID3D11Resource *pResource
 
     Chunk *chunk = NULL;
 
-    if(m_State >= WRITING)
+    if(IsCaptureMode(m_State))
     {
-      SCOPED_SERIALISE_CONTEXT(CREATE_SRV1);
-      Serialise_CreateShaderResourceView1(pResource, pDesc, &wrapped);
+      USE_SCRATCH_SERIALISER();
+      SCOPED_SERIALISE_CHUNK(D3D11Chunk::CreateShaderResourceView1);
+      Serialise_CreateShaderResourceView1(GET_SERIALISER, pResource, pDesc, &wrapped);
 
       chunk = scope.Get();
 
@@ -387,32 +457,31 @@ HRESULT WrappedID3D11Device::CreateShaderResourceView1(ID3D11Resource *pResource
 
   return ret;
 }
-bool WrappedID3D11Device::Serialise_CreateRenderTargetView1(ID3D11Resource *pResource,
+template <typename SerialiserType>
+bool WrappedID3D11Device::Serialise_CreateRenderTargetView1(SerialiserType &ser,
+                                                            ID3D11Resource *pResource,
                                                             const D3D11_RENDER_TARGET_VIEW_DESC1 *pDesc,
                                                             ID3D11RenderTargetView1 **ppRTView)
 {
-  SERIALISE_ELEMENT(ResourceId, Resource, GetIDForResource(pResource));
-  SERIALISE_ELEMENT(bool, HasDesc, pDesc != NULL);
-  SERIALISE_ELEMENT_PTR_OPT(D3D11_RENDER_TARGET_VIEW_DESC1, Descriptor, pDesc, HasDesc);
-  SERIALISE_ELEMENT(ResourceId, pView, GetIDForResource(*ppRTView));
+  SERIALISE_ELEMENT(pResource);
+  SERIALISE_ELEMENT_OPT(pDesc);
+  SERIALISE_ELEMENT_LOCAL(pView, GetIDForResource(*ppRTView)).TypedAs("ID3D11RenderTargetView1 *");
 
-  if(m_State == READING && GetResourceManager()->HasLiveResource(Resource))
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading() && pResource)
   {
     ID3D11RenderTargetView1 *ret = NULL;
 
-    D3D11_RENDER_TARGET_VIEW_DESC1 *pRTVDesc = NULL;
-    if(HasDesc)
-      pRTVDesc = &Descriptor;
+    D3D11_RENDER_TARGET_VIEW_DESC1 *pRTVDesc = (D3D11_RENDER_TARGET_VIEW_DESC1 *)pDesc;
 
-    ID3D11Resource *live = (ID3D11Resource *)GetResourceManager()->GetLiveResource(Resource);
-
-    WrappedID3D11Texture2D1 *tex2d = (WrappedID3D11Texture2D1 *)live;
+    WrappedID3D11Texture2D1 *tex2d = (WrappedID3D11Texture2D1 *)pResource;
 
     D3D11_RENDER_TARGET_VIEW_DESC1 backbufferTypedDesc = {};
 
     // need to fixup typeless backbuffer fudging, if a descriptor isn't specified then
     // we need to make one to give the correct type
-    if(!HasDesc && WrappedID3D11Texture2D1::IsAlloc(live) && tex2d->m_RealDescriptor)
+    if(!pDesc && WrappedID3D11Texture2D1::IsAlloc(pResource) && tex2d->m_RealDescriptor)
     {
       backbufferTypedDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
 
@@ -430,7 +499,7 @@ bool WrappedID3D11Device::Serialise_CreateRenderTargetView1(ID3D11Resource *pRes
     // the texture's format. But as above, we fudge around the typeless backbuffer so we
     // have to set the correct typed format
     if(pRTVDesc && pRTVDesc->Format == DXGI_FORMAT_UNKNOWN &&
-       WrappedID3D11Texture2D1::IsAlloc(live) && tex2d->m_RealDescriptor)
+       WrappedID3D11Texture2D1::IsAlloc(pResource) && tex2d->m_RealDescriptor)
     {
       pRTVDesc->Format = tex2d->m_RealDescriptor->Format;
     }
@@ -439,8 +508,8 @@ bool WrappedID3D11Device::Serialise_CreateRenderTargetView1(ID3D11Resource *pRes
 
     if(m_pDevice3)
     {
-      hr = m_pDevice3->CreateRenderTargetView1(GetResourceManager()->UnwrapResource(live), pRTVDesc,
-                                               &ret);
+      hr = m_pDevice3->CreateRenderTargetView1(GetResourceManager()->UnwrapResource(pResource),
+                                               pRTVDesc, &ret);
     }
     else
     {
@@ -449,14 +518,18 @@ bool WrappedID3D11Device::Serialise_CreateRenderTargetView1(ID3D11Resource *pRes
 
     if(FAILED(hr))
     {
-      RDCERR("Failed on resource serialise-creation, HRESULT: 0x%08x", hr);
+      RDCERR("Failed on resource serialise-creation, HRESULT: %s", ToStr(hr).c_str());
+      return false;
     }
     else
     {
-      ret = new WrappedID3D11RenderTargetView1(ret, live, this);
+      ret = new WrappedID3D11RenderTargetView1(ret, pResource, this);
 
       GetResourceManager()->AddLiveResource(pView, ret);
     }
+
+    AddResource(pView, ResourceType::View, "Render Target View");
+    DerivedResource(pResource, pView);
   }
 
   return true;
@@ -476,8 +549,9 @@ HRESULT WrappedID3D11Device::CreateRenderTargetView1(ID3D11Resource *pResource,
 
   ID3D11RenderTargetView1 *real = NULL;
   ID3D11RenderTargetView1 *wrapped = NULL;
-  HRESULT ret = m_pDevice3->CreateRenderTargetView1(GetResourceManager()->UnwrapResource(pResource),
-                                                    pDesc, &real);
+  HRESULT ret;
+  SERIALISE_TIME_CALL(ret = m_pDevice3->CreateRenderTargetView1(
+                          GetResourceManager()->UnwrapResource(pResource), pDesc, &real));
 
   if(SUCCEEDED(ret))
   {
@@ -487,10 +561,11 @@ HRESULT WrappedID3D11Device::CreateRenderTargetView1(ID3D11Resource *pResource,
 
     Chunk *chunk = NULL;
 
-    if(m_State >= WRITING)
+    if(IsCaptureMode(m_State))
     {
-      SCOPED_SERIALISE_CONTEXT(CREATE_RTV1);
-      Serialise_CreateRenderTargetView1(pResource, pDesc, &wrapped);
+      USE_SCRATCH_SERIALISER();
+      SCOPED_SERIALISE_CHUNK(D3D11Chunk::CreateRenderTargetView1);
+      Serialise_CreateRenderTargetView1(GET_SERIALISER, pResource, pDesc, &wrapped);
 
       chunk = scope.Get();
 
@@ -528,31 +603,28 @@ HRESULT WrappedID3D11Device::CreateRenderTargetView1(ID3D11Resource *pResource,
   return ret;
 }
 
+template <typename SerialiserType>
 bool WrappedID3D11Device::Serialise_CreateUnorderedAccessView1(
-    ID3D11Resource *pResource, const D3D11_UNORDERED_ACCESS_VIEW_DESC1 *pDesc,
+    SerialiserType &ser, ID3D11Resource *pResource, const D3D11_UNORDERED_ACCESS_VIEW_DESC1 *pDesc,
     ID3D11UnorderedAccessView1 **ppUAView)
 {
-  SERIALISE_ELEMENT(ResourceId, Resource, GetIDForResource(pResource));
-  SERIALISE_ELEMENT(bool, HasDesc, pDesc != NULL);
-  SERIALISE_ELEMENT_PTR_OPT(D3D11_UNORDERED_ACCESS_VIEW_DESC1, Descriptor, pDesc, HasDesc);
-  SERIALISE_ELEMENT(ResourceId, pView, GetIDForResource(*ppUAView));
+  SERIALISE_ELEMENT(pResource);
+  SERIALISE_ELEMENT_OPT(pDesc);
+  SERIALISE_ELEMENT_LOCAL(pView, GetIDForResource(*ppUAView))
+      .TypedAs("ID3D11UnorderedAccessView1 *");
 
-  if(m_State == READING && GetResourceManager()->HasLiveResource(Resource))
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading() && pResource)
   {
     ID3D11UnorderedAccessView1 *ret = NULL;
-
-    D3D11_UNORDERED_ACCESS_VIEW_DESC1 *pUAVDesc = NULL;
-    if(HasDesc)
-      pUAVDesc = &Descriptor;
-
-    ID3D11Resource *live = (ID3D11Resource *)GetResourceManager()->GetLiveResource(Resource);
 
     HRESULT hr = E_NOINTERFACE;
 
     if(m_pDevice3)
     {
-      hr = m_pDevice3->CreateUnorderedAccessView1(GetResourceManager()->UnwrapResource(live),
-                                                  pUAVDesc, &ret);
+      hr = m_pDevice3->CreateUnorderedAccessView1(GetResourceManager()->UnwrapResource(pResource),
+                                                  pDesc, &ret);
     }
     else
     {
@@ -561,14 +633,18 @@ bool WrappedID3D11Device::Serialise_CreateUnorderedAccessView1(
 
     if(FAILED(hr))
     {
-      RDCERR("Failed on resource serialise-creation, HRESULT: 0x%08x", hr);
+      RDCERR("Failed on resource serialise-creation, HRESULT: %s", ToStr(hr).c_str());
+      return false;
     }
     else
     {
-      ret = new WrappedID3D11UnorderedAccessView1(ret, live, this);
+      ret = new WrappedID3D11UnorderedAccessView1(ret, pResource, this);
 
       GetResourceManager()->AddLiveResource(pView, ret);
     }
+
+    AddResource(pView, ResourceType::View, "Unordered Access View");
+    DerivedResource(pResource, pView);
   }
 
   return true;
@@ -588,8 +664,9 @@ HRESULT WrappedID3D11Device::CreateUnorderedAccessView1(ID3D11Resource *pResourc
 
   ID3D11UnorderedAccessView1 *real = NULL;
   ID3D11UnorderedAccessView1 *wrapped = NULL;
-  HRESULT ret = m_pDevice3->CreateUnorderedAccessView1(
-      GetResourceManager()->UnwrapResource(pResource), pDesc, &real);
+  HRESULT ret;
+  SERIALISE_TIME_CALL(ret = m_pDevice3->CreateUnorderedAccessView1(
+                          GetResourceManager()->UnwrapResource(pResource), pDesc, &real));
 
   if(SUCCEEDED(ret))
   {
@@ -599,10 +676,11 @@ HRESULT WrappedID3D11Device::CreateUnorderedAccessView1(ID3D11Resource *pResourc
 
     Chunk *chunk = NULL;
 
-    if(m_State >= WRITING)
+    if(IsCaptureMode(m_State))
     {
-      SCOPED_SERIALISE_CONTEXT(CREATE_UAV1);
-      Serialise_CreateUnorderedAccessView1(pResource, pDesc, &wrapped);
+      USE_SCRATCH_SERIALISER();
+      SCOPED_SERIALISE_CHUNK(D3D11Chunk::CreateUnorderedAccessView1);
+      Serialise_CreateUnorderedAccessView1(GET_SERIALISER, pResource, pDesc, &wrapped);
 
       chunk = scope.Get();
 
@@ -639,13 +717,18 @@ HRESULT WrappedID3D11Device::CreateUnorderedAccessView1(ID3D11Resource *pResourc
   return ret;
 }
 
+template <typename SerialiserType>
 bool WrappedID3D11Device::Serialise_CreateRasterizerState2(
-    const D3D11_RASTERIZER_DESC2 *pRasterizerDesc, ID3D11RasterizerState2 **ppRasterizerState)
+    SerialiserType &ser, const D3D11_RASTERIZER_DESC2 *pRasterizerDesc,
+    ID3D11RasterizerState2 **ppRasterizerState)
 {
-  SERIALISE_ELEMENT_PTR(D3D11_RASTERIZER_DESC2, Descriptor, pRasterizerDesc);
-  SERIALISE_ELEMENT(ResourceId, State, GetIDForResource(*ppRasterizerState));
+  SERIALISE_ELEMENT_LOCAL(Descriptor, *pRasterizerDesc);
+  SERIALISE_ELEMENT_LOCAL(pState, GetIDForResource(*ppRasterizerState))
+      .TypedAs("ID3D11RasterizerState2 *");
 
-  if(m_State == READING)
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
     ID3D11RasterizerState2 *ret = NULL;
     HRESULT hr = E_NOINTERFACE;
@@ -657,14 +740,28 @@ bool WrappedID3D11Device::Serialise_CreateRasterizerState2(
 
     if(FAILED(hr))
     {
-      RDCERR("Failed on resource serialise-creation, HRESULT: 0x%08x", hr);
+      RDCERR("Failed on resource serialise-creation, HRESULT: %s", ToStr(hr).c_str());
+      return false;
     }
     else
     {
-      ret = new WrappedID3D11RasterizerState2(ret, this);
+      if(GetResourceManager()->HasWrapper(ret))
+      {
+        ret->Release();
+        ret = (ID3D11RasterizerState2 *)GetResourceManager()->GetWrapper(ret);
+        ret->AddRef();
 
-      GetResourceManager()->AddLiveResource(State, ret);
+        GetResourceManager()->AddLiveResource(pState, ret);
+      }
+      else
+      {
+        ret = new WrappedID3D11RasterizerState2(ret, this);
+
+        GetResourceManager()->AddLiveResource(pState, ret);
+      }
     }
+
+    AddResource(pState, ResourceType::StateObject, "Rasterizer State");
   }
 
   return true;
@@ -680,7 +777,8 @@ HRESULT WrappedID3D11Device::CreateRasterizerState2(const D3D11_RASTERIZER_DESC2
     return m_pDevice3->CreateRasterizerState2(pRasterizerDesc, NULL);
 
   ID3D11RasterizerState2 *real = NULL;
-  HRESULT ret = m_pDevice3->CreateRasterizerState2(pRasterizerDesc, &real);
+  HRESULT ret;
+  SERIALISE_TIME_CALL(ret = m_pDevice3->CreateRasterizerState2(pRasterizerDesc, &real));
 
   if(SUCCEEDED(ret))
   {
@@ -706,12 +804,21 @@ HRESULT WrappedID3D11Device::CreateRasterizerState2(const D3D11_RASTERIZER_DESC2
       m_CachedStateObjects.insert(wrapped);
     }
 
-    if(m_State >= WRITING)
+    if(IsCaptureMode(m_State))
     {
-      SCOPED_SERIALISE_CONTEXT(CREATE_RASTER_STATE2);
-      Serialise_CreateRasterizerState2(pRasterizerDesc, &wrapped);
+      USE_SCRATCH_SERIALISER();
+      SCOPED_SERIALISE_CHUNK(D3D11Chunk::CreateRasterizerState2);
+      Serialise_CreateRasterizerState2(GET_SERIALISER, pRasterizerDesc, &wrapped);
 
-      m_DeviceRecord->AddChunk(scope.Get());
+      WrappedID3D11RasterizerState2 *st = (WrappedID3D11RasterizerState2 *)wrapped;
+      ResourceId id = st->GetResourceID();
+
+      RDCASSERT(GetResourceManager()->GetResourceRecord(id) == NULL);
+
+      D3D11ResourceRecord *record = GetResourceManager()->AddResourceRecord(id);
+      record->Length = 0;
+
+      record->AddChunk(scope.Get());
     }
 
     *ppRasterizerState = wrapped;
@@ -720,13 +827,17 @@ HRESULT WrappedID3D11Device::CreateRasterizerState2(const D3D11_RASTERIZER_DESC2
   return ret;
 }
 
-bool WrappedID3D11Device::Serialise_CreateQuery1(const D3D11_QUERY_DESC1 *pQueryDesc,
+template <typename SerialiserType>
+bool WrappedID3D11Device::Serialise_CreateQuery1(SerialiserType &ser,
+                                                 const D3D11_QUERY_DESC1 *pQueryDesc,
                                                  ID3D11Query1 **ppQuery)
 {
-  SERIALISE_ELEMENT_PTR(D3D11_QUERY_DESC1, Descriptor, pQueryDesc);
-  SERIALISE_ELEMENT(ResourceId, Query, GetIDForResource(*ppQuery));
+  SERIALISE_ELEMENT_LOCAL(Descriptor, *pQueryDesc);
+  SERIALISE_ELEMENT_LOCAL(pQuery, GetIDForResource(*ppQuery)).TypedAs("ID3D11Query1 *");
 
-  if(m_State == READING)
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
     ID3D11Query1 *ret = NULL;
     HRESULT hr = E_NOINTERFACE;
@@ -738,14 +849,17 @@ bool WrappedID3D11Device::Serialise_CreateQuery1(const D3D11_QUERY_DESC1 *pQuery
 
     if(FAILED(hr))
     {
-      RDCERR("Failed on resource serialise-creation, HRESULT: 0x%08x", hr);
+      RDCERR("Failed on resource serialise-creation, HRESULT: %s", ToStr(hr).c_str());
+      return false;
     }
     else
     {
       ret = new WrappedID3D11Query1(ret, this);
 
-      GetResourceManager()->AddLiveResource(Query, ret);
+      GetResourceManager()->AddLiveResource(pQuery, ret);
     }
+
+    AddResource(pQuery, ResourceType::Query, "Query");
   }
 
   return true;
@@ -761,13 +875,34 @@ HRESULT WrappedID3D11Device::CreateQuery1(const D3D11_QUERY_DESC1 *pQueryDesc, I
     return m_pDevice3->CreateQuery1(pQueryDesc, NULL);
 
   ID3D11Query1 *real = NULL;
-  HRESULT ret = m_pDevice3->CreateQuery1(pQueryDesc, &real);
+  ID3D11Query1 *wrapped = NULL;
+  HRESULT ret;
+  SERIALISE_TIME_CALL(ret = m_pDevice3->CreateQuery1(pQueryDesc, &real));
 
   if(SUCCEEDED(ret))
   {
     SCOPED_LOCK(m_D3DLock);
 
-    *ppQuery = new WrappedID3D11Query1(real, this);
+    wrapped = new WrappedID3D11Query1(real, this);
+
+    if(IsCaptureMode(m_State))
+    {
+      USE_SCRATCH_SERIALISER();
+      SCOPED_SERIALISE_CHUNK(D3D11Chunk::CreateQuery1);
+      Serialise_CreateQuery1(GET_SERIALISER, pQueryDesc, &wrapped);
+
+      WrappedID3D11Query1 *q = (WrappedID3D11Query1 *)wrapped;
+      ResourceId id = q->GetResourceID();
+
+      RDCASSERT(GetResourceManager()->GetResourceRecord(id) == NULL);
+
+      D3D11ResourceRecord *record = GetResourceManager()->AddResourceRecord(id);
+      record->Length = 0;
+
+      record->AddChunk(scope.Get());
+    }
+
+    *ppQuery = wrapped;
   }
 
   return ret;
@@ -862,3 +997,10 @@ void WrappedID3D11Device::UnregisterDeviceRemoved(DWORD dwCookie)
 
   return m_pDevice4->UnregisterDeviceRemoved(dwCookie);
 }
+
+#undef IMPLEMENT_FUNCTION_SERIALISED
+#define IMPLEMENT_FUNCTION_SERIALISED(ret, func, ...)                                            \
+  template bool WrappedID3D11Device::CONCAT(Serialise_, func(ReadSerialiser &ser, __VA_ARGS__)); \
+  template bool WrappedID3D11Device::CONCAT(Serialise_, func(WriteSerialiser &ser, __VA_ARGS__));
+
+SERIALISED_ID3D11DEVICE3_FUNCTIONS();

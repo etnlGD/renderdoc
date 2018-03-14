@@ -1,7 +1,7 @@
 /******************************************************************************
 * The MIT License (MIT)
 *
-* Copyright (c) 2016 Baldur Karlsson
+* Copyright (c) 2016-2018 Baldur Karlsson
 *
 * Permission is hereby granted, free of charge, to any person obtaining a copy
 * of this software and associated documentation files (the "Software"), to deal
@@ -24,6 +24,7 @@
 
 #include "d3d9_device.h"
 #include "core/core.h"
+#include "driver/dxgi/dxgi_common.h"
 #include "serialise/serialiser.h"
 #include "d3d9_debug.h"
 
@@ -49,6 +50,10 @@ WrappedD3DDevice9::WrappedD3DDevice9(IDirect3DDevice9 *device, HWND wnd)
 
     if(wnd != NULL)
       RenderDoc::Inst().AddFrameCapturer((IDirect3DDevice9 *)this, wnd, this);
+  }
+  else
+  {
+    m_Wnd = NULL;
   }
 }
 
@@ -95,8 +100,7 @@ HRESULT WrappedD3DDevice9::QueryInterface(REFIID riid, void **ppvObject)
   }
   else
   {
-    string guid = ToStr::Get(riid);
-    RDCWARN("Querying IDirect3DDevice9 for interface: %s", guid.c_str());
+    WarnUnknownGUID("IDirect3DDevice9", riid);
   }
 
   return m_device->QueryInterface(riid, ppvObject);
@@ -239,7 +243,7 @@ HRESULT __stdcall WrappedD3DDevice9::Present(CONST RECT *pSourceRect, CONST RECT
       int flags = activeWindow ? RenderDoc::eOverlay_ActiveWindow : 0;
       flags |= RenderDoc::eOverlay_CaptureDisabled;
 
-      string overlayText = RenderDoc::Inst().GetOverlayText(RDC_D3D9, m_FrameCounter, flags);
+      string overlayText = RenderDoc::Inst().GetOverlayText(RDCDriver::D3D9, m_FrameCounter, flags);
 
       overlayText += "Captures not supported with D3D9\n";
 
@@ -251,10 +255,7 @@ HRESULT __stdcall WrappedD3DDevice9::Present(CONST RECT *pSourceRect, CONST RECT
     }
   }
 
-  if(activeWindow)
-  {
-    RenderDoc::Inst().SetCurrentDriver(RDC_D3D9);
-  }
+  RenderDoc::Inst().AddActiveDriver(RDCDriver::D3D9, true);
 
   return m_device->Present(pSourceRect, pDestRect, hDestWindowOverride, pDirtyRegion);
 }

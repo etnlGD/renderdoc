@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -29,6 +29,7 @@
 #include "driver/d3d11/d3d11_context.h"
 #include "driver/d3d11/d3d11_renderstate.h"
 #include "driver/dxgi/dxgi_wrapped.h"
+#include "driver/shaders/dxbc/dxbc_reflect.h"
 
 WRAPPED_POOL_INST(WrappedID3D11Buffer);
 WRAPPED_POOL_INST(WrappedID3D11Texture1D);
@@ -176,6 +177,16 @@ void WrappedShader::ShaderEntry::TryReplaceOriginalByteCode()
   }
 }
 
+void WrappedShader::ShaderEntry::BuildReflection()
+{
+  RDCCOMPILE_ASSERT(
+      D3Dx_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT == D3D11_IA_VERTEX_INPUT_RESOURCE_SLOT_COUNT,
+      "Mismatched vertex input count");
+
+  MakeShaderReflection(m_DXBCFile, &m_Details, &m_Mapping);
+  m_Details.resourceId = m_ID;
+}
+
 UINT GetMipForSubresource(ID3D11Resource *res, int Subresource)
 {
   D3D11_RESOURCE_DIMENSION dim;
@@ -239,6 +250,29 @@ UINT GetMipForSubresource(ID3D11Resource *res, int Subresource)
   return mipLevel;
 }
 
+ResourcePitch GetResourcePitchForSubresource(ID3D11DeviceContext *ctx, ID3D11Resource *res,
+                                             int Subresource)
+{
+  ResourcePitch pitch = {};
+  D3D11_MAPPED_SUBRESOURCE mapped = {};
+  HRESULT hr = E_INVALIDARG;
+
+  hr = ctx->Map(res, Subresource, D3D11_MAP_READ, 0, &mapped);
+
+  if(FAILED(hr))
+  {
+    RDCERR("Failed to map while getting resource pitch HRESULT: %s", ToStr(hr).c_str());
+  }
+  else
+  {
+    pitch.m_RowPitch = mapped.RowPitch;
+    pitch.m_DepthPitch = mapped.DepthPitch;
+    ctx->Unmap(res, Subresource);
+  }
+
+  return pitch;
+}
+
 UINT GetByteSize(ID3D11Texture1D *tex, int SubResource)
 {
   D3D11_TEXTURE1D_DESC desc;
@@ -263,45 +297,19 @@ UINT GetByteSize(ID3D11Texture3D *tex, int SubResource)
   return GetByteSize(desc.Width, desc.Height, desc.Depth, desc.Format, SubResource);
 }
 
-string ToStrHelper<false, ResourceType>::Get(const ResourceType &el)
-{
-  switch(el)
-  {
-    TOSTR_CASE_STRINGIZE(Resource_InputLayout)
-    TOSTR_CASE_STRINGIZE(Resource_Buffer)
-    TOSTR_CASE_STRINGIZE(Resource_Texture1D)
-    TOSTR_CASE_STRINGIZE(Resource_Texture2D)
-    TOSTR_CASE_STRINGIZE(Resource_Texture3D)
-    TOSTR_CASE_STRINGIZE(Resource_RasterizerState)
-    TOSTR_CASE_STRINGIZE(Resource_BlendState)
-    TOSTR_CASE_STRINGIZE(Resource_DepthStencilState)
-    TOSTR_CASE_STRINGIZE(Resource_SamplerState)
-    TOSTR_CASE_STRINGIZE(Resource_RenderTargetView)
-    TOSTR_CASE_STRINGIZE(Resource_ShaderResourceView)
-    TOSTR_CASE_STRINGIZE(Resource_DepthStencilView)
-    TOSTR_CASE_STRINGIZE(Resource_Shader)
-    TOSTR_CASE_STRINGIZE(Resource_UnorderedAccessView)
-    TOSTR_CASE_STRINGIZE(Resource_Counter)
-    TOSTR_CASE_STRINGIZE(Resource_Query)
-    TOSTR_CASE_STRINGIZE(Resource_Predicate)
-    TOSTR_CASE_STRINGIZE(Resource_ClassInstance)
-    TOSTR_CASE_STRINGIZE(Resource_ClassLinkage)
-
-    TOSTR_CASE_STRINGIZE(Resource_DeviceContext)
-    TOSTR_CASE_STRINGIZE(Resource_CommandList)
-    default: break;
-  }
-
-  char tostrBuf[256] = {0};
-  StringFormat::snprintf(tostrBuf, 255, "ResourceType<%d>", el);
-
-  return tostrBuf;
-}
-
-ResourceId GetIDForResource(ID3D11DeviceChild *ptr)
+ResourceId GetIDForDeviceChild(ID3D11DeviceChild *ptr)
 {
   if(ptr == NULL)
     return ResourceId();
+
+  if(WrappedID3D11Buffer::IsAlloc(ptr))
+    return ((WrappedID3D11Buffer *)ptr)->GetResourceID();
+  if(WrappedID3D11Texture2D1::IsAlloc(ptr))
+    return ((WrappedID3D11Texture2D1 *)ptr)->GetResourceID();
+  if(WrappedID3D11Texture3D1::IsAlloc(ptr))
+    return ((WrappedID3D11Texture3D1 *)ptr)->GetResourceID();
+  if(WrappedID3D11Texture1D::IsAlloc(ptr))
+    return ((WrappedID3D11Texture1D *)ptr)->GetResourceID();
 
   if(WrappedID3D11InputLayout::IsAlloc(ptr))
     return ((WrappedID3D11InputLayout *)ptr)->GetResourceID();
@@ -318,16 +326,6 @@ ResourceId GetIDForResource(ID3D11DeviceChild *ptr)
     return ((WrappedID3D11Shader<ID3D11DomainShader> *)ptr)->GetResourceID();
   if(WrappedID3D11Shader<ID3D11ComputeShader>::IsAlloc(ptr))
     return ((WrappedID3D11Shader<ID3D11ComputeShader> *)ptr)->GetResourceID();
-
-  if(WrappedID3D11Buffer::IsAlloc(ptr))
-    return ((WrappedID3D11Buffer *)ptr)->GetResourceID();
-
-  if(WrappedID3D11Texture1D::IsAlloc(ptr))
-    return ((WrappedID3D11Texture1D *)ptr)->GetResourceID();
-  if(WrappedID3D11Texture2D1::IsAlloc(ptr))
-    return ((WrappedID3D11Texture2D1 *)ptr)->GetResourceID();
-  if(WrappedID3D11Texture3D1::IsAlloc(ptr))
-    return ((WrappedID3D11Texture3D1 *)ptr)->GetResourceID();
 
   if(WrappedID3D11RasterizerState2::IsAlloc(ptr))
     return ((WrappedID3D11RasterizerState2 *)ptr)->GetResourceID();
@@ -371,7 +369,7 @@ ResourceId GetIDForResource(ID3D11DeviceChild *ptr)
   return ResourceId();
 }
 
-ResourceType IdentifyTypeByPtr(IUnknown *ptr)
+D3D11ResourceType IdentifyTypeByPtr(IUnknown *ptr)
 {
   if(WrappedID3D11InputLayout::IsAlloc(ptr))
     return Resource_InputLayout;
@@ -590,7 +588,7 @@ WrappedID3DDeviceContextState::WrappedID3DDeviceContextState(ID3DDeviceContextSt
                                                              WrappedID3D11Device *device)
     : WrappedDeviceChild11(real, device)
 {
-  state = new D3D11RenderState((Serialiser *)NULL);
+  state = new D3D11RenderState(D3D11RenderState::Empty);
 
   {
     SCOPED_LOCK(WrappedID3DDeviceContextState::m_Lock);

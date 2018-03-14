@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -109,6 +109,12 @@ enum VariableType
   VARTYPE_RWSTRUCTURED_BUFFER,
   VARTYPE_APPEND_STRUCTURED_BUFFER,
   VARTYPE_CONSUME_STRUCTURED_BUFFER,
+  VARTYPE_MIN8FLOAT,
+  VARTYPE_MIN10FLOAT,
+  VARTYPE_MIN16FLOAT,
+  VARTYPE_MIN12INT,
+  VARTYPE_MIN16INT,
+  VARTYPE_MIN16UINT,
 };
 
 struct ShaderInputBind
@@ -131,24 +137,26 @@ struct ShaderInputBind
     TYPE_UAV_RWSTRUCTURED_WITH_COUNTER,
   } type;
 
+  constexpr bool IsCBuffer() const { return type == TYPE_CBUFFER; }
+  constexpr bool IsSampler() const { return type == TYPE_SAMPLER; }
+  constexpr bool IsSRV() const
+  {
+    return type == TYPE_TBUFFER || type == TYPE_TEXTURE || type == TYPE_STRUCTURED ||
+           type == TYPE_BYTEADDRESS;
+  }
+  constexpr bool IsUAV() const
+  {
+    return type == TYPE_UAV_RWTYPED || type == TYPE_UAV_RWSTRUCTURED ||
+           type == TYPE_UAV_RWBYTEADDRESS || type == TYPE_UAV_APPEND_STRUCTURED ||
+           type == TYPE_UAV_CONSUME_STRUCTURED || type == TYPE_UAV_RWSTRUCTURED_WITH_COUNTER;
+  }
+
   uint32_t space;
   uint32_t reg;
   uint32_t bindCount;
 
   uint32_t flags;
-
-  enum RetType
-  {
-    RETTYPE_UNKNOWN = 0,
-    RETTYPE_UNORM = 1,
-    RETTYPE_SNORM,
-    RETTYPE_SINT,
-    RETTYPE_UINT,
-    RETTYPE_FLOAT,
-    RETTYPE_MIXED,
-    RETTYPE_DOUBLE,
-    RETTYPE_CONTINUED,
-  } retType;
+  ResourceRetType retType;
 
   enum Dimension
   {
@@ -326,6 +334,10 @@ public:
                            int32_t &lineNum) const = 0;
 };
 
+uint32_t DecodeFlags(const ShaderCompileFlags &compileFlags);
+ShaderCompileFlags EncodeFlags(const DXBCDebugChunk *dbg);
+ShaderCompileFlags EncodeFlags(const uint32_t flags);
+
 // declare one of these and pass in your shader bytecode, then inspect
 // the members that are populated with the shader information.
 class DXBCFile
@@ -344,7 +356,11 @@ public:
 
   vector<uint32_t> m_Immediate;
 
-  vector<ShaderInputBind> m_Resources;
+  bool m_GuessedResources;
+  vector<ShaderInputBind> m_SRVs;
+  vector<ShaderInputBind> m_UAVs;
+
+  vector<ShaderInputBind> m_Samplers;
 
   vector<CBuffer> m_CBuffers;
 
@@ -384,17 +400,17 @@ private:
   DXBCFile(const DXBCFile &o);
   DXBCFile &operator=(const DXBCFile &o);
 
+  void FetchThreadDim();
   void FetchTypeVersion();
   void DisassembleHexDump();
   void MakeDisassemblyString();
   void GuessResources();
 
   // these functions modify tokenStream pointer to point after the item
-  bool ExtractOperation(
-      uint32_t *&tokenStream,
-      ASMOperation &op);    // returns false if not an operation (ie. it's a declaration)
-  bool ExtractDecl(uint32_t *&tokenStream, ASMDecl &decl);    // as above
-  bool ExtractOperand(uint32_t *&tokenStream, ASMOperand &oper);
+  // ExtractOperation/ExtractDecl returns false if not an operation (ie. it's a declaration)
+  bool ExtractOperation(uint32_t *&tokenStream, ASMOperation &op, bool friendlyName);
+  bool ExtractDecl(uint32_t *&tokenStream, ASMDecl &decl, bool friendlyName);
+  bool ExtractOperand(uint32_t *&tokenStream, ToString flags, ASMOperand &oper);
 
   bool IsDeclaration(OpcodeType op);
 

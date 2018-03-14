@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  * 
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,6 +22,9 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
+// for GLES compatibility where we must match blit.vert
+layout (location = 0) in vec2 uv;
+
 layout (location = 0) out vec4 color_out;
 
 layout (binding = 0, std140) uniform checkeruniforms
@@ -32,11 +35,11 @@ layout (binding = 0, std140) uniform checkeruniforms
 
 void main(void)
 {
-	vec2 ab = mod(gl_FragCoord.xy, 128.0f.xx);
+	vec2 ab = mod(gl_FragCoord.xy, vec2(128.0f));
 
 	if(
-		(ab.x < 64 && ab.y < 64) ||
-		(ab.x > 64 && ab.y > 64)
+		(ab.x < 64.0f && ab.y < 64.0f) ||
+		(ab.x > 64.0f && ab.y > 64.0f)
 		)
 	{
 		color_out = vec4(checker.darkCol.rgb*checker.darkCol.rgb, 1);

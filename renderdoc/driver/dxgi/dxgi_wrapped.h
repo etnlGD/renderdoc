@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -548,7 +548,6 @@ class WrappedIDXGISwapChain4 : public IDXGISwapChain4, public RefCountDXGIObject
   IDXGISwapChain3 *m_pReal3;
   IDXGISwapChain4 *m_pReal4;
   ID3DDevice *m_pDevice;
-  unsigned int m_iRefcount;
 
   static std::vector<D3DDeviceCallback> m_D3DCallbacks;
 
@@ -647,10 +646,7 @@ public:
     return m_pReal->ResizeTarget(pNewTargetParameters);
   }
 
-  virtual HRESULT STDMETHODCALLTYPE GetContainingOutput(IDXGIOutput **ppOutput)
-  {
-    return m_pReal->GetContainingOutput(ppOutput);
-  }
+  virtual HRESULT STDMETHODCALLTYPE GetContainingOutput(IDXGIOutput **ppOutput);
 
   virtual HRESULT STDMETHODCALLTYPE GetFrameStatistics(
       /* [out] */ DXGI_FRAME_STATISTICS *pStats)
@@ -710,10 +706,7 @@ public:
 
   virtual HRESULT STDMETHODCALLTYPE GetRestrictToOutput(
       /* [annotation][out] */
-      _Out_ IDXGIOutput **ppRestrictToOutput)
-  {
-    return m_pReal2->GetRestrictToOutput(ppRestrictToOutput);
-  }
+      _Out_ IDXGIOutput **ppRestrictToOutput);
 
   virtual HRESULT STDMETHODCALLTYPE SetBackgroundColor(
       /* [annotation][in] */
@@ -844,13 +837,207 @@ public:
   }
 };
 
+class WrappedIDXGIOutput5 : public IDXGIOutput5, public RefCountDXGIObject
+{
+  RefCountDXGIObject *m_Owner;
+  IDXGIOutput *m_pReal;
+  IDXGIOutput1 *m_pReal1;
+  IDXGIOutput2 *m_pReal2;
+  IDXGIOutput3 *m_pReal3;
+  IDXGIOutput4 *m_pReal4;
+  IDXGIOutput5 *m_pReal5;
+
+public:
+  IMPLEMENT_IDXGIOBJECT_WITH_REFCOUNTDXGIOBJECT_CUSTOMQUERY;
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppvObject);
+
+  WrappedIDXGIOutput5(RefCountDXGIObject *owner, IDXGIOutput *real);
+  ~WrappedIDXGIOutput5();
+
+  IDXGIOutput *GetReal() { return m_pReal; }
+  //////////////////////////////
+  // implement IDXGIOutput
+
+  virtual HRESULT STDMETHODCALLTYPE GetDesc(
+      /* [annotation][out] */
+      _Out_ DXGI_OUTPUT_DESC *pDesc)
+  {
+    return m_pReal->GetDesc(pDesc);
+  }
+
+  virtual HRESULT STDMETHODCALLTYPE GetDisplayModeList(
+      /* [in] */ DXGI_FORMAT EnumFormat,
+      /* [in] */ UINT Flags,
+      /* [annotation][out][in] */
+      _Inout_ UINT *pNumModes,
+      /* [annotation][out] */
+      _Out_writes_to_opt_(*pNumModes, *pNumModes) DXGI_MODE_DESC *pDesc)
+  {
+    return m_pReal->GetDisplayModeList(EnumFormat, Flags, pNumModes, pDesc);
+  }
+
+  virtual HRESULT STDMETHODCALLTYPE FindClosestMatchingMode(
+      /* [annotation][in] */
+      _In_ const DXGI_MODE_DESC *pModeToMatch,
+      /* [annotation][out] */
+      _Out_ DXGI_MODE_DESC *pClosestMatch,
+      /* [annotation][in] */
+      _In_opt_ IUnknown *pConcernedDevice)
+  {
+    return m_pReal->FindClosestMatchingMode(pModeToMatch, pClosestMatch, pConcernedDevice);
+  }
+
+  virtual HRESULT STDMETHODCALLTYPE WaitForVBlank(void) { return m_pReal->WaitForVBlank(); }
+  virtual HRESULT STDMETHODCALLTYPE TakeOwnership(
+      /* [annotation][in] */
+      _In_ IUnknown *pDevice, BOOL Exclusive)
+  {
+    return m_pReal->TakeOwnership(pDevice, Exclusive);
+  }
+
+  virtual void STDMETHODCALLTYPE ReleaseOwnership(void) { return m_pReal->ReleaseOwnership(); }
+  virtual HRESULT STDMETHODCALLTYPE GetGammaControlCapabilities(
+      /* [annotation][out] */
+      _Out_ DXGI_GAMMA_CONTROL_CAPABILITIES *pGammaCaps)
+  {
+    return m_pReal->GetGammaControlCapabilities(pGammaCaps);
+  }
+
+  virtual HRESULT STDMETHODCALLTYPE SetGammaControl(
+      /* [annotation][in] */
+      _In_ const DXGI_GAMMA_CONTROL *pArray)
+  {
+    return m_pReal->SetGammaControl(pArray);
+  }
+
+  virtual HRESULT STDMETHODCALLTYPE GetGammaControl(
+      /* [annotation][out] */
+      _Out_ DXGI_GAMMA_CONTROL *pArray)
+  {
+    return m_pReal->GetGammaControl(pArray);
+  }
+
+  virtual HRESULT STDMETHODCALLTYPE SetDisplaySurface(
+      /* [annotation][in] */
+      _In_ IDXGISurface *pScanoutSurface)
+  {
+    return m_pReal->SetDisplaySurface(pScanoutSurface);
+  }
+
+  virtual HRESULT STDMETHODCALLTYPE GetDisplaySurfaceData(
+      /* [annotation][in] */
+      _In_ IDXGISurface *pDestination)
+  {
+    return m_pReal->GetDisplaySurfaceData(pDestination);
+  }
+
+  virtual HRESULT STDMETHODCALLTYPE GetFrameStatistics(
+      /* [annotation][out] */
+      _Out_ DXGI_FRAME_STATISTICS *pStats)
+  {
+    return m_pReal->GetFrameStatistics(pStats);
+  }
+
+  //////////////////////////////
+  // implement IDXGIOutput1
+
+  virtual HRESULT STDMETHODCALLTYPE GetDisplayModeList1(
+      /* [in] */ DXGI_FORMAT EnumFormat,
+      /* [in] */ UINT Flags,
+      /* [annotation][out][in] */
+      _Inout_ UINT *pNumModes,
+      /* [annotation][out] */
+      _Out_writes_to_opt_(*pNumModes, *pNumModes) DXGI_MODE_DESC1 *pDesc)
+  {
+    return m_pReal1->GetDisplayModeList1(EnumFormat, Flags, pNumModes, pDesc);
+  }
+
+  virtual HRESULT STDMETHODCALLTYPE FindClosestMatchingMode1(
+      /* [annotation][in] */
+      _In_ const DXGI_MODE_DESC1 *pModeToMatch,
+      /* [annotation][out] */
+      _Out_ DXGI_MODE_DESC1 *pClosestMatch,
+      /* [annotation][in] */
+      _In_opt_ IUnknown *pConcernedDevice)
+  {
+    return m_pReal1->FindClosestMatchingMode1(pModeToMatch, pClosestMatch, pConcernedDevice);
+  }
+
+  virtual HRESULT STDMETHODCALLTYPE GetDisplaySurfaceData1(
+      /* [annotation][in] */
+      _In_ IDXGIResource *pDestination)
+  {
+    return m_pReal1->GetDisplaySurfaceData1(pDestination);
+  }
+
+  virtual HRESULT STDMETHODCALLTYPE DuplicateOutput(
+      /* [annotation][in] */
+      _In_ IUnknown *pDevice,
+      /* [annotation][out] */
+      _COM_Outptr_ IDXGIOutputDuplication **ppOutputDuplication)
+  {
+    return m_pReal1->DuplicateOutput(pDevice, ppOutputDuplication);
+  }
+
+  //////////////////////////////
+  // implement IDXGIOutput2
+
+  virtual BOOL STDMETHODCALLTYPE SupportsOverlays(void) { return m_pReal2->SupportsOverlays(); }
+  //////////////////////////////
+  // implement IDXGIOutput3
+
+  virtual HRESULT STDMETHODCALLTYPE CheckOverlaySupport(
+      /* [annotation][in] */
+      _In_ DXGI_FORMAT EnumFormat,
+      /* [annotation][out] */
+      _In_ IUnknown *pConcernedDevice,
+      /* [annotation][out] */
+      _Out_ UINT *pFlags)
+  {
+    return m_pReal3->CheckOverlaySupport(EnumFormat, pConcernedDevice, pFlags);
+  }
+
+  //////////////////////////////
+  // implement IDXGIOutput4
+
+  virtual HRESULT STDMETHODCALLTYPE CheckOverlayColorSpaceSupport(
+      /* [annotation][in] */
+      _In_ DXGI_FORMAT Format,
+      /* [annotation][in] */
+      _In_ DXGI_COLOR_SPACE_TYPE ColorSpace,
+      /* [annotation][in] */
+      _In_ IUnknown *pConcernedDevice,
+      /* [annotation][out] */
+      _Out_ UINT *pFlags)
+  {
+    return m_pReal4->CheckOverlayColorSpaceSupport(Format, ColorSpace, pConcernedDevice, pFlags);
+  }
+
+  //////////////////////////////
+  // implement IDXGIOutput5
+
+  virtual HRESULT STDMETHODCALLTYPE DuplicateOutput1(
+      /* [annotation][in] */
+      _In_ IUnknown *pDevice,
+      /* [in] */ UINT Flags,
+      /* [annotation][in] */
+      _In_ UINT SupportedFormatsCount,
+      /* [annotation][in] */
+      _In_reads_(SupportedFormatsCount) const DXGI_FORMAT *pSupportedFormats,
+      /* [annotation][out] */
+      _COM_Outptr_ IDXGIOutputDuplication **ppOutputDuplication)
+  {
+    return m_pReal5->DuplicateOutput1(pDevice, Flags, SupportedFormatsCount, pSupportedFormats,
+                                      ppOutputDuplication);
+  }
+};
+
 class WrappedIDXGIAdapter3 : public IDXGIAdapter3, public RefCountDXGIObject
 {
   IDXGIAdapter *m_pReal;
   IDXGIAdapter1 *m_pReal1;
   IDXGIAdapter2 *m_pReal2;
   IDXGIAdapter3 *m_pReal3;
-  unsigned int m_iRefcount;
 
 public:
   WrappedIDXGIAdapter3(IDXGIAdapter *real);
@@ -867,7 +1054,12 @@ public:
       /* [annotation][out][in] */
       __out IDXGIOutput **ppOutput)
   {
-    return m_pReal->EnumOutputs(Output, ppOutput);
+    HRESULT ret = m_pReal->EnumOutputs(Output, ppOutput);
+
+    if(SUCCEEDED(ret) && ppOutput && *ppOutput)
+      *ppOutput = (IDXGIOutput *)(new WrappedIDXGIOutput5(this, *ppOutput));
+
+    return ret;
   }
 
   virtual HRESULT STDMETHODCALLTYPE GetDesc(
@@ -1120,7 +1312,6 @@ class WrappedIDXGIFactory5 : public IDXGIFactory5, public RefCountDXGIObject
   IDXGIFactory3 *m_pReal3;
   IDXGIFactory4 *m_pReal4;
   IDXGIFactory5 *m_pReal5;
-  unsigned int m_iRefcount;
 
 public:
   WrappedIDXGIFactory5(IDXGIFactory *real);
@@ -1182,7 +1373,16 @@ public:
       /* [annotation][out] */
       __out IDXGIAdapter1 **ppAdapter)
   {
-    HRESULT ret = m_pReal1->EnumAdapters1(Adapter, ppAdapter);
+    IDXGIFactory1 *factory = m_pReal1;
+    if(m_pReal1 == NULL)
+    {
+      // see comment in RefCountDXGIObject::HandleWrap for IDXGIFactory
+      RDCWARN("Calling EnumAdapters1 with no IDXGIFactory1 - assuming weird internal call");
+      factory = (IDXGIFactory1 *)m_pReal;
+    }
+
+    HRESULT ret = factory->EnumAdapters1(Adapter, ppAdapter);
+
     if(SUCCEEDED(ret))
       *ppAdapter = (IDXGIAdapter1 *)(new WrappedIDXGIAdapter3(*ppAdapter));
     return ret;

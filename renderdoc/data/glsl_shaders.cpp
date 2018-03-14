@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -30,24 +30,17 @@ void GenerateGLSLShader(std::vector<std::string> &sources, ShaderType type,
                         bool uniforms)
 {
   sources.resize(4);
-  sources[0] = StringFormat::Fmt("#version %d core\n", version);
-
-  // hoist up any #extension directives
-  size_t extsearch = 0;
-  do
+  if(type == eShaderGLSLES)
   {
-    extsearch = shader.find("#extension", extsearch);
-
-    if(extsearch == string::npos)
-      break;
-
-    size_t begin = extsearch;
-    extsearch = shader.find('\n', extsearch);
-
-    sources[0] += shader.substr(begin, extsearch - begin + 1);
-  } while(extsearch != string::npos);
-
-  sources[0] += "\n" + defines + "\n";
+    if(version == 100)
+      sources[0] = "#version 100";    // no es suffix
+    else
+      sources[0] = StringFormat::Fmt("#version %d es\n", version);
+  }
+  else
+  {
+    sources[0] = StringFormat::Fmt("#version %d core\n", version);
+  }
 
   if(uniforms)
     sources[1] = GetEmbeddedResource(glsl_debuguniforms_h);
@@ -60,6 +53,8 @@ void GenerateGLSLShader(std::vector<std::string> &sources, ShaderType type,
       sources[2] = GetEmbeddedResource(glsl_vk_texsample_h);
     else if(type == eShaderGLSL)
       sources[2] = GetEmbeddedResource(glsl_gl_texsample_h);
+    else if(type == eShaderGLSLES)
+      sources[2] = GetEmbeddedResource(glsl_gles_texsample_h);
     else
       RDCERR("Unknown type! %d", type);
   }
@@ -69,4 +64,41 @@ void GenerateGLSLShader(std::vector<std::string> &sources, ShaderType type,
   }
 
   sources[3] = shader;
+
+  for(int i = 0; i < 4; i++)
+  {
+    // hoist up any #extension directives
+    size_t extsearch = 0;
+    do
+    {
+      extsearch = sources[i].find("#extension", extsearch);
+
+      if(extsearch == string::npos)
+        break;
+
+      size_t begin = extsearch;
+      extsearch = sources[i].find('\n', extsearch);
+
+      string ext = sources[i].substr(begin, extsearch - begin + 1);
+
+      if(ext.find("#extension_gles") == 0)
+      {
+        if(type != eShaderGLSLES)
+          continue;
+
+        ext.erase(ext.find("_gles"), 5);
+      }
+      else if(ext.find("#extension_nongles") == 0)
+      {
+        if(type == eShaderGLSLES)
+          continue;
+
+        ext.erase(ext.find("_nongles"), 8);
+      }
+
+      sources[0] += ext;
+    } while(extsearch != string::npos);
+  }
+
+  sources[0] += "\n" + defines + "\n";
 }

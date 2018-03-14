@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -33,14 +33,158 @@ using std::pair;
 
 class WrappedVulkan;
 
-class VulkanResourceManager
-    : public ResourceManager<WrappedVkRes *, TypedRealHandle, VkResourceRecord>
+struct MemIDOffset
+{
+  ResourceId memory;
+  VkDeviceSize memOffs;
+};
+
+DECLARE_REFLECTION_STRUCT(MemIDOffset);
+
+struct SparseBufferInitState
+{
+  VkSparseMemoryBind *binds;
+  uint32_t numBinds;
+
+  MemIDOffset *memDataOffs;
+  uint32_t numUniqueMems;
+
+  VkDeviceSize totalSize;
+};
+
+DECLARE_REFLECTION_STRUCT(SparseBufferInitState);
+
+struct SparseImageInitState
+{
+  VkSparseMemoryBind *opaque;
+  uint32_t opaqueCount;
+
+  VkExtent3D imgdim;    // in pages
+  VkExtent3D pagedim;
+
+  // available on capture - filled out in Prepare_SparseInitialState and serialised to disk
+  MemIDOffset *pages[NUM_VK_IMAGE_ASPECTS];
+
+  uint32_t pageCount[NUM_VK_IMAGE_ASPECTS];
+
+  // available on replay - filled out in the read path of Serialise_SparseInitialState
+  VkSparseImageMemoryBind *pageBinds[NUM_VK_IMAGE_ASPECTS];
+
+  MemIDOffset *memDataOffs;
+  uint32_t numUniqueMems;
+
+  VkDeviceSize totalSize;
+};
+
+DECLARE_REFLECTION_STRUCT(SparseImageInitState);
+
+// this struct is copied around and for that reason we explicitly keep it simple and POD. The
+// lifetime of the memory allocated is controlled by the resource manager - when preparing or
+// serialising, we explicitly set the initial contents, then when the whole system is done with them
+// we free them again.
+struct VkInitialContents
+{
+  enum Tag
+  {
+    BufferCopy = 0,
+    ClearColorImage = 1,
+    ClearDepthStencilImage,
+    Sparse,
+    DescriptorSet,
+  };
+
+  VkInitialContents()
+  {
+    RDCCOMPILE_ASSERT(std::is_standard_layout<VkInitialContents>::value,
+                      "VkInitialContents must be POD");
+    memset(this, 0, sizeof(*this));
+  }
+
+  VkInitialContents(VkResourceType t, Tag tg)
+  {
+    memset(this, 0, sizeof(*this));
+    type = t;
+    tag = tg;
+  }
+
+  VkInitialContents(VkResourceType t, MemoryAllocation m)
+  {
+    memset(this, 0, sizeof(*this));
+    type = t;
+    mem = m;
+  }
+
+  template <typename Configuration>
+  void Free(ResourceManager<Configuration> *rm)
+  {
+    // any of these will be NULL if unused
+    SAFE_DELETE_ARRAY(descriptorSlots);
+    SAFE_DELETE_ARRAY(descriptorWrites);
+    SAFE_DELETE_ARRAY(descriptorInfo);
+
+    rm->ResourceTypeRelease(GetWrapped(buf));
+    rm->ResourceTypeRelease(GetWrapped(img));
+
+    // memory is not free'd here
+
+    if(tag == Sparse)
+    {
+      if(type == eResImage)
+      {
+        SAFE_DELETE_ARRAY(sparseImage.opaque);
+        for(uint32_t i = 0; i < NUM_VK_IMAGE_ASPECTS; i++)
+        {
+          SAFE_DELETE_ARRAY(sparseImage.pages[i]);
+          SAFE_DELETE_ARRAY(sparseImage.pageBinds[i]);
+        }
+        SAFE_DELETE_ARRAY(sparseImage.memDataOffs);
+      }
+      else if(type == eResBuffer)
+      {
+        SAFE_DELETE_ARRAY(sparseBuffer.binds);
+        SAFE_DELETE_ARRAY(sparseBuffer.memDataOffs);
+      }
+    }
+  }
+
+  // for descriptor heaps, when capturing we save the slots, when replaying we store direct writes
+  DescriptorSetSlot *descriptorSlots;
+  VkWriteDescriptorSet *descriptorWrites;
+  VkDescriptorBufferInfo *descriptorInfo;
+  uint32_t numDescriptors;
+
+  // for plain resources, we store the resource type and memory allocation details of the contents
+  VkResourceType type;
+  VkBuffer buf;
+  VkImage img;
+  MemoryAllocation mem;
+  Tag tag;
+
+  // sparse resources need extra information. Which one is valid, depends on the value of type above
+  union
+  {
+    SparseBufferInitState sparseBuffer;
+    SparseImageInitState sparseImage;
+  };
+};
+
+struct VulkanResourceManagerConfiguration
+{
+  typedef WrappedVkRes *WrappedResourceType;
+  typedef TypedRealHandle RealResourceType;
+  typedef VkResourceRecord RecordType;
+  typedef VkInitialContents InitialContentData;
+};
+
+class VulkanResourceManager : public ResourceManager<VulkanResourceManagerConfiguration>
 {
 public:
-  VulkanResourceManager(LogState s, Serialiser *ser, WrappedVulkan *core)
-      : ResourceManager(s, ser), m_Core(core)
+  VulkanResourceManager(CaptureState state, WrappedVulkan *core)
+      : ResourceManager(), m_State(state), m_Core(core)
   {
   }
+  void SetState(CaptureState state) { m_State = state; }
+  CaptureState GetState() { return m_State; }
   ~VulkanResourceManager() {}
   void ClearWithoutReleasing()
   {
@@ -48,14 +192,12 @@ public:
     // be calling Shutdown() after the device that owns them is destroyed. Instead
     // we just have to leak ourselves.
     RDCASSERT(m_LiveResourceMap.empty());
-    RDCASSERT(m_InframeResourceMap.empty());
     RDCASSERT(m_InitialContents.empty());
     RDCASSERT(m_ResourceRecords.empty());
     RDCASSERT(m_CurrentResourceMap.empty());
     RDCASSERT(m_WrapperMap.empty());
 
     m_LiveResourceMap.clear();
-    m_InframeResourceMap.clear();
     m_InitialContents.clear();
     m_ResourceRecords.clear();
     m_CurrentResourceMap.clear();
@@ -114,8 +256,9 @@ public:
   void ApplyBarriers(vector<pair<ResourceId, ImageRegionState> > &states,
                      map<ResourceId, ImageLayouts> &layouts);
 
-  void SerialiseImageStates(map<ResourceId, ImageLayouts> &states,
-                            vector<VkImageMemoryBarrier> &barriers);
+  template <typename SerialiserType>
+  void SerialiseImageStates(SerialiserType &ser, std::map<ResourceId, ImageLayouts> &states,
+                            std::vector<VkImageMemoryBarrier> &barriers);
 
   ResourceId GetID(WrappedVkRes *res)
   {
@@ -143,11 +286,11 @@ public:
     typename UnwrapHelper<realtype>::Outer *wrapped =
         new typename UnwrapHelper<realtype>::Outer(obj, id);
 
-    SetTableIfDispatchable(m_State >= WRITING, parentObj, m_Core, wrapped);
+    SetTableIfDispatchable(IsCaptureMode(m_State), parentObj, m_Core, wrapped);
 
     AddCurrentResource(id, wrapped);
 
-    if(m_State < WRITING)
+    if(IsReplayMode(m_State))
       AddWrapper(wrapped, ToTypedHandle(obj));
 
     obj = realtype((uint64_t)wrapped);
@@ -164,7 +307,7 @@ public:
     if(origit != m_OriginalIDs.end())
       EraseLiveResource(origit->second);
 
-    if(m_State < WRITING)
+    if(IsReplayMode(m_State))
       ResourceManager::RemoveWrapper(ToTypedHandle(Unwrap(obj)));
 
     ResourceManager::ReleaseCurrentResource(id);
@@ -177,7 +320,14 @@ public:
       // either allocation or freeing happens, so we only need to
       // lock against concurrent allocs or deletes of children.
 
-      if(record && record->bakedCommands)
+      if(ToTypedHandle(obj).type == eResCommandBuffer && record->cmdInfo &&
+         record->cmdInfo->allocRecord)
+      {
+        record->cmdInfo->allocRecord->Delete(this);
+        record->cmdInfo->allocRecord = NULL;
+      }
+
+      if(record->bakedCommands)
       {
         record->bakedCommands->Delete(this);
         record->bakedCommands = NULL;
@@ -236,10 +386,18 @@ public:
       // ID and if the resource isn't ever referenced elsewhere, it will just be
       // a non-live ID to be ignored.
 
-      if(IsDispatchableRes(GetWrapped(obj)))
-        ((WrappedVkDispRes *)GetWrapped(obj))->id = ResourceId();
+      if(IsDispatchable(obj))
+      {
+        WrappedVkDispRes *res = (WrappedVkDispRes *)GetWrapped(obj);
+        res->id = ResourceId();
+        res->record = NULL;
+      }
       else
-        ((WrappedVkNonDispRes *)GetWrapped(obj))->id = ResourceId();
+      {
+        WrappedVkNonDispRes *res = (WrappedVkNonDispRes *)GetWrapped(obj);
+        res->id = ResourceId();
+        res->record = NULL;
+      }
     }
     delete GetWrapped(obj);
   }
@@ -256,9 +414,11 @@ private:
   bool AllowDeletedResource_InitialState() { return true; }
   bool Need_InitialStateChunk(WrappedVkRes *res);
   bool Prepare_InitialState(WrappedVkRes *res);
-  bool Serialise_InitialState(ResourceId resid, WrappedVkRes *res);
+  uint32_t GetSize_InitialState(ResourceId id, WrappedVkRes *res);
+  bool Serialise_InitialState(WriteSerialiser &ser, ResourceId resid, WrappedVkRes *res);
   void Create_InitialState(ResourceId id, WrappedVkRes *live, bool hasData);
-  void Apply_InitialState(WrappedVkRes *live, InitialContentData initial);
+  void Apply_InitialState(WrappedVkRes *live, VkInitialContents initial);
 
+  CaptureState m_State;
   WrappedVulkan *m_Core;
 };

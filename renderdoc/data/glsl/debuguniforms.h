@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -26,9 +26,11 @@
 // classes that represent a whole cbuffer
 #if defined(__cplusplus)
 
-#include "common/common.h"
-#include "maths/matrix.h"
-#include "maths/vec.h"
+// The Android GL ES shader compiler does not supports the " character.
+// The includes should be before this file is included!
+//#include "common/common.h"
+//#include "maths/matrix.h"
+//#include "maths/vec.h"
 
 #define uniform struct
 #define vec2 Vec2f
@@ -48,18 +50,19 @@ struct Vec4u
 #define uvec4 Vec4u
 
 #if !defined(VULKAN) && !defined(OPENGL)
-#error "Must define VULKAN or OPENGL before including debuguniforms.h"
+#error Must define VULKAN or OPENGL before including debuguniforms.h
 #endif
 
 #if defined(VULKAN) && defined(OPENGL)
-#error "Only one of VULKAN and OPENGL must be defined in debuguniforms.h"
+#error Only one of VULKAN and OPENGL must be defined in debuguniforms.h
 #endif
 
 #else
 
-// this has to happen above even any pre-processor definitions,
-// so it's added in code
-//#version 430 core
+// we require these extensions to be able to set explicit layout bindings, etc
+//#extension_nongles GL_ARB_shading_language_420pack : require
+//#extension_nongles GL_ARB_separate_shader_objects : require
+//#extension_nongles GL_ARB_explicit_attrib_location : require
 
 #ifdef VULKAN
 
@@ -71,6 +74,13 @@ struct Vec4u
 
 #define OPENGL 1
 
+#define FONT_UBOS
+#define HISTOGRAM_UBOS
+
+#ifdef GL_ES
+#define OPENGL_ES 1
+#endif
+
 #define BINDING(b) layout(binding = b, std140)
 #define VERTEX_ID gl_VertexID
 #define INSTANCE_ID gl_InstanceID
@@ -79,31 +89,22 @@ struct Vec4u
 
 #define INST_NAME(name) name
 
+#ifndef OPENGL_ES
+#define PRECISION
+#else
+#define PRECISION highp
+precision PRECISION float;
+precision PRECISION int;
 #endif
 
-BINDING(2) uniform HistogramUBOData
-{
-  uint HistogramChannels;
-  float HistogramMin;
-  float HistogramMax;
-  uint HistogramFlags;
-
-  float HistogramSlice;
-  int HistogramMip;
-  int HistogramSample;
-  int HistogramNumSamples;
-
-  vec3 HistogramTextureResolution;
-  float Padding3;
-}
-INST_NAME(histogram_minmax);
+#endif
 
 BINDING(0) uniform MeshUBOData
 {
   mat4 mvp;
   mat4 invProj;
   vec4 color;
-  uint displayFormat;
+  int displayFormat;
   uint homogenousInput;
   vec2 pointSpriteSize;
   uint rawoutput;
@@ -120,6 +121,32 @@ BINDING(0) uniform OutlineUBOData
   vec3 padding;
 }
 INST_NAME(outline);
+
+BINDING(0) uniform TexDisplayUBOData
+{
+  vec2 Position;
+  float Scale;
+  float HDRMul;
+
+  vec4 Channels;
+
+  float RangeMinimum;
+  float InverseRangeSize;
+  int MipLevel;
+  int FlipY;
+
+  vec3 TextureResolutionPS;
+  int OutputDisplayFormat;
+
+  vec2 OutputRes;
+  int RawOutput;
+  float Slice;
+
+  int SampleIdx;
+  float MipShift;
+  vec2 Padding;
+}
+INST_NAME(texdisplay);
 
 BINDING(0) uniform FontUBOData
 {
@@ -151,6 +178,11 @@ BINDING(0) uniform MeshPickUBOData
 }
 INST_NAME(meshpick);
 
+// the ARM driver is buggy and crashes if we declare UBOs that don't correspond to descriptors,
+// even if they are completely unused. So we need to #define out these global UBOs
+
+#if defined(FONT_UBOS) || defined(__cplusplus)
+
 struct FontGlyphData
 {
   vec4 posdata;
@@ -174,31 +206,28 @@ BINDING(2) uniform StringUBOData
 }
 INST_NAME(str);
 
-BINDING(0) uniform TexDisplayUBOData
+#endif
+
+#if defined(HISTOGRAM_UBOS) || defined(__cplusplus)
+
+BINDING(2) uniform HistogramUBOData
 {
-  vec2 Position;
-  float Scale;
-  float HDRMul;
+  uint HistogramChannels;
+  float HistogramMin;
+  float HistogramMax;
+  uint HistogramFlags;
 
-  vec4 Channels;
+  float HistogramSlice;
+  int HistogramMip;
+  int HistogramSample;
+  int HistogramNumSamples;
 
-  float RangeMinimum;
-  float InverseRangeSize;
-  int MipLevel;
-  int FlipY;
-
-  vec3 TextureResolutionPS;
-  int OutputDisplayFormat;
-
-  vec2 OutputRes;
-  int RawOutput;
-  float Slice;
-
-  int SampleIdx;
-  float MipShift;
-  vec2 Padding;
+  vec3 HistogramTextureResolution;
+  float Padding3;
 }
-INST_NAME(texdisplay);
+INST_NAME(histogram_minmax);
+
+#endif
 
 // some constants available to both C++ and GLSL for configuring display
 #define CUBEMAP_FACE_POS_X 0
@@ -264,9 +293,34 @@ INST_NAME(texdisplay);
 
 #define HGRAM_NUM_BUCKETS 256u
 
-#define MESH_OTHER 0    // this covers points and lines, logic is the same
-#define MESH_TRIANGLE_LIST 1
-#define MESH_TRIANGLE_STRIP 2
-#define MESH_TRIANGLE_FAN 3
-#define MESH_TRIANGLE_LIST_ADJ 4
-#define MESH_TRIANGLE_STRIP_ADJ 5
+#define MESH_OTHER 0u    // this covers points and lines, logic is the same
+#define MESH_TRIANGLE_LIST 1u
+#define MESH_TRIANGLE_STRIP 2u
+#define MESH_TRIANGLE_FAN 3u
+#define MESH_TRIANGLE_LIST_ADJ 4u
+#define MESH_TRIANGLE_STRIP_ADJ 5u
+
+#if !defined(__cplusplus)
+
+vec3 CalcCubeCoord(vec2 uv, int face)
+{
+  // From table 8.19 in GL4.5 spec
+  // Map UVs to [-0.5, 0.5] and rotate
+  uv -= vec2(0.5);
+  vec3 coord;
+  if(face == CUBEMAP_FACE_POS_X)
+    coord = vec3(0.5, -uv.y, -uv.x);
+  else if(face == CUBEMAP_FACE_NEG_X)
+    coord = vec3(-0.5, -uv.y, uv.x);
+  else if(face == CUBEMAP_FACE_POS_Y)
+    coord = vec3(uv.x, 0.5, uv.y);
+  else if(face == CUBEMAP_FACE_NEG_Y)
+    coord = vec3(uv.x, -0.5, -uv.y);
+  else if(face == CUBEMAP_FACE_POS_Z)
+    coord = vec3(uv.x, -uv.y, 0.5);
+  else    // face == CUBEMAP_FACE_NEG_Z
+    coord = vec3(-uv.x, -uv.y, -0.5);
+  return coord;
+}
+
+#endif

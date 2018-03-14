@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -22,36 +22,37 @@
  * THE SOFTWARE.
  ******************************************************************************/
 
+#include <QApplication>
 #include <QRegularExpression>
 #include <QtMath>
 #include "QRDUtils.h"
 
 static QVariant interpret(const ResourceFormat &f, uint16_t comp)
 {
-  if(f.compByteWidth != 2 || f.compType == eCompType_Float)
+  if(f.compByteWidth != 2 || f.compType == CompType::Float)
     return QVariant();
 
-  if(f.compType == eCompType_SInt)
+  if(f.compType == CompType::SInt)
   {
     return (int16_t)comp;
   }
-  else if(f.compType == eCompType_UInt)
+  else if(f.compType == CompType::UInt)
   {
     return comp;
   }
-  else if(f.compType == eCompType_SScaled)
+  else if(f.compType == CompType::SScaled)
   {
     return (float)((int16_t)comp);
   }
-  else if(f.compType == eCompType_UScaled)
+  else if(f.compType == CompType::UScaled)
   {
     return (float)comp;
   }
-  else if(f.compType == eCompType_UNorm)
+  else if(f.compType == CompType::UNorm)
   {
     return (float)comp / (float)0xffff;
   }
-  else if(f.compType == eCompType_SNorm)
+  else if(f.compType == CompType::SNorm)
   {
     int16_t cast = (int16_t)comp;
 
@@ -70,30 +71,30 @@ static QVariant interpret(const ResourceFormat &f, uint16_t comp)
 
 static QVariant interpret(const ResourceFormat &f, byte comp)
 {
-  if(f.compByteWidth != 1 || f.compType == eCompType_Float)
+  if(f.compByteWidth != 1 || f.compType == CompType::Float)
     return QVariant();
 
-  if(f.compType == eCompType_SInt)
+  if(f.compType == CompType::SInt)
   {
     return (int8_t)comp;
   }
-  else if(f.compType == eCompType_UInt)
+  else if(f.compType == CompType::UInt)
   {
     return comp;
   }
-  else if(f.compType == eCompType_SScaled)
+  else if(f.compType == CompType::SScaled)
   {
     return (float)((int8_t)comp);
   }
-  else if(f.compType == eCompType_UScaled)
+  else if(f.compType == CompType::UScaled)
   {
     return (float)comp;
   }
-  else if(f.compType == eCompType_UNorm)
+  else if(f.compType == CompType::UNorm)
   {
     return ((float)comp) / 255.0f;
   }
-  else if(f.compType == eCompType_SNorm)
+  else if(f.compType == CompType::SNorm)
   {
     int8_t cast = (int8_t)comp;
 
@@ -112,7 +113,6 @@ static QVariant interpret(const ResourceFormat &f, byte comp)
 
 FormatElement::FormatElement()
 {
-  name = "";
   buffer = 0;
   offset = 0;
   perinstance = false;
@@ -120,22 +120,25 @@ FormatElement::FormatElement()
   rowmajor = false;
   matrixdim = 0;
   hex = false;
-  systemValue = eAttr_None;
+  rgb = false;
+  systemValue = ShaderBuiltin::Undefined;
 }
 
-FormatElement::FormatElement(const QString &Name, int buf, uint offs, bool pi, int ir, bool rowMat,
-                             uint matDim, ResourceFormat f, bool h)
+FormatElement::FormatElement(const QString &Name, int buf, uint offs, bool perInst, int instRate,
+                             bool rowMat, uint matDim, ResourceFormat f, bool hexDisplay,
+                             bool rgbDisplay)
 {
   name = Name;
   buffer = buf;
   offset = offs;
   format = f;
-  perinstance = pi;
-  instancerate = ir;
+  perinstance = perInst;
+  instancerate = instRate;
   rowmajor = rowMat;
   matrixdim = matDim;
-  hex = h;
-  systemValue = eAttr_None;
+  hex = hexDisplay;
+  rgb = rgbDisplay;
+  systemValue = ShaderBuiltin::Undefined;
 }
 
 QList<FormatElement> FormatElement::ParseFormatString(const QString &formatString, uint64_t maxLen,
@@ -146,41 +149,44 @@ QList<FormatElement> FormatElement::ParseFormatString(const QString &formatStrin
   // regex doesn't account for trailing or preceeding whitespace, or comments
 
   QRegularExpression regExpr(
-      "^(row_major\\s+)?"    // row_major matrix
-      "("
-      "uintten|unormten"
-      "|unormh|unormb"
-      "|snormh|snormb"
-      "|bool"                 // bool is stored as 4-byte int
-      "|byte|short|int"       // signed ints
-      "|ubyte|ushort|uint"    // unsigned ints
-      "|xbyte|xshort|xint"    // hex ints
-      "|half|float|double"    // float types
-      "|vec|uvec|ivec"        // OpenGL vector types
-      "|mat|umat|imat"        // OpenGL matrix types
-      ")"
-      "([1-9])?"                              // might be a vector
-      "(x[1-9])?"                             // or a matrix
-      "(\\s+[A-Za-z_][A-Za-z0-9_]*)?"         // get identifier name
-      "(\\[[0-9]+\\])?"                       // optional array dimension
-      "(\\s*:\\s*[A-Za-z_][A-Za-z0-9_]*)?"    // optional semantic
-      "$");
+      lit("^"                                     // start of the line
+          "(row_major\\s+)?"                      // row_major matrix
+          "(rgb\\s+)?"                            // rgb element colourising
+          "("                                     // group the options for the type
+          "uintten|unormten"                      // R10G10B10A2 types
+          "|floateleven"                          // R11G11B10 special type
+          "|unormh|unormb"                        // UNORM 16-bit and 8-bit types
+          "|snormh|snormb"                        // SNORM 16-bit and 8-bit types
+          "|bool"                                 // bool is stored as 4-byte int
+          "|byte|short|int"                       // signed ints
+          "|ubyte|ushort|uint"                    // unsigned ints
+          "|xbyte|xshort|xint"                    // hex ints
+          "|half|float|double"                    // float types
+          "|vec|uvec|ivec"                        // OpenGL vector types
+          "|mat|umat|imat"                        // OpenGL matrix types
+          ")"                                     // end of the type group
+          "([1-9])?"                              // might be a vector
+          "(x[1-9])?"                             // or a matrix
+          "(\\s+[A-Za-z_][A-Za-z0-9_]*)?"         // get identifier name
+          "(\\[[0-9]+\\])?"                       // optional array dimension
+          "(\\s*:\\s*[A-Za-z_][A-Za-z0-9_]*)?"    // optional semantic
+          "$"));
 
   bool success = true;
-  errors = "";
+  errors = QString();
 
   QString text = formatString;
 
-  text = text.replace("{", "").replace("}", "");
+  text = text.replace(lit("{"), QString()).replace(lit("}"), QString());
 
-  QRegularExpression c_comments("/\\*[^*]*\\*+(?:[^*/][^*]*\\*+)*/");
-  QRegularExpression cpp_comments("//.*");
-  text = text.replace(c_comments, "").replace(cpp_comments, "");
+  QRegularExpression c_comments(lit("/\\*[^*]*\\*+(?:[^*/][^*]*\\*+)*/"));
+  QRegularExpression cpp_comments(lit("//.*"));
+  text = text.replace(c_comments, QString()).replace(cpp_comments, QString());
 
   uint32_t offset = 0;
 
   // get each line and parse it to determine the format the user wanted
-  for(QString &l : text.split(QChar(';')))
+  for(QString &l : text.split(QLatin1Char(';')))
   {
     QString line = l.trimmed();
 
@@ -191,37 +197,38 @@ QList<FormatElement> FormatElement::ParseFormatString(const QString &formatStrin
 
     if(!match.hasMatch())
     {
-      errors = "Couldn't parse line:\n" + line;
+      errors = tr("Couldn't parse line: %1\n").arg(line);
       success = false;
       break;
     }
 
-    QString basetype = match.captured(2);
+    QString basetype = match.captured(3);
     bool row_major = !match.captured(1).isEmpty();
-    QString vectorDim = !match.captured(3).isEmpty() ? match.captured(3) : "1";
-    QString matrixDim = !match.captured(4).isEmpty() ? match.captured(4).mid(1) : "1";
-    QString name = !match.captured(5).isEmpty() ? match.captured(5).trimmed() : "data";
-    QString arrayDim = !match.captured(6).isEmpty() ? match.captured(6).trimmed() : "[1]";
+    bool rgb = !match.captured(2).isEmpty();
+    QString vectorDim = !match.captured(4).isEmpty() ? match.captured(4) : lit("1");
+    QString matrixDim = !match.captured(5).isEmpty() ? match.captured(5).mid(1) : lit("1");
+    QString name = !match.captured(6).isEmpty() ? match.captured(6).trimmed() : lit("data");
+    QString arrayDim = !match.captured(7).isEmpty() ? match.captured(7).trimmed() : lit("[1]");
     arrayDim = arrayDim.mid(1, arrayDim.count() - 2);
 
-    if(!match.captured(4).isEmpty())
+    if(!match.captured(5).isEmpty())
     {
       vectorDim.swap(matrixDim);
     }
 
     ResourceFormat fmt;
-    fmt.compType = eCompType_None;
+    fmt.compType = CompType::Typeless;
 
     bool hex = false;
 
-    FormatComponentType type = eCompType_Float;
+    CompType type = CompType::Float;
     uint32_t count = 0;
     uint32_t arrayCount = 1;
     uint32_t matrixCount = 0;
     uint32_t width = 0;
 
     // check for square matrix declarations like 'mat4' and 'mat3'
-    if(basetype == "mat" && !match.captured(4).isEmpty())
+    if(basetype == lit("mat") && match.captured(5).isEmpty())
       matrixDim = vectorDim;
 
     // calculate format
@@ -231,7 +238,7 @@ QList<FormatElement> FormatElement::ParseFormatString(const QString &formatStrin
       count = vectorDim.toUInt(&ok);
       if(!ok)
       {
-        errors = "Invalid vector dimension on line:\n" + line;
+        errors = tr("Invalid vector dimension on line: %1\n").arg(line);
         success = false;
         break;
       }
@@ -246,109 +253,115 @@ QList<FormatElement> FormatElement::ParseFormatString(const QString &formatStrin
       matrixCount = matrixDim.toUInt(&ok);
       if(!ok)
       {
-        errors = "Invalid matrix second dimension on line:\n" + line;
+        errors = tr("Invalid matrix second dimension on line: %1\n").arg(line);
         success = false;
         break;
       }
 
-      if(basetype == "bool")
+      if(basetype == lit("bool"))
       {
-        type = eCompType_UInt;
+        type = CompType::UInt;
         width = 4;
       }
-      else if(basetype == "byte")
+      else if(basetype == lit("byte"))
       {
-        type = eCompType_SInt;
+        type = CompType::SInt;
         width = 1;
       }
-      else if(basetype == "ubyte" || basetype == "xbyte")
+      else if(basetype == lit("ubyte") || basetype == lit("xbyte"))
       {
-        type = eCompType_UInt;
+        type = CompType::UInt;
         width = 1;
       }
-      else if(basetype == "short")
+      else if(basetype == lit("short"))
       {
-        type = eCompType_SInt;
+        type = CompType::SInt;
         width = 2;
       }
-      else if(basetype == "ushort" || basetype == "xshort")
+      else if(basetype == lit("ushort") || basetype == lit("xshort"))
       {
-        type = eCompType_UInt;
+        type = CompType::UInt;
         width = 2;
       }
-      else if(basetype == "int" || basetype == "ivec" || basetype == "imat")
+      else if(basetype == lit("int") || basetype == lit("ivec") || basetype == lit("imat"))
       {
-        type = eCompType_SInt;
+        type = CompType::SInt;
         width = 4;
       }
-      else if(basetype == "uint" || basetype == "xint" || basetype == "uvec" || basetype == "umat")
+      else if(basetype == lit("uint") || basetype == lit("xint") || basetype == lit("uvec") ||
+              basetype == lit("umat"))
       {
-        type = eCompType_UInt;
+        type = CompType::UInt;
         width = 4;
       }
-      else if(basetype == "half")
+      else if(basetype == lit("half"))
       {
-        type = eCompType_Float;
+        type = CompType::Float;
         width = 2;
       }
-      else if(basetype == "float" || basetype == "vec" || basetype == "mat")
+      else if(basetype == lit("float") || basetype == lit("vec") || basetype == lit("mat"))
       {
-        type = eCompType_Float;
+        type = CompType::Float;
         width = 4;
       }
-      else if(basetype == "double")
+      else if(basetype == lit("double"))
       {
-        type = eCompType_Double;
+        type = CompType::Double;
         width = 8;
       }
-      else if(basetype == "unormh")
+      else if(basetype == lit("unormh"))
       {
-        type = eCompType_UNorm;
+        type = CompType::UNorm;
         width = 2;
       }
-      else if(basetype == "unormb")
+      else if(basetype == lit("unormb"))
       {
-        type = eCompType_UNorm;
+        type = CompType::UNorm;
         width = 1;
       }
-      else if(basetype == "snormh")
+      else if(basetype == lit("snormh"))
       {
-        type = eCompType_SNorm;
+        type = CompType::SNorm;
         width = 2;
       }
-      else if(basetype == "snormb")
+      else if(basetype == lit("snormb"))
       {
-        type = eCompType_SNorm;
+        type = CompType::SNorm;
         width = 1;
       }
-      else if(basetype == "uintten")
+      else if(basetype == lit("uintten"))
       {
-        fmt.compType = eCompType_UInt;
+        fmt.compType = CompType::UInt;
         fmt.compCount = 4 * count;
         fmt.compByteWidth = 1;
-        fmt.special = true;
-        fmt.specialFormat = eSpecial_R10G10B10A2;
+        fmt.type = ResourceFormatType::R10G10B10A2;
       }
-      else if(basetype == "unormten")
+      else if(basetype == lit("unormten"))
       {
-        fmt.compType = eCompType_UInt;
+        fmt.compType = CompType::UInt;
         fmt.compCount = 4 * count;
         fmt.compByteWidth = 1;
-        fmt.special = true;
-        fmt.specialFormat = eSpecial_R10G10B10A2;
+        fmt.type = ResourceFormatType::R10G10B10A2;
+      }
+      else if(basetype == lit("floateleven"))
+      {
+        fmt.compType = CompType::Float;
+        fmt.compCount = 3 * count;
+        fmt.compByteWidth = 1;
+        fmt.type = ResourceFormatType::R11G11B10;
       }
       else
       {
-        errors = "Unrecognised basic type on line:\n" + line;
+        errors = tr("Unrecognised basic type on line: %1\n").arg(line);
         success = false;
         break;
       }
     }
 
-    if(basetype == "xint" || basetype == "xshort" || basetype == "xbyte")
+    if(basetype == lit("xint") || basetype == lit("xshort") || basetype == lit("xbyte"))
       hex = true;
 
-    if(fmt.compType == eCompType_None)
+    if(fmt.compType == CompType::Typeless)
     {
       fmt.compType = type;
       fmt.compCount = count;
@@ -357,7 +370,7 @@ QList<FormatElement> FormatElement::ParseFormatString(const QString &formatStrin
 
     if(arrayCount == 1)
     {
-      FormatElement elem(name, 0, offset, false, 1, row_major, matrixCount, fmt, hex);
+      FormatElement elem(name, 0, offset, false, 1, row_major, matrixCount, fmt, hex, rgb);
 
       uint32_t advance = elem.byteSize();
 
@@ -391,8 +404,8 @@ QList<FormatElement> FormatElement::ParseFormatString(const QString &formatStrin
 
       for(uint a = 0; a < arrayCount; a++)
       {
-        FormatElement elem(QString("%1[%2]").arg(name).arg(a), 0, offset, false, 1, row_major,
-                           matrixCount, fmt, hex);
+        FormatElement elem(QFormatStr("%1[%2]").arg(name).arg(a), 0, offset, false, 1, row_major,
+                           matrixCount, fmt, hex, rgb);
 
         elems.push_back(elem);
 
@@ -414,7 +427,7 @@ QList<FormatElement> FormatElement::ParseFormatString(const QString &formatStrin
     elems.clear();
 
     ResourceFormat fmt;
-    fmt.compType = eCompType_UInt;
+    fmt.compType = CompType::UInt;
     fmt.compByteWidth = 4;
     fmt.compCount = 4;
 
@@ -423,7 +436,7 @@ QList<FormatElement> FormatElement::ParseFormatString(const QString &formatStrin
     if(maxLen > 0 && maxLen < 4)
       fmt.compByteWidth = 1;
 
-    elems.push_back(FormatElement("data", 0, 0, false, 1, false, 1, fmt, true));
+    elems.push_back(FormatElement(lit("data"), 0, 0, false, 1, false, 1, fmt, true, false));
   }
 
   return elems;
@@ -451,7 +464,7 @@ QVariantList FormatElement::GetVariants(const byte *&data, const byte *end) cons
 
   bool ok = true;
 
-  if(format.special && format.specialFormat == eSpecial_R5G5B5A1)
+  if(format.type == ResourceFormatType::R5G5B5A1)
   {
     uint16_t packed = readObj<uint16_t>(data, end, ok);
 
@@ -467,7 +480,7 @@ QVariantList FormatElement::GetVariants(const byte *&data, const byte *end) cons
       ret[0] = tmp;
     }
   }
-  else if(format.special && format.specialFormat == eSpecial_R5G6B5)
+  else if(format.type == ResourceFormatType::R5G6B5)
   {
     uint16_t packed = readObj<uint16_t>(data, end, ok);
 
@@ -482,7 +495,7 @@ QVariantList FormatElement::GetVariants(const byte *&data, const byte *end) cons
       ret[0] = tmp;
     }
   }
-  else if(format.special && format.specialFormat == eSpecial_R4G4B4A4)
+  else if(format.type == ResourceFormatType::R4G4B4A4)
   {
     uint16_t packed = readObj<uint16_t>(data, end, ok);
 
@@ -498,7 +511,7 @@ QVariantList FormatElement::GetVariants(const byte *&data, const byte *end) cons
       ret[0] = tmp;
     }
   }
-  else if(format.special && format.specialFormat == eSpecial_R10G10B10A2)
+  else if(format.type == ResourceFormatType::R10G10B10A2)
   {
     // allow for vectors of this format - for raw buffer viewer
     for(int i = 0; i < int(format.compCount / 4); i++)
@@ -517,21 +530,21 @@ QVariantList FormatElement::GetVariants(const byte *&data, const byte *end) cons
         r = tmp;
       }
 
-      if(format.compType == eCompType_UInt)
+      if(format.compType == CompType::UInt)
       {
         ret.push_back(r);
         ret.push_back(g);
         ret.push_back(b);
         ret.push_back(a);
       }
-      else if(format.compType == eCompType_UScaled)
+      else if(format.compType == CompType::UScaled)
       {
         ret.push_back((float)r);
         ret.push_back((float)g);
         ret.push_back((float)b);
         ret.push_back((float)a);
       }
-      else if(format.compType == eCompType_SInt || format.compType == eCompType_SScaled)
+      else if(format.compType == CompType::SInt || format.compType == CompType::SScaled)
       {
         int ir, ig, ib, ia;
 
@@ -557,14 +570,14 @@ QVariantList FormatElement::GetVariants(const byte *&data, const byte *end) cons
         else
           ia = ((int)a) - 4;
 
-        if(format.compType == eCompType_SInt)
+        if(format.compType == CompType::SInt)
         {
           ret.push_back(ir);
           ret.push_back(ig);
           ret.push_back(ib);
           ret.push_back(ia);
         }
-        else if(format.compType == eCompType_SScaled)
+        else if(format.compType == CompType::SScaled)
         {
           ret.push_back((float)ir);
           ret.push_back((float)ig);
@@ -581,20 +594,54 @@ QVariantList FormatElement::GetVariants(const byte *&data, const byte *end) cons
       }
     }
   }
-  else if(format.special && format.specialFormat == eSpecial_R11G11B10)
+  else if(format.type == ResourceFormatType::R11G11B10)
   {
     uint32_t packed = readObj<uint32_t>(data, end, ok);
 
-    uint32_t xMantissa = ((packed >> 0) & 0x3f);
-    uint32_t xExponent = ((packed >> 6) & 0x1f);
-    uint32_t yMantissa = ((packed >> 11) & 0x3f);
-    uint32_t yExponent = ((packed >> 17) & 0x1f);
-    uint32_t zMantissa = ((packed >> 22) & 0x1f);
-    uint32_t zExponent = ((packed >> 27) & 0x1f);
+    uint32_t mantissas[] = {
+        (packed >> 0) & 0x3f, (packed >> 11) & 0x3f, (packed >> 22) & 0x1f,
+    };
+    int32_t exponents[] = {
+        int32_t(packed >> 6) & 0x1f, int32_t(packed >> 17) & 0x1f, int32_t(packed >> 27) & 0x1f,
+    };
+    static const uint32_t leadbit[] = {
+        0x40, 0x40, 0x20,
+    };
 
-    ret.push_back(((float)(xMantissa) / 64.0f) * qPow(2.0f, (float)xExponent - 15.0f));
-    ret.push_back(((float)(yMantissa) / 32.0f) * qPow(2.0f, (float)yExponent - 15.0f));
-    ret.push_back(((float)(zMantissa) / 32.0f) * qPow(2.0f, (float)zExponent - 15.0f));
+    for(int i = 0; i < 3; i++)
+    {
+      if(mantissas[i] == 0 && exponents[i] == 0)
+      {
+        ret.push_back((float)0.0f);
+      }
+      else
+      {
+        if(exponents[i] == 0x1f)
+        {
+          // no sign bit, can't be negative infinity
+          if(mantissas[i] == 0)
+            ret.push_back((float)qInf());
+          else
+            ret.push_back((float)qQNaN());
+        }
+        else if(exponents[i] != 0)
+        {
+          // normal value, add leading bit
+          uint32_t combined = leadbit[i] | mantissas[i];
+
+          // calculate value
+          ret.push_back(((float)combined / (float)leadbit[i]) *
+                        qPow(2.0f, (float)exponents[i] - 15.0f));
+        }
+        else if(exponents[i] == 0)
+        {
+          // we know xMantissa isn't 0 also, or it would have been caught above so
+          // this is a subnormal value, pretend exponent is 1 and don't add leading bit
+
+          ret.push_back(((float)mantissas[i] / (float)leadbit[i]) * qPow(2.0f, (float)1.0f - 15.0f));
+        }
+      }
+    }
   }
   else
   {
@@ -602,16 +649,16 @@ QVariantList FormatElement::GetVariants(const byte *&data, const byte *end) cons
 
     for(int i = 0; i < dim; i++)
     {
-      if(format.compType == eCompType_Float)
+      if(format.compType == CompType::Float)
       {
         if(format.compByteWidth == 8)
           ret.push_back(readObj<double>(data, end, ok));
         else if(format.compByteWidth == 4)
           ret.push_back(readObj<float>(data, end, ok));
         else if(format.compByteWidth == 2)
-          ret.push_back(Maths_HalfToFloat(readObj<uint16_t>(data, end, ok)));
+          ret.push_back(RENDERDOC_HalfToFloat(readObj<uint16_t>(data, end, ok)));
       }
-      else if(format.compType == eCompType_SInt)
+      else if(format.compType == CompType::SInt)
       {
         if(format.compByteWidth == 4)
           ret.push_back((int)readObj<int32_t>(data, end, ok));
@@ -620,7 +667,7 @@ QVariantList FormatElement::GetVariants(const byte *&data, const byte *end) cons
         else if(format.compByteWidth == 1)
           ret.push_back((int)readObj<int8_t>(data, end, ok));
       }
-      else if(format.compType == eCompType_UInt)
+      else if(format.compType == CompType::UInt)
       {
         if(format.compByteWidth == 4)
           ret.push_back((uint32_t)readObj<uint32_t>(data, end, ok));
@@ -629,7 +676,7 @@ QVariantList FormatElement::GetVariants(const byte *&data, const byte *end) cons
         else if(format.compByteWidth == 1)
           ret.push_back((uint32_t)readObj<uint8_t>(data, end, ok));
       }
-      else if(format.compType == eCompType_UScaled)
+      else if(format.compType == CompType::UScaled)
       {
         if(format.compByteWidth == 4)
           ret.push_back((float)readObj<uint32_t>(data, end, ok));
@@ -638,7 +685,7 @@ QVariantList FormatElement::GetVariants(const byte *&data, const byte *end) cons
         else if(format.compByteWidth == 1)
           ret.push_back((float)readObj<uint8_t>(data, end, ok));
       }
-      else if(format.compType == eCompType_SScaled)
+      else if(format.compType == CompType::SScaled)
       {
         if(format.compByteWidth == 4)
           ret.push_back((float)readObj<int32_t>(data, end, ok));
@@ -647,7 +694,7 @@ QVariantList FormatElement::GetVariants(const byte *&data, const byte *end) cons
         else if(format.compByteWidth == 1)
           ret.push_back((float)readObj<int8_t>(data, end, ok));
       }
-      else if(format.compType == eCompType_Depth)
+      else if(format.compType == CompType::Depth)
       {
         if(format.compByteWidth == 4)
         {
@@ -668,7 +715,7 @@ QVariantList FormatElement::GetVariants(const byte *&data, const byte *end) cons
           ret.push_back(f / (float)0x0000ffff);
         }
       }
-      else if(format.compType == eCompType_Double)
+      else if(format.compType == CompType::Double)
       {
         ret.push_back(readObj<double>(data, end, ok));
       }
@@ -715,15 +762,15 @@ ShaderVariable FormatElement::GetShaderVar(const byte *&data, const byte *end) c
   ShaderVariable ret;
 
   ret.name = name.toUtf8().data();
-  ret.type = eVar_Float;
-  if(format.compType == eCompType_UInt)
-    ret.type = eVar_UInt;
-  if(format.compType == eCompType_SInt)
-    ret.type = eVar_Int;
-  if(format.compType == eCompType_Double)
-    ret.type = eVar_Double;
+  ret.type = VarType::Float;
+  if(format.compType == CompType::UInt)
+    ret.type = VarType::UInt;
+  if(format.compType == CompType::SInt)
+    ret.type = VarType::Int;
+  if(format.compType == CompType::Double)
+    ret.type = VarType::Double;
 
-  ret.columns = qMin(format.compCount, 4U);
+  ret.columns = qMin(format.compCount, uint8_t(4));
   ret.rows = qMin(matrixdim, 4U);
 
   ret.displayAsHex = hex;
@@ -745,11 +792,11 @@ ShaderVariable FormatElement::GetShaderVar(const byte *&data, const byte *end) c
 
       const QVariant &o = objs[src];
 
-      if(ret.type == eVar_Double)
+      if(ret.type == VarType::Double)
         ret.value.dv[dst] = o.toDouble();
-      else if(ret.type == eVar_UInt)
+      else if(ret.type == VarType::UInt)
         ret.value.uv[dst] = o.toUInt();
-      else if(ret.type == eVar_Int)
+      else if(ret.type == VarType::Int)
         ret.value.iv[dst] = o.toInt();
       else
         ret.value.fv[dst] = o.toFloat();
@@ -759,44 +806,46 @@ ShaderVariable FormatElement::GetShaderVar(const byte *&data, const byte *end) c
   return ret;
 }
 
-uint32_t FormatElement::byteSize()
+uint32_t FormatElement::byteSize() const
 {
   uint32_t vecSize = format.compByteWidth * format.compCount;
 
-  if(format.special)
-  {
-    if(format.specialFormat == eSpecial_R5G5B5A1 || format.specialFormat == eSpecial_R5G6B5 ||
-       format.specialFormat == eSpecial_R4G4B4A4)
-      vecSize = 2;
+  if(format.type == ResourceFormatType::R5G5B5A1 || format.type == ResourceFormatType::R5G6B5 ||
+     format.type == ResourceFormatType::R4G4B4A4)
+    vecSize = 2;
 
-    if(format.specialFormat == eSpecial_R10G10B10A2 || format.specialFormat == eSpecial_R11G11B10)
-      vecSize = 4;
-  }
+  if(format.type == ResourceFormatType::R10G10B10A2 || format.type == ResourceFormatType::R11G11B10)
+    vecSize = 4;
 
   return vecSize * matrixdim;
 }
 
 QString TypeString(const ShaderVariable &v)
 {
-  if(v.members.count > 0)
+  if(!v.members.isEmpty() || v.isStruct)
   {
     if(v.isStruct)
-      return "struct";
+      return lit("struct");
     else
-      return QString("%1[%2]").arg(TypeString(v.members[0]), v.members.count);
+      return QFormatStr("%1[%2]").arg(TypeString(v.members[0])).arg(v.members.count());
   }
 
   QString typeStr = ToQStr(v.type);
 
-  if(v.displayAsHex && v.type == eVar_UInt)
-    typeStr = "xint";
+  if(v.displayAsHex && v.type == VarType::UInt)
+    typeStr = lit("xint");
 
   if(v.rows == 1 && v.columns == 1)
     return typeStr;
   if(v.rows == 1)
-    return QString("%1%2").arg(typeStr).arg(v.columns);
+    return QFormatStr("%1%2").arg(typeStr).arg(v.columns);
   else
-    return QString("%1%2x%3").arg(typeStr).arg(v.rows).arg(v.columns);
+    return QFormatStr("%1%2x%3 (%4)")
+        .arg(typeStr)
+        .arg(v.rows)
+        .arg(v.columns)
+        .arg(v.rowMajor ? QApplication::tr("row major", "FormatElement")
+                        : QApplication::tr("column major", "FormatElement"));
 }
 
 template <typename el>
@@ -805,25 +854,34 @@ static QString RowValuesToString(int cols, el x, el y, el z, el w)
   if(cols == 1)
     return Formatter::Format(x);
   else if(cols == 2)
-    return Formatter::Format(x) + ", " + Formatter::Format(y);
+    return QFormatStr("%1, %2").arg(Formatter::Format(x)).arg(Formatter::Format(y));
   else if(cols == 3)
-    return Formatter::Format(x) + ", " + Formatter::Format(y) + ", " + Formatter::Format(z);
+    return QFormatStr("%1, %2, %3")
+        .arg(Formatter::Format(x))
+        .arg(Formatter::Format(y))
+        .arg(Formatter::Format(z));
   else
-    return Formatter::Format(x) + ", " + Formatter::Format(y) + ", " + Formatter::Format(z) + ", " +
-           Formatter::Format(w);
+    return QFormatStr("%1, %2, %3, %4")
+        .arg(Formatter::Format(x))
+        .arg(Formatter::Format(y))
+        .arg(Formatter::Format(z))
+        .arg(Formatter::Format(w));
 }
 
-QString RowString(const ShaderVariable &v, uint32_t row)
+QString RowString(const ShaderVariable &v, uint32_t row, VarType type)
 {
-  if(v.type == eVar_Double)
+  if(type == VarType::Unknown)
+    type = v.type;
+
+  if(type == VarType::Double)
     return RowValuesToString((int)v.columns, v.value.dv[row * v.columns + 0],
                              v.value.dv[row * v.columns + 1], v.value.dv[row * v.columns + 2],
                              v.value.dv[row * v.columns + 3]);
-  else if(v.type == eVar_Int)
+  else if(type == VarType::Int)
     return RowValuesToString((int)v.columns, v.value.iv[row * v.columns + 0],
                              v.value.iv[row * v.columns + 1], v.value.iv[row * v.columns + 2],
                              v.value.iv[row * v.columns + 3]);
-  else if(v.type == eVar_UInt)
+  else if(type == VarType::UInt)
     return RowValuesToString((int)v.columns, v.value.uv[row * v.columns + 0],
                              v.value.uv[row * v.columns + 1], v.value.uv[row * v.columns + 2],
                              v.value.uv[row * v.columns + 3]);
@@ -835,43 +893,43 @@ QString RowString(const ShaderVariable &v, uint32_t row)
 
 QString VarString(const ShaderVariable &v)
 {
-  if(v.members.count > 0)
-    return "";
+  if(!v.members.isEmpty())
+    return QString();
 
   if(v.rows == 1)
     return RowString(v, 0);
 
-  QString ret = "";
+  QString ret;
   for(int i = 0; i < (int)v.rows; i++)
   {
     if(i > 0)
-      ret += ", ";
-    ret += "{" + RowString(v, i) + "}";
+      ret += lit("\n");
+    ret += lit("{") + RowString(v, i) + lit("}");
   }
 
-  return "{ " + ret + " }";
+  return ret;
 }
 
 QString RowTypeString(const ShaderVariable &v)
 {
-  if(v.members.count > 0)
+  if(!v.members.isEmpty() || v.isStruct)
   {
     if(v.isStruct)
-      return "struct";
+      return lit("struct");
     else
-      return "flibbertygibbet";
+      return lit("flibbertygibbet");
   }
 
   if(v.rows == 0 && v.columns == 0)
-    return "-";
+    return lit("-");
 
   QString typeStr = ToQStr(v.type);
 
-  if(v.displayAsHex && v.type == eVar_UInt)
-    typeStr = "xint";
+  if(v.displayAsHex && v.type == VarType::UInt)
+    typeStr = lit("xint");
 
   if(v.columns == 1)
     return typeStr;
 
-  return QString("%1%2").arg(typeStr).arg(v.columns);
+  return QFormatStr("%1%2").arg(typeStr).arg(v.columns);
 }

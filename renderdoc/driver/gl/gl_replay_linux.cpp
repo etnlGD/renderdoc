@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -25,6 +25,7 @@
 
 #include "gl_replay.h"
 #include <dlfcn.h>
+#include "serialise/rdcfile.h"
 #include "gl_driver.h"
 #include "gl_resources.h"
 
@@ -42,212 +43,18 @@ PFNGLXQUERYDRAWABLEPROC glXQueryDrawableProc = NULL;
 PFNGLXDESTROYCONTEXTPROC glXDestroyCtxProc = NULL;
 PFNGLXSWAPBUFFERSPROC glXSwapProc = NULL;
 
-void GLReplay::MakeCurrentReplayContext(GLWindowingData *ctx)
-{
-  static GLWindowingData *prev = NULL;
+static bool X11ErrorSeen = false;
 
-  if(glXMakeContextCurrentProc && ctx && ctx != prev)
-  {
-    prev = ctx;
-    glXMakeContextCurrentProc(ctx->dpy, ctx->wnd, ctx->wnd, ctx->ctx);
-    m_pDriver->ActivateContext(*ctx);
-  }
+int NonFatalX11ErrorHandler(Display *display, XErrorEvent *error)
+{
+  X11ErrorSeen = true;
+
+  return 0;
 }
 
-void GLReplay::SwapBuffers(GLWindowingData *ctx)
-{
-  glXSwapProc(ctx->dpy, ctx->wnd);
-}
+typedef int (*X11ErrorHandler)(Display *display, XErrorEvent *error);
 
-void GLReplay::CloseReplayContext()
-{
-  if(glXDestroyCtxProc)
-  {
-    glXMakeContextCurrentProc(m_ReplayCtx.dpy, 0L, 0L, NULL);
-    glXDestroyCtxProc(m_ReplayCtx.dpy, m_ReplayCtx.ctx);
-  }
-}
-
-uint64_t GLReplay::MakeOutputWindow(WindowingSystem system, void *data, bool depth)
-{
-  Display *dpy = NULL;
-  Drawable draw = 0;
-
-  if(system == eWindowingSystem_Xlib)
-  {
-#if ENABLED(RDOC_XLIB)
-    XlibWindowData *xlib = (XlibWindowData *)data;
-
-    dpy = xlib->display;
-    draw = xlib->window;
-#else
-    RDCERR(
-        "Xlib windowing system data passed in, but support is not compiled in. GL must have xlib "
-        "support compiled in");
-#endif
-  }
-  else if(system == eWindowingSystem_Unknown)
-  {
-    // allow undefined so that internally we can create a window-less context
-    dpy = XOpenDisplay(NULL);
-
-    if(dpy == NULL)
-      return 0;
-  }
-  else
-  {
-    RDCERR("Unexpected window system %u", system);
-  }
-
-  static int visAttribs[] = {GLX_X_RENDERABLE,
-                             True,
-                             GLX_DRAWABLE_TYPE,
-                             GLX_WINDOW_BIT,
-                             GLX_RENDER_TYPE,
-                             GLX_RGBA_BIT,
-                             GLX_X_VISUAL_TYPE,
-                             GLX_TRUE_COLOR,
-                             GLX_RED_SIZE,
-                             8,
-                             GLX_GREEN_SIZE,
-                             8,
-                             GLX_BLUE_SIZE,
-                             8,
-                             GLX_DOUBLEBUFFER,
-                             True,
-                             GLX_FRAMEBUFFER_SRGB_CAPABLE_ARB,
-                             True,
-                             0};
-  int numCfgs = 0;
-  GLXFBConfig *fbcfg = glXChooseFBConfigProc(dpy, DefaultScreen(dpy), visAttribs, &numCfgs);
-
-  if(fbcfg == NULL)
-  {
-    XCloseDisplay(dpy);
-    RDCERR("Couldn't choose default framebuffer config");
-    return eReplayCreate_APIInitFailed;
-  }
-
-  if(draw != 0)
-  {
-    // Choose FB config with a GLX_VISUAL_ID that matches the X screen.
-    VisualID visualid_correct = DefaultVisual(dpy, DefaultScreen(dpy))->visualid;
-    for(int i = 0; i < numCfgs; i++)
-    {
-      int visualid;
-      glXGetFBConfigAttrib(dpy, fbcfg[i], GLX_VISUAL_ID, &visualid);
-      if((VisualID)visualid == visualid_correct)
-      {
-        fbcfg[0] = fbcfg[i];
-        break;
-      }
-    }
-  }
-
-  int attribs[64] = {0};
-  int i = 0;
-
-  attribs[i++] = GLX_CONTEXT_MAJOR_VERSION_ARB;
-  attribs[i++] = 4;
-  attribs[i++] = GLX_CONTEXT_MINOR_VERSION_ARB;
-  attribs[i++] = 3;
-  attribs[i++] = GLX_CONTEXT_FLAGS_ARB;
-#if ENABLED(RDOC_DEVEL)
-  attribs[i++] = GLX_CONTEXT_DEBUG_BIT_ARB;
-#else
-  attribs[i++] = 0;
-#endif
-  attribs[i++] = GLX_CONTEXT_PROFILE_MASK_ARB;
-  attribs[i++] = GLX_CONTEXT_CORE_PROFILE_BIT_ARB;
-
-  GLXContext ctx = glXCreateContextAttribsProc(dpy, fbcfg[0], m_ReplayCtx.ctx, true, attribs);
-
-  if(ctx == NULL)
-  {
-    XCloseDisplay(dpy);
-    RDCERR("Couldn't create 4.3 context - RenderDoc requires OpenGL 4.3 availability");
-    return 0;
-  }
-
-  GLXDrawable wnd = 0;
-
-  if(draw == 0)
-  {
-    // don't care about pbuffer properties as we won't render directly to this
-    int pbAttribs[] = {GLX_PBUFFER_WIDTH, 32, GLX_PBUFFER_HEIGHT, 32, 0};
-
-    wnd = glXCreatePbufferProc(dpy, fbcfg[0], pbAttribs);
-  }
-  else
-  {
-    wnd = glXCreateWindow(dpy, fbcfg[0], draw, 0);
-  }
-
-  XFree(fbcfg);
-
-  OutputWindow win;
-  win.dpy = dpy;
-  win.ctx = ctx;
-  win.wnd = wnd;
-
-  glXQueryDrawableProc(dpy, wnd, GLX_WIDTH, (unsigned int *)&win.width);
-  glXQueryDrawableProc(dpy, wnd, GLX_HEIGHT, (unsigned int *)&win.height);
-
-  MakeCurrentReplayContext(&win);
-
-  InitOutputWindow(win);
-  CreateOutputWindowBackbuffer(win, depth);
-
-  uint64_t ret = m_OutputWindowID++;
-
-  m_OutputWindows[ret] = win;
-
-  return ret;
-}
-
-void GLReplay::DestroyOutputWindow(uint64_t id)
-{
-  auto it = m_OutputWindows.find(id);
-  if(id == 0 || it == m_OutputWindows.end())
-    return;
-
-  OutputWindow &outw = it->second;
-
-  MakeCurrentReplayContext(&outw);
-
-  WrappedOpenGL &gl = *m_pDriver;
-  gl.glDeleteFramebuffers(1, &outw.BlitData.readFBO);
-
-  glXMakeContextCurrentProc(outw.dpy, 0L, 0L, NULL);
-  glXDestroyCtxProc(outw.dpy, outw.ctx);
-
-  m_OutputWindows.erase(it);
-}
-
-void GLReplay::GetOutputWindowDimensions(uint64_t id, int32_t &w, int32_t &h)
-{
-  if(id == 0 || m_OutputWindows.find(id) == m_OutputWindows.end())
-    return;
-
-  OutputWindow &outw = m_OutputWindows[id];
-
-  glXQueryDrawableProc(outw.dpy, outw.wnd, GLX_WIDTH, (unsigned int *)&w);
-  glXQueryDrawableProc(outw.dpy, outw.wnd, GLX_HEIGHT, (unsigned int *)&h);
-}
-
-bool GLReplay::IsOutputWindowVisible(uint64_t id)
-{
-  if(id == 0 || m_OutputWindows.find(id) == m_OutputWindows.end())
-    return false;
-
-  GLNOTIMP("Optimisation missing - output window always returning true");
-
-  return true;
-}
-
-const GLHookSet &GetRealGLFunctions();
-
-ReplayCreateStatus GL_CreateReplayDevice(const char *logfile, IReplayDriver **driver)
+ReplayStatus GL_CreateReplayDevice(RDCFile *rdc, IReplayDriver **driver)
 {
   RDCDEBUG("Creating an OpenGL replay device");
 
@@ -268,7 +75,7 @@ ReplayCreateStatus GL_CreateReplayDevice(const char *logfile, IReplayDriver **dr
       RDCERR(
           "Couldn't find required entry points, glXGetProcAddress glXDestroyContext "
           "glXSwapBuffers");
-      return eReplayCreate_APIInitFailed;
+      return ReplayStatus::APIInitFailed;
     }
 
     glXCreateContextAttribsProc = (PFNGLXCREATECONTEXTATTRIBSARBPROC)glXGetFuncProc(
@@ -280,20 +87,49 @@ ReplayCreateStatus GL_CreateReplayDevice(const char *logfile, IReplayDriver **dr
     {
       RDCERR(
           "Couldn't get glx function addresses, glXCreateContextAttribsARB glXMakeContextCurrent");
-      return eReplayCreate_APIInitFailed;
+      return ReplayStatus::APIInitFailed;
     }
   }
 
   GLInitParams initParams;
-  RDCDriver driverType = RDC_OpenGL;
-  string driverName = "OpenGL";
-  uint64_t machineIdent = 0;
-  if(logfile)
+  uint64_t ver = GLInitParams::CurrentVersion;
+
+  // if we have an RDCFile, open the frame capture section and serialise the init params.
+  // if not, we're creating a proxy-capable device so use default-initialised init params.
+  if(rdc)
   {
-    auto status = RenderDoc::Inst().FillInitParams(logfile, driverType, driverName, machineIdent,
-                                                   (RDCInitParams *)&initParams);
-    if(status != eReplayCreate_Success)
-      return status;
+    int sectionIdx = rdc->SectionIndex(SectionType::FrameCapture);
+
+    if(sectionIdx < 0)
+      return ReplayStatus::InternalError;
+
+    ver = rdc->GetSectionProperties(sectionIdx).version;
+
+    if(!GLInitParams::IsSupportedVersion(ver))
+    {
+      RDCERR("Incompatible OpenGL serialise version %llu", ver);
+      return ReplayStatus::APIIncompatibleVersion;
+    }
+
+    StreamReader *reader = rdc->ReadSection(sectionIdx);
+
+    ReadSerialiser ser(reader, Ownership::Stream);
+
+    SystemChunk chunk = ser.ReadChunk<SystemChunk>();
+
+    if(chunk != SystemChunk::DriverInit)
+    {
+      RDCERR("Expected to get a DriverInit chunk, instead got %u", chunk);
+      return ReplayStatus::FileCorrupted;
+    }
+
+    SERIALISE_ELEMENT(initParams);
+
+    if(ser.IsErrored())
+    {
+      RDCERR("Failed reading driver init params.");
+      return ReplayStatus::FileIOFailed;
+    }
   }
 
   int attribs[64] = {0};
@@ -302,9 +138,11 @@ ReplayCreateStatus GL_CreateReplayDevice(const char *logfile, IReplayDriver **dr
   GLReplay::PreContextInitCounters();
 
   attribs[i++] = GLX_CONTEXT_MAJOR_VERSION_ARB;
-  attribs[i++] = 4;
+  int &major = attribs[i];
+  attribs[i++] = 0;
   attribs[i++] = GLX_CONTEXT_MINOR_VERSION_ARB;
-  attribs[i++] = 3;
+  int &minor = attribs[i];
+  attribs[i++] = 0;
   attribs[i++] = GLX_CONTEXT_FLAGS_ARB;
 #if ENABLED(RDOC_DEVEL)
   attribs[i++] = GLX_CONTEXT_DEBUG_BIT_ARB;
@@ -314,12 +152,12 @@ ReplayCreateStatus GL_CreateReplayDevice(const char *logfile, IReplayDriver **dr
   attribs[i++] = GLX_CONTEXT_PROFILE_MASK_ARB;
   attribs[i++] = GLX_CONTEXT_CORE_PROFILE_BIT_ARB;
 
-  Display *dpy = XOpenDisplay(NULL);
+  Display *dpy = RenderDoc::Inst().GetGlobalEnvironment().xlibDisplay;
 
   if(dpy == NULL)
   {
     RDCERR("Couldn't open default X display");
-    return eReplayCreate_APIInitFailed;
+    return ReplayStatus::APIInitFailed;
   }
 
   // don't need to care about the fb config as we won't be using the default framebuffer
@@ -330,22 +168,50 @@ ReplayCreateStatus GL_CreateReplayDevice(const char *logfile, IReplayDriver **dr
 
   if(fbcfg == NULL)
   {
-    XCloseDisplay(dpy);
     GLReplay::PostContextShutdownCounters();
     RDCERR("Couldn't choose default framebuffer config");
-    return eReplayCreate_APIInitFailed;
+    return ReplayStatus::APIInitFailed;
   }
 
-  GLXContext ctx = glXCreateContextAttribsProc(dpy, fbcfg[0], 0, true, attribs);
+  GLXContext ctx = NULL;
 
-  if(ctx == NULL)
+  // try to create all versions from 4.5 down to 3.2 in order to get the
+  // highest versioned context we can
+  struct
+  {
+    int major;
+    int minor;
+  } versions[] = {
+      {4, 5}, {4, 4}, {4, 3}, {4, 2}, {4, 1}, {4, 0}, {3, 3}, {3, 2},
+  };
+
+  {
+    X11ErrorHandler prev = XSetErrorHandler(&NonFatalX11ErrorHandler);
+
+    for(size_t v = 0; v < ARRAY_COUNT(versions); v++)
+    {
+      X11ErrorSeen = false;
+
+      major = versions[v].major;
+      minor = versions[v].minor;
+      ctx = glXCreateContextAttribsProc(dpy, fbcfg[0], 0, true, attribs);
+
+      if(ctx && !X11ErrorSeen)
+        break;
+    }
+
+    XSetErrorHandler(prev);
+  }
+
+  if(ctx == NULL || X11ErrorSeen)
   {
     XFree(fbcfg);
-    XCloseDisplay(dpy);
     GLReplay::PostContextShutdownCounters();
-    RDCERR("Couldn't create 4.3 context - RenderDoc requires OpenGL 4.3 availability");
-    return eReplayCreate_APIHardwareUnsupported;
+    RDCERR("Couldn't create 3.2 context - RenderDoc requires OpenGL 3.2 availability");
+    return ReplayStatus::APIHardwareUnsupported;
   }
+
+  GLCoreVersion = major * 10 + minor;
 
   // don't care about pbuffer properties for same reason as backbuffer
   int pbAttribs[] = {GLX_PBUFFER_WIDTH, 32, GLX_PBUFFER_HEIGHT, 32, 0};
@@ -361,10 +227,9 @@ ReplayCreateStatus GL_CreateReplayDevice(const char *logfile, IReplayDriver **dr
     glXDestroyPbufferProc(dpy, pbuffer);
     glXDestroyCtxProc(dpy, ctx);
     XFree(fbcfg);
-    XCloseDisplay(dpy);
     GLReplay::PostContextShutdownCounters();
     RDCERR("Couldn't make pbuffer & context current");
-    return eReplayCreate_APIInitFailed;
+    return ReplayStatus::APIInitFailed;
   }
 
   PFNGLGETINTEGERVPROC getInt =
@@ -380,68 +245,56 @@ ReplayCreateStatus GL_CreateReplayDevice(const char *logfile, IReplayDriver **dr
     glXDestroyPbufferProc(dpy, pbuffer);
     glXDestroyCtxProc(dpy, ctx);
     XFree(fbcfg);
-    XCloseDisplay(dpy);
     GLReplay::PostContextShutdownCounters();
-    return eReplayCreate_APIInitFailed;
+    return ReplayStatus::APIInitFailed;
   }
-  else
+
+  const GLHookSet &real = GetRealGLFunctions();
+
+  bool missingExt = CheckReplayContext(getStr, getInt, getStri);
+
+  if(missingExt)
   {
-    // eventually we want to emulate EXT_dsa on replay if it isn't present, but for
-    // now we just require it.
-    bool dsa = false;
-    bool bufstorage = false;
+    exit(0);
+    glXDestroyPbufferProc(dpy, pbuffer);
+    glXDestroyCtxProc(dpy, ctx);
+    XFree(fbcfg);
+    GLReplay::PostContextShutdownCounters();
+    return ReplayStatus::APIHardwareUnsupported;
+  }
 
-    if(getStr)
-      RDCLOG("Running GL replay on: %s / %s / %s", getStr(eGL_VENDOR), getStr(eGL_RENDERER),
-             getStr(eGL_VERSION));
+  bool extensionsValidated = ValidateFunctionPointers(real);
 
-    GLint numExts = 0;
-    getInt(eGL_NUM_EXTENSIONS, &numExts);
-    for(GLint e = 0; e < numExts; e++)
+  if(!extensionsValidated)
+  {
+    glXDestroyPbufferProc(dpy, pbuffer);
+    glXDestroyCtxProc(dpy, ctx);
+    XFree(fbcfg);
+    GLReplay::PostContextShutdownCounters();
+    return ReplayStatus::APIHardwareUnsupported;
+  }
+
+  if(getStr)
+  {
+    const char *vendor = (const char *)getStr(eGL_VENDOR);
+    const char *version = (const char *)getStr(eGL_VERSION);
+
+    if(strstr(vendor, "NVIDIA") && strstr(version, "378."))
     {
-      const char *ext = (const char *)getStri(eGL_EXTENSIONS, (GLuint)e);
-
-      RDCLOG("Extension % 3d: %s", e, ext);
-
-      if(!strcmp(ext, "GL_EXT_direct_state_access"))
-        dsa = true;
-      if(!strcmp(ext, "GL_ARB_buffer_storage"))
-        bufstorage = true;
-    }
-
-    if(!dsa)
-      RDCERR(
-          "RenderDoc requires EXT_direct_state_access availability, and it is not reported. Try "
-          "updating your drivers.");
-
-    if(!bufstorage)
-      RDCERR(
-          "RenderDoc requires ARB_buffer_storage availability, and it is not reported. Try "
-          "updating your drivers.");
-
-    if(!dsa || !bufstorage)
-    {
-      glXDestroyPbufferProc(dpy, pbuffer);
-      glXDestroyCtxProc(dpy, ctx);
-      XFree(fbcfg);
-      XCloseDisplay(dpy);
-      GLReplay::PostContextShutdownCounters();
-      return eReplayCreate_APIHardwareUnsupported;
+      RDCLOG("There is a known crash issue on NVIDIA 378.x series drivers.");
+      RDCLOG(
+          "If you hit a crash after this message, try setting __GL_THREADED_OPTIMIZATIONS=0 or "
+          "upgrade to 381.x or newer.");
+      RDCLOG("See https://github.com/baldurk/renderdoc/issues/609 for more information.");
     }
   }
 
-  WrappedOpenGL *gl = new WrappedOpenGL(logfile, GetRealGLFunctions());
-  gl->Initialise(initParams);
-
-  if(gl->GetSerialiser()->HasError())
-  {
-    delete gl;
-    return eReplayCreate_FileIOFailed;
-  }
+  WrappedOpenGL *gl = new WrappedOpenGL(real, GetGLPlatform());
+  gl->Initialise(initParams, ver);
 
   RDCLOG("Created device.");
   GLReplay *replay = gl->GetReplay();
-  replay->SetProxy(logfile == NULL);
+  replay->SetProxy(rdc == NULL);
   GLWindowingData data;
   data.dpy = dpy;
   data.ctx = ctx;
@@ -449,5 +302,5 @@ ReplayCreateStatus GL_CreateReplayDevice(const char *logfile, IReplayDriver **dr
   replay->SetReplayData(data);
 
   *driver = (IReplayDriver *)replay;
-  return eReplayCreate_Success;
+  return ReplayStatus::Succeeded;
 }

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -34,7 +34,7 @@ BufferFormatSpecifier::BufferFormatSpecifier(QWidget *parent)
 
   QObject::connect(ui->toggleHelp, &QPushButton::clicked, this, &BufferFormatSpecifier::toggleHelp);
 
-  setErrors("");
+  setErrors(QString());
 
   ui->formatText->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
 }
@@ -52,6 +52,11 @@ void BufferFormatSpecifier::toggleHelp()
     showHelp(true);
   else
     showHelp(false);
+}
+
+void BufferFormatSpecifier::setFormat(const QString &format)
+{
+  ui->formatText->setText(format);
 }
 
 void BufferFormatSpecifier::setErrors(const QString &errors)
@@ -81,6 +86,6 @@ void BufferFormatSpecifier::showHelp(bool help)
 
 void BufferFormatSpecifier::on_apply_clicked()
 {
-  setErrors("");
+  setErrors(QString());
   emit processFormat(ui->formatText->toPlainText());
 }

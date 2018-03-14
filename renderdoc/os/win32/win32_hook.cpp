@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -28,11 +28,12 @@
 
 #include <tlhelp32.h>
 #include <algorithm>
+#include <functional>
 #include <map>
 #include <vector>
 #include "common/threading.h"
 #include "os/os_specific.h"
-#include "serialise/string_utils.h"
+#include "strings/string_utils.h"
 
 #define VERBOSE_DEBUG_HOOK OPTION_OFF
 
@@ -105,6 +106,9 @@ struct DllHookset
 {
   DllHookset() : module(NULL), OrdinalBase(0) {}
   HMODULE module;
+  // if we have multiple copies of the dll loaded (unlikely), the other module handles will be
+  // stored here
+  vector<HMODULE> altmodules;
   vector<FunctionHook> FunctionHooks;
   DWORD OrdinalBase;
   vector<string> OrdinalNames;
@@ -208,19 +212,56 @@ struct CachedHookData
           it->second.module = module;
           it->second.FetchOrdinalNames();
         }
-        else
+        else if(it->second.module != module)
         {
-          it->second.module = module;
+          // if it's already in altmodules, bail
+          bool already = false;
+
+          for(size_t i = 0; i < it->second.altmodules.size(); i++)
+          {
+            if(it->second.altmodules[i] == module)
+            {
+              already = true;
+              break;
+            }
+          }
+
+          if(already)
+            break;
+
+          // check if the previous module is still valid
+          SetLastError(0);
+          char filename[MAX_PATH] = {};
+          GetModuleFileNameA(it->second.module, filename, MAX_PATH - 1);
+          DWORD err = GetLastError();
+          char *slash = strrchr(filename, L'\\');
+
+          string basename = slash ? strlower(string(slash + 1)) : "";
+
+          if(err == 0 && basename == it->first)
+          {
+            // previous module is still loaded, add this to the alt modules list
+            it->second.altmodules.push_back(module);
+          }
+          else
+          {
+            // previous module is no longer loaded or there's a new file there now, add this as the
+            // new location
+            it->second.module = module;
+          }
         }
       }
     }
 
     // for safety (and because we don't need to), ignore these modules
     if(!_stricmp(modName, "kernel32.dll") || !_stricmp(modName, "powrprof.dll") ||
-       !_stricmp(modName, "opengl32.dll") || !_stricmp(modName, "gdi32.dll") ||
-       strstr(lowername, "msvcr") == lowername || strstr(lowername, "msvcp") == lowername ||
-       strstr(lowername, "nv-vk") == lowername || strstr(lowername, "amdvlk") == lowername ||
-       strstr(lowername, "igvk") == lowername || strstr(lowername, "nvopencl") == lowername)
+       !_stricmp(modName, "CoreMessaging.dll") || !_stricmp(modName, "opengl32.dll") ||
+       !_stricmp(modName, "gdi32.dll") || !_stricmp(modName, "nvoglv32.dll") ||
+       !_stricmp(modName, "nvoglv64.dll") || !_stricmp(modName, "nvcuda.dll") ||
+       strstr(lowername, "cudart") == lowername || strstr(lowername, "msvcr") == lowername ||
+       strstr(lowername, "msvcp") == lowername || strstr(lowername, "nv-vk") == lowername ||
+       strstr(lowername, "amdvlk") == lowername || strstr(lowername, "igvk") == lowername ||
+       strstr(lowername, "nvopencl") == lowername || strstr(lowername, "nvapi") == lowername)
       return;
 
     byte *baseAddress = (byte *)module;
@@ -444,7 +485,13 @@ struct CachedHookData
 
 static CachedHookData *s_HookData = NULL;
 
-static void HookAllModules()
+#ifdef UNICODE
+#undef MODULEENTRY32
+#undef Module32First
+#undef Module32Next
+#endif
+
+static void ForAllModules(std::function<void(const MODULEENTRY32 &me32)> callback)
 {
   HANDLE hModuleSnap = INVALID_HANDLE_VALUE;
 
@@ -474,12 +521,6 @@ static void HookAllModules()
     return;
   }
 
-#ifdef UNICODE
-#undef MODULEENTRY32
-#undef Module32First
-#undef Module32Next
-#endif
-
   MODULEENTRY32 me32;
   RDCEraseEl(me32);
   me32.dwSize = sizeof(MODULEENTRY32);
@@ -499,10 +540,16 @@ static void HookAllModules()
 
   do
   {
-    s_HookData->ApplyHooks(me32.szModule, me32.hModule);
+    callback(me32);
   } while(ret == 0 && Module32Next(hModuleSnap, &me32));
 
   CloseHandle(hModuleSnap);
+}
+
+static void HookAllModules()
+{
+  ForAllModules(
+      [](const MODULEENTRY32 &me32) { s_HookData->ApplyHooks(me32.szModule, me32.hModule); });
 }
 
 HMODULE WINAPI Hooked_LoadLibraryExA(LPCSTR lpLibFileName, HANDLE fileHandle, DWORD flags)
@@ -523,7 +570,7 @@ HMODULE WINAPI Hooked_LoadLibraryExA(LPCSTR lpLibFileName, HANDLE fileHandle, DW
 
   DWORD err = GetLastError();
 
-  if(dohook)
+  if(dohook && mod)
     HookAllModules();
 
   SetLastError(err);
@@ -549,7 +596,7 @@ HMODULE WINAPI Hooked_LoadLibraryExW(LPCWSTR lpLibFileName, HANDLE fileHandle, D
 
   DWORD err = GetLastError();
 
-  if(dohook)
+  if(dohook && mod)
     HookAllModules();
 
   SetLastError(err);
@@ -592,7 +639,15 @@ FARPROC WINAPI Hooked_GetProcAddress(HMODULE mod, LPCSTR func)
     if(it->second.module == NULL)
       it->second.module = GetModuleHandleA(it->first.c_str());
 
-    if(mod == it->second.module)
+    bool match = (mod == it->second.module);
+
+    if(!match && !it->second.altmodules.empty())
+    {
+      for(size_t i = 0; !match && i < it->second.altmodules.size(); i++)
+        match = (mod == it->second.altmodules[i]);
+    }
+
+    if(match)
     {
 #if ENABLED(VERBOSE_DEBUG_HOOK)
       RDCDEBUG("Located module %s", it->first.c_str());
@@ -680,6 +735,23 @@ void Win32_IAT_BeginHooks()
   s_HookData->DllHooks["kernel32.dll"].FunctionHooks.push_back(
       FunctionHook("GetProcAddress", NULL, &Hooked_GetProcAddress));
 
+  for(const char *apiset :
+      {"api-ms-win-core-libraryloader-l1-1-0.dll", "api-ms-win-core-libraryloader-l1-1-1.dll",
+       "api-ms-win-core-libraryloader-l1-1-2.dll", "api-ms-win-core-libraryloader-l1-2-0.dll",
+       "api-ms-win-core-libraryloader-l1-2-1.dll"})
+  {
+    s_HookData->DllHooks[apiset].FunctionHooks.push_back(
+        FunctionHook("LoadLibraryA", NULL, &Hooked_LoadLibraryA));
+    s_HookData->DllHooks[apiset].FunctionHooks.push_back(
+        FunctionHook("LoadLibraryW", NULL, &Hooked_LoadLibraryW));
+    s_HookData->DllHooks[apiset].FunctionHooks.push_back(
+        FunctionHook("LoadLibraryExA", NULL, &Hooked_LoadLibraryExA));
+    s_HookData->DllHooks[apiset].FunctionHooks.push_back(
+        FunctionHook("LoadLibraryExW", NULL, &Hooked_LoadLibraryExW));
+    s_HookData->DllHooks[apiset].FunctionHooks.push_back(
+        FunctionHook("GetProcAddress", NULL, &Hooked_GetProcAddress));
+  }
+
   GetModuleHandleEx(
       GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
       (LPCTSTR)&s_HookData, &s_HookData->ownmodule);
@@ -759,4 +831,14 @@ bool Win32_IAT_Hook(void **orig_function_ptr, const char *module_name, const cha
   s_HookData->DllHooks[strlower(string(module_name))].FunctionHooks.push_back(
       FunctionHook(function, orig_function_ptr, destination_function_ptr));
   return true;
+}
+
+bool Win32_HookDetect(const char *identifier)
+{
+  bool ret = false;
+  ForAllModules([&ret, identifier](const MODULEENTRY32 &me32) {
+    if(GetProcAddress(me32.hModule, identifier) != NULL)
+      ret = true;
+  });
+  return ret;
 }

@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -25,10 +25,9 @@
 #include "vk_core.h"
 #include "vk_replay.h"
 
-void VulkanReplay::OutputWindow::SetWindowHandle(WindowingSystem system, void *data)
+void VulkanReplay::OutputWindow::SetWindowHandle(WindowingData window)
 {
   RDCUNIMPLEMENTED("SetWindowHandle");
-  m_WindowSystem = system;
 }
 
 void VulkanReplay::OutputWindow::CreateSurface(VkInstance inst)
@@ -42,3 +41,13 @@ void VulkanReplay::GetOutputWindowDimensions(uint64_t id, int32_t &w, int32_t &h
 }
 
 const char *VulkanLibraryName = "libvulkan.so";
+
+bool VulkanReplay::CheckVulkanLayer(VulkanLayerFlags &flags, std::vector<std::string> &myJSONs,
+                                    std::vector<std::string> &otherJSONs)
+{
+  return false;
+}
+
+void VulkanReplay::InstallVulkanLayer(bool systemLevel)
+{
+}

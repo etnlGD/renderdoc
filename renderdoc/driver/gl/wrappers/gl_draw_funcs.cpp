@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -25,52 +25,94 @@
 
 #include "../gl_driver.h"
 #include "common/common.h"
-#include "serialise/string_utils.h"
+#include "strings/string_utils.h"
 
-bool WrappedOpenGL::Serialise_glDispatchCompute(GLuint num_groups_x, GLuint num_groups_y,
-                                                GLuint num_groups_z)
+enum GLbarrierbitfield
 {
-  SERIALISE_ELEMENT(uint32_t, X, num_groups_x);
-  SERIALISE_ELEMENT(uint32_t, Y, num_groups_y);
-  SERIALISE_ELEMENT(uint32_t, Z, num_groups_z);
+};
 
-  if(m_State <= EXECUTING)
+DECLARE_REFLECTION_ENUM(GLbarrierbitfield);
+
+template <>
+std::string DoStringise(const GLbarrierbitfield &el)
+{
+  RDCCOMPILE_ASSERT(sizeof(GLbarrierbitfield) == sizeof(GLbitfield) &&
+                        sizeof(GLbarrierbitfield) == sizeof(uint32_t),
+                    "Fake bitfield enum must be uint32_t sized");
+
+  BEGIN_BITFIELD_STRINGISE(GLbarrierbitfield);
   {
-    m_Real.glDispatchCompute(X, Y, Z);
+    STRINGISE_BITFIELD_VALUE_NAMED((GLbarrierbitfield)GL_ALL_BARRIER_BITS, "GL_ALL_BARRIER_BITS");
+
+    STRINGISE_BITFIELD_BIT(GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT);
+    STRINGISE_BITFIELD_BIT(GL_ELEMENT_ARRAY_BARRIER_BIT);
+    STRINGISE_BITFIELD_BIT(GL_UNIFORM_BARRIER_BIT);
+    STRINGISE_BITFIELD_BIT(GL_TEXTURE_FETCH_BARRIER_BIT);
+    STRINGISE_BITFIELD_BIT(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    STRINGISE_BITFIELD_BIT(GL_COMMAND_BARRIER_BIT);
+    STRINGISE_BITFIELD_BIT(GL_PIXEL_BUFFER_BARRIER_BIT);
+    STRINGISE_BITFIELD_BIT(GL_TEXTURE_UPDATE_BARRIER_BIT);
+    STRINGISE_BITFIELD_BIT(GL_BUFFER_UPDATE_BARRIER_BIT);
+    STRINGISE_BITFIELD_BIT(GL_FRAMEBUFFER_BARRIER_BIT);
+    STRINGISE_BITFIELD_BIT(GL_TRANSFORM_FEEDBACK_BARRIER_BIT);
+    STRINGISE_BITFIELD_BIT(GL_ATOMIC_COUNTER_BARRIER_BIT);
+    STRINGISE_BITFIELD_BIT(GL_SHADER_STORAGE_BARRIER_BIT);
   }
+  END_BITFIELD_STRINGISE();
+}
 
-  const string desc = m_pSerialiser->GetDebugStr();
+static constexpr uint32_t GetIdxSize(GLenum idxtype)
+{
+  return (idxtype == eGL_UNSIGNED_BYTE ? 1 : (idxtype == eGL_UNSIGNED_SHORT ? 2 : 4));
+}
 
-  Serialise_DebugMessages();
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDispatchCompute(SerialiserType &ser, GLuint num_groups_x,
+                                                GLuint num_groups_y, GLuint num_groups_z)
+{
+  SERIALISE_ELEMENT(num_groups_x);
+  SERIALISE_ELEMENT(num_groups_y);
+  SERIALISE_ELEMENT(num_groups_z);
 
-  if(m_State == READING)
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    AddEvent(desc);
-    string name =
-        "glDispatchCompute(" + ToStr::Get(X) + ", " + ToStr::Get(Y) + ", " + ToStr::Get(Z) + ")";
+    m_Real.glDispatchCompute(num_groups_x, num_groups_y, num_groups_z);
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.flags |= eDraw_Dispatch;
+    if(IsLoading(m_State))
+    {
+      AddEvent();
 
-    draw.dispatchDimension[0] = X;
-    draw.dispatchDimension[1] = Y;
-    draw.dispatchDimension[2] = Z;
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%u, %u, %u)", ToStr(gl_CurChunk).c_str(), num_groups_x,
+                                    num_groups_y, num_groups_z);
+      draw.flags |= DrawFlags::Dispatch;
 
-    if(X == 0)
-      AddDebugMessage(eDbgCategory_Execution, eDbgSeverity_Medium, eDbgSource_IncorrectAPIUse,
-                      "Dispatch call has Num Groups X=0. This will do nothing, which is unusual "
-                      "for a non-indirect Dispatch. Did you mean X=1?");
-    if(Y == 0)
-      AddDebugMessage(eDbgCategory_Execution, eDbgSeverity_Medium, eDbgSource_IncorrectAPIUse,
-                      "Dispatch call has Num Groups Y=0. This will do nothing, which is unusual "
-                      "for a non-indirect Dispatch. Did you mean Y=1?");
-    if(Z == 0)
-      AddDebugMessage(eDbgCategory_Execution, eDbgSeverity_Medium, eDbgSource_IncorrectAPIUse,
-                      "Dispatch call has Num Groups Z=0. This will do nothing, which is unusual "
-                      "for a non-indirect Dispatch. Did you mean Z=1?");
+      draw.dispatchDimension[0] = num_groups_x;
+      draw.dispatchDimension[1] = num_groups_y;
+      draw.dispatchDimension[2] = num_groups_z;
 
-    AddDrawcall(draw, true);
+      if(num_groups_x == 0)
+        AddDebugMessage(MessageCategory::Execution, MessageSeverity::Medium,
+                        MessageSource::IncorrectAPIUse,
+                        "Dispatch call has num_groups_x=0. This will do nothing, which is unusual "
+                        "for a non-indirect Dispatch. Did you mean X=1?");
+      if(num_groups_x == 0)
+        AddDebugMessage(MessageCategory::Execution, MessageSeverity::Medium,
+                        MessageSource::IncorrectAPIUse,
+                        "Dispatch call has num_groups_x=0. This will do nothing, which is unusual "
+                        "for a non-indirect Dispatch. Did you mean Y=1?");
+      if(num_groups_z == 0)
+        AddDebugMessage(MessageCategory::Execution, MessageSeverity::Medium,
+                        MessageSource::IncorrectAPIUse,
+                        "Dispatch call has num_groups_z=0. This will do nothing, which is unusual "
+                        "for a non-indirect Dispatch. Did you mean Z=1?");
+
+      AddDrawcall(draw, true);
+    }
   }
 
   return true;
@@ -80,91 +122,101 @@ void WrappedOpenGL::glDispatchCompute(GLuint num_groups_x, GLuint num_groups_y, 
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDispatchCompute(num_groups_x, num_groups_y, num_groups_z);
+  SERIALISE_TIME_CALL(m_Real.glDispatchCompute(num_groups_x, num_groups_y, num_groups_z));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DISPATCH_COMPUTE);
-    Serialise_glDispatchCompute(num_groups_x, num_groups_y, num_groups_z);
+    USE_SCRATCH_SERIALISER();
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDispatchCompute(ser, num_groups_x, num_groups_y, num_groups_z);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glDispatchComputeGroupSizeARB(GLuint num_groups_x, GLuint num_groups_y,
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDispatchComputeGroupSizeARB(SerialiserType &ser,
+                                                            GLuint num_groups_x, GLuint num_groups_y,
                                                             GLuint num_groups_z, GLuint group_size_x,
                                                             GLuint group_size_y, GLuint group_size_z)
 {
-  SERIALISE_ELEMENT(uint32_t, X, num_groups_x);
-  SERIALISE_ELEMENT(uint32_t, Y, num_groups_y);
-  SERIALISE_ELEMENT(uint32_t, Z, num_groups_z);
-  SERIALISE_ELEMENT(uint32_t, sX, group_size_x);
-  SERIALISE_ELEMENT(uint32_t, sY, group_size_y);
-  SERIALISE_ELEMENT(uint32_t, sZ, group_size_z);
+  SERIALISE_ELEMENT(num_groups_x);
+  SERIALISE_ELEMENT(num_groups_y);
+  SERIALISE_ELEMENT(num_groups_z);
+  SERIALISE_ELEMENT(group_size_x);
+  SERIALISE_ELEMENT(group_size_y);
+  SERIALISE_ELEMENT(group_size_z);
 
-  if(m_State <= EXECUTING)
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glDispatchComputeGroupSizeARB(X, Y, Z, sX, sY, sZ);
-  }
+    m_Real.glDispatchComputeGroupSizeARB(num_groups_x, num_groups_y, num_groups_z, group_size_x,
+                                         group_size_y, group_size_z);
 
-  const string desc = m_pSerialiser->GetDebugStr();
+    if(IsLoading(m_State))
+    {
+      AddEvent();
 
-  Serialise_DebugMessages();
+      DrawcallDescription draw;
+      draw.name =
+          StringFormat::Fmt("%s(%u, %u, %u,  %u, %u, %u)", ToStr(gl_CurChunk).c_str(), num_groups_x,
+                            num_groups_y, num_groups_z, group_size_x, group_size_y, group_size_z);
+      draw.flags |= DrawFlags::Dispatch;
 
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-    string name = "glDispatchComputeGroupSizeARB(" + ToStr::Get(X) + ", " + ToStr::Get(Y) + ", " +
-                  ToStr::Get(Z) + ", " + ToStr::Get(sX) + ", " + ToStr::Get(sY) + ", " +
-                  ToStr::Get(sZ) + ")";
+      draw.dispatchDimension[0] = num_groups_x;
+      draw.dispatchDimension[1] = num_groups_y;
+      draw.dispatchDimension[2] = num_groups_z;
+      draw.dispatchThreadsDimension[0] = group_size_x;
+      draw.dispatchThreadsDimension[1] = group_size_y;
+      draw.dispatchThreadsDimension[2] = group_size_z;
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.flags |= eDraw_Dispatch;
+      if(num_groups_x == 0)
+        AddDebugMessage(MessageCategory::Execution, MessageSeverity::Medium,
+                        MessageSource::IncorrectAPIUse,
+                        "Dispatch call has num_groups_x=0. This will do nothing, which is unusual "
+                        "for a non-indirect Dispatch. Did you mean X=1?");
+      if(num_groups_y == 0)
+        AddDebugMessage(MessageCategory::Execution, MessageSeverity::Medium,
+                        MessageSource::IncorrectAPIUse,
+                        "Dispatch call has num_groups_y=0. This will do nothing, which is unusual "
+                        "for a non-indirect Dispatch. Did you mean Y=1?");
+      if(num_groups_z == 0)
+        AddDebugMessage(MessageCategory::Execution, MessageSeverity::Medium,
+                        MessageSource::IncorrectAPIUse,
+                        "Dispatch call has num_groups_z=0. This will do nothing, which is unusual "
+                        "for a non-indirect Dispatch. Did you mean Z=1?");
 
-    draw.dispatchDimension[0] = X;
-    draw.dispatchDimension[1] = Y;
-    draw.dispatchDimension[2] = Z;
-    draw.dispatchThreadsDimension[0] = sX;
-    draw.dispatchThreadsDimension[1] = sY;
-    draw.dispatchThreadsDimension[2] = sZ;
+      if(group_size_x == 0)
+        AddDebugMessage(MessageCategory::Execution, MessageSeverity::Medium,
+                        MessageSource::IncorrectAPIUse,
+                        "Dispatch call has group_size_x=0. This will do nothing, which is unusual "
+                        "for a non-indirect Dispatch. Did you mean X=1?");
+      if(group_size_y == 0)
+        AddDebugMessage(MessageCategory::Execution, MessageSeverity::Medium,
+                        MessageSource::IncorrectAPIUse,
+                        "Dispatch call has group_size_y=0. This will do nothing, which is unusual "
+                        "for a non-indirect Dispatch. Did you mean Y=1?");
+      if(group_size_z == 0)
+        AddDebugMessage(MessageCategory::Execution, MessageSeverity::Medium,
+                        MessageSource::IncorrectAPIUse,
+                        "Dispatch call has group_size_z=0. This will do nothing, which is unusual "
+                        "for a non-indirect Dispatch. Did you mean Z=1?");
 
-    if(X == 0)
-      AddDebugMessage(eDbgCategory_Execution, eDbgSeverity_Medium, eDbgSource_IncorrectAPIUse,
-                      "Dispatch call has Num Groups X=0. This will do nothing, which is unusual "
-                      "for a non-indirect Dispatch. Did you mean X=1?");
-    if(Y == 0)
-      AddDebugMessage(eDbgCategory_Execution, eDbgSeverity_Medium, eDbgSource_IncorrectAPIUse,
-                      "Dispatch call has Num Groups Y=0. This will do nothing, which is unusual "
-                      "for a non-indirect Dispatch. Did you mean Y=1?");
-    if(Z == 0)
-      AddDebugMessage(eDbgCategory_Execution, eDbgSeverity_Medium, eDbgSource_IncorrectAPIUse,
-                      "Dispatch call has Num Groups Z=0. This will do nothing, which is unusual "
-                      "for a non-indirect Dispatch. Did you mean Z=1?");
-
-    if(sX == 0)
-      AddDebugMessage(eDbgCategory_Execution, eDbgSeverity_Medium, eDbgSource_IncorrectAPIUse,
-                      "Dispatch call has Group Size X=0. This will do nothing, which is unusual "
-                      "for a non-indirect Dispatch. Did you mean X=1?");
-    if(sY == 0)
-      AddDebugMessage(eDbgCategory_Execution, eDbgSeverity_Medium, eDbgSource_IncorrectAPIUse,
-                      "Dispatch call has Group Size Y=0. This will do nothing, which is unusual "
-                      "for a non-indirect Dispatch. Did you mean Y=1?");
-    if(sZ == 0)
-      AddDebugMessage(eDbgCategory_Execution, eDbgSeverity_Medium, eDbgSource_IncorrectAPIUse,
-                      "Dispatch call has Group Size Z=0. This will do nothing, which is unusual "
-                      "for a non-indirect Dispatch. Did you mean Z=1?");
-
-    AddDrawcall(draw, true);
+      AddDrawcall(draw, true);
+    }
   }
 
   return true;
@@ -176,66 +228,68 @@ void WrappedOpenGL::glDispatchComputeGroupSizeARB(GLuint num_groups_x, GLuint nu
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDispatchComputeGroupSizeARB(num_groups_x, num_groups_y, num_groups_z, group_size_x,
-                                       group_size_y, group_size_z);
+  SERIALISE_TIME_CALL(m_Real.glDispatchComputeGroupSizeARB(
+      num_groups_x, num_groups_y, num_groups_z, group_size_x, group_size_y, group_size_z));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DISPATCH_COMPUTE_GROUP_SIZE);
-    Serialise_glDispatchComputeGroupSizeARB(num_groups_x, num_groups_y, num_groups_z, group_size_x,
-                                            group_size_y, group_size_z);
+    USE_SCRATCH_SERIALISER();
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDispatchComputeGroupSizeARB(ser, num_groups_x, num_groups_y, num_groups_z,
+                                            group_size_x, group_size_y, group_size_z);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glDispatchComputeIndirect(GLintptr indirect)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDispatchComputeIndirect(SerialiserType &ser, GLintptr indirect)
 {
-  SERIALISE_ELEMENT(uint64_t, offs, indirect);
+  SERIALISE_ELEMENT_LOCAL(offset, (uint64_t)indirect);
 
-  if(m_State <= EXECUTING)
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glDispatchComputeIndirect((GLintptr)offs);
-  }
+    m_Real.glDispatchComputeIndirect((GLintptr)offset);
 
-  const string desc = m_pSerialiser->GetDebugStr();
+    if(IsLoading(m_State))
+    {
+      uint32_t groupSizes[3];
+      m_Real.glGetBufferSubData(eGL_DISPATCH_INDIRECT_BUFFER, (GLintptr)offset,
+                                sizeof(uint32_t) * 3, groupSizes);
 
-  Serialise_DebugMessages();
+      AddEvent();
 
-  if(m_State == READING)
-  {
-    uint32_t groupSizes[3];
-    m_Real.glGetBufferSubData(eGL_DISPATCH_INDIRECT_BUFFER, (GLintptr)offs, sizeof(uint32_t) * 3,
-                              groupSizes);
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(<%u, %u, %u>)", ToStr(gl_CurChunk).c_str(), groupSizes[0],
+                                    groupSizes[1], groupSizes[2]);
+      draw.flags |= DrawFlags::Dispatch | DrawFlags::Indirect;
 
-    AddEvent(desc);
-    string name = "glDispatchComputeIndirect(<" + ToStr::Get(groupSizes[0]) + ", " +
-                  ToStr::Get(groupSizes[1]) + ", " + ToStr::Get(groupSizes[2]) + ">)";
+      draw.dispatchDimension[0] = groupSizes[0];
+      draw.dispatchDimension[1] = groupSizes[1];
+      draw.dispatchDimension[2] = groupSizes[2];
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.flags |= eDraw_Dispatch | eDraw_Indirect;
+      AddDrawcall(draw, true);
 
-    draw.dispatchDimension[0] = groupSizes[0];
-    draw.dispatchDimension[1] = groupSizes[1];
-    draw.dispatchDimension[2] = groupSizes[2];
+      GLuint buf = 0;
+      m_Real.glGetIntegerv(eGL_DISPATCH_INDIRECT_BUFFER_BINDING, (GLint *)&buf);
 
-    AddDrawcall(draw, true);
-
-    GLuint buf = 0;
-    m_Real.glGetIntegerv(eGL_DISPATCH_INDIRECT_BUFFER_BINDING, (GLint *)&buf);
-
-    m_ResourceUses[GetResourceManager()->GetID(BufferRes(GetCtx(), buf))].push_back(
-        EventUsage(m_CurEventID, eUsage_Indirect));
+      m_ResourceUses[GetResourceManager()->GetID(BufferRes(GetCtx(), buf))].push_back(
+          EventUsage(m_CurEventID, ResourceUsage::Indirect));
+    }
   }
 
   return true;
@@ -245,81 +299,38 @@ void WrappedOpenGL::glDispatchComputeIndirect(GLintptr indirect)
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDispatchComputeIndirect(indirect);
+  SERIALISE_TIME_CALL(m_Real.glDispatchComputeIndirect(indirect));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DISPATCH_COMPUTE_INDIRECT);
-    Serialise_glDispatchComputeIndirect(indirect);
+    USE_SCRATCH_SERIALISER();
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDispatchComputeIndirect(ser, indirect);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-enum MemoryBarrierBitfield
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glMemoryBarrier(SerialiserType &ser, GLbitfield barriers)
 {
-};
+  SERIALISE_ELEMENT_TYPED(GLbarrierbitfield, barriers);
 
-template <>
-string ToStrHelper<false, MemoryBarrierBitfield>::Get(const MemoryBarrierBitfield &el)
-{
-  string ret;
+  SERIALISE_CHECK_READ_ERRORS();
 
-  if(el == (MemoryBarrierBitfield)GL_ALL_BARRIER_BITS)
-    return "GL_ALL_BARRIER_BITS";
-
-  if(el & GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT)
-    ret += " | GL_VERTEX_ATTRIB_ARRAY_BARRIER_BIT";
-  if(el & GL_ELEMENT_ARRAY_BARRIER_BIT)
-    ret += " | GL_ELEMENT_ARRAY_BARRIER_BIT";
-  if(el & GL_UNIFORM_BARRIER_BIT)
-    ret += " | GL_UNIFORM_BARRIER_BIT";
-  if(el & GL_TEXTURE_FETCH_BARRIER_BIT)
-    ret += " | GL_TEXTURE_FETCH_BARRIER_BIT";
-  if(el & GL_SHADER_IMAGE_ACCESS_BARRIER_BIT)
-    ret += " | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT";
-  if(el & GL_COMMAND_BARRIER_BIT)
-    ret += " | GL_COMMAND_BARRIER_BIT";
-  if(el & GL_PIXEL_BUFFER_BARRIER_BIT)
-    ret += " | GL_PIXEL_BUFFER_BARRIER_BIT";
-  if(el & GL_TEXTURE_UPDATE_BARRIER_BIT)
-    ret += " | GL_TEXTURE_UPDATE_BARRIER_BIT";
-  if(el & GL_BUFFER_UPDATE_BARRIER_BIT)
-    ret += " | GL_BUFFER_UPDATE_BARRIER_BIT";
-  if(el & GL_FRAMEBUFFER_BARRIER_BIT)
-    ret += " | GL_FRAMEBUFFER_BARRIER_BIT";
-  if(el & GL_TRANSFORM_FEEDBACK_BARRIER_BIT)
-    ret += " | GL_TRANSFORM_FEEDBACK_BARRIER_BIT";
-  if(el & GL_ATOMIC_COUNTER_BARRIER_BIT)
-    ret += " | GL_ATOMIC_COUNTER_BARRIER_BIT";
-  if(el & GL_SHADER_STORAGE_BARRIER_BIT)
-    ret += " | GL_SHADER_STORAGE_BARRIER_BIT";
-
-  if(!ret.empty())
-    ret = ret.substr(3);
-
-  return ret;
-}
-
-bool WrappedOpenGL::Serialise_glMemoryBarrier(GLbitfield barriers)
-{
-  MemoryBarrierBitfield b = (MemoryBarrierBitfield)barriers;
-  SERIALISE_ELEMENT(MemoryBarrierBitfield, Barriers, b);
-  RDCCOMPILE_ASSERT(sizeof(MemoryBarrierBitfield) == sizeof(uint32_t),
-                    "Fake bitfield enum must be uint32_t sized");
-
-  if(m_State <= EXECUTING)
+  if(IsReplayingAndReading())
   {
-    m_Real.glMemoryBarrier((GLbitfield)Barriers);
+    m_Real.glMemoryBarrier(barriers);
   }
 
   return true;
@@ -334,27 +345,28 @@ void WrappedOpenGL::glMemoryBarrier(GLbitfield barriers)
     PersistentMapMemoryBarrier(m_PersistentMaps);
   }
 
-  m_Real.glMemoryBarrier(barriers);
+  SERIALISE_TIME_CALL(m_Real.glMemoryBarrier(barriers));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(MEMORY_BARRIER);
-    Serialise_glMemoryBarrier(barriers);
+    USE_SCRATCH_SERIALISER();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glMemoryBarrier(ser, barriers);
 
     m_ContextRecord->AddChunk(scope.Get());
   }
 }
 
-bool WrappedOpenGL::Serialise_glMemoryBarrierByRegion(GLbitfield barriers)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glMemoryBarrierByRegion(SerialiserType &ser, GLbitfield barriers)
 {
-  MemoryBarrierBitfield b = (MemoryBarrierBitfield)barriers;
-  SERIALISE_ELEMENT(MemoryBarrierBitfield, Barriers, b);
-  RDCCOMPILE_ASSERT(sizeof(MemoryBarrierBitfield) == sizeof(uint32_t),
-                    "Fake bitfield enum must be uint32_t sized");
+  SERIALISE_ELEMENT_TYPED(GLbarrierbitfield, barriers);
 
-  if(m_State <= EXECUTING)
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glMemoryBarrierByRegion((GLbitfield)Barriers);
+    m_Real.glMemoryBarrierByRegion(barriers);
   }
 
   return true;
@@ -369,20 +381,22 @@ void WrappedOpenGL::glMemoryBarrierByRegion(GLbitfield barriers)
     PersistentMapMemoryBarrier(m_PersistentMaps);
   }
 
-  m_Real.glMemoryBarrierByRegion(barriers);
+  SERIALISE_TIME_CALL(m_Real.glMemoryBarrierByRegion(barriers));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(MEMORY_BARRIER_BY_REGION);
-    Serialise_glMemoryBarrierByRegion(barriers);
+    USE_SCRATCH_SERIALISER();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glMemoryBarrierByRegion(ser, barriers);
 
     m_ContextRecord->AddChunk(scope.Get());
   }
 }
 
-bool WrappedOpenGL::Serialise_glTextureBarrier()
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glTextureBarrier(SerialiserType &ser)
 {
-  if(m_State <= EXECUTING)
+  if(IsReplayingAndReading())
   {
     m_Real.glTextureBarrier();
   }
@@ -394,52 +408,53 @@ void WrappedOpenGL::glTextureBarrier()
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glTextureBarrier();
+  SERIALISE_TIME_CALL(m_Real.glTextureBarrier());
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(TEXTURE_BARRIER);
-    Serialise_glTextureBarrier();
+    USE_SCRATCH_SERIALISER();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glTextureBarrier(ser);
 
     m_ContextRecord->AddChunk(scope.Get());
   }
 }
 
-bool WrappedOpenGL::Serialise_glDrawTransformFeedback(GLenum mode, GLuint id)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDrawTransformFeedback(SerialiserType &ser, GLenum mode,
+                                                      GLuint xfbHandle)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(ResourceId, fid, GetResourceManager()->GetID(FeedbackRes(GetCtx(), id)));
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT_LOCAL(xfb, FeedbackRes(GetCtx(), xfbHandle));
 
-  if(m_State <= EXECUTING)
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glDrawTransformFeedback(
-        Mode, fid == ResourceId() ? 0 : GetResourceManager()->GetLiveResource(fid).name);
-  }
+    m_Real.glDrawTransformFeedback(mode, xfb.name);
 
-  const string desc = m_pSerialiser->GetDebugStr();
+    if(IsLoading(m_State))
+    {
+      AddEvent();
 
-  Serialise_DebugMessages();
+      GLNOTIMP("Not fetching feedback object count for glDrawTransformFeedback() display");
 
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-    string name = "glDrawTransformFeedback(<?>)";
+      DrawcallDescription draw;
+      draw.name = ToStr(gl_CurChunk) + "(<?>)";
+      draw.numIndices = 1;
+      draw.numInstances = 1;
+      draw.indexOffset = 0;
+      draw.vertexOffset = 0;
+      draw.instanceOffset = 0;
 
-    GLNOTIMP("Not fetching feedback object count for glDrawTransformFeedback() display");
+      draw.flags |= DrawFlags::Drawcall;
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.numIndices = 1;
-    draw.numInstances = 1;
-    draw.indexOffset = 0;
-    draw.vertexOffset = 0;
-    draw.instanceOffset = 0;
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
 
-    draw.flags |= eDraw_Drawcall;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-
-    AddDrawcall(draw, true);
+      AddDrawcall(draw, true);
+    }
   }
 
   return true;
@@ -449,63 +464,66 @@ void WrappedOpenGL::glDrawTransformFeedback(GLenum mode, GLuint id)
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDrawTransformFeedback(mode, id);
+  SERIALISE_TIME_CALL(m_Real.glDrawTransformFeedback(mode, id));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DRAW_FEEDBACK);
-    Serialise_glDrawTransformFeedback(mode, id);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDrawTransformFeedback(ser, mode, id);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glDrawTransformFeedbackInstanced(GLenum mode, GLuint id,
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDrawTransformFeedbackInstanced(SerialiserType &ser, GLenum mode,
+                                                               GLuint xfbHandle,
                                                                GLsizei instancecount)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(ResourceId, fid, GetResourceManager()->GetID(FeedbackRes(GetCtx(), id)));
-  SERIALISE_ELEMENT(uint32_t, Count, instancecount);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT_LOCAL(xfb, FeedbackRes(GetCtx(), xfbHandle));
+  SERIALISE_ELEMENT(instancecount);
 
-  if(m_State <= EXECUTING)
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glDrawTransformFeedbackInstanced(
-        Mode, fid == ResourceId() ? 0 : GetResourceManager()->GetLiveResource(fid).name, Count);
-  }
+    m_Real.glDrawTransformFeedbackInstanced(mode, xfb.name, instancecount);
 
-  const string desc = m_pSerialiser->GetDebugStr();
+    if(IsLoading(m_State))
+    {
+      AddEvent();
 
-  Serialise_DebugMessages();
+      GLNOTIMP("Not fetching feedback object count for glDrawTransformFeedbackInstanced() display");
 
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-    string name = "glDrawTransformFeedbackInstanced(<?>)";
+      DrawcallDescription draw;
+      draw.name = ToStr(gl_CurChunk) + "(<?>)";
+      draw.numIndices = 1;
+      draw.numInstances = 1;
+      draw.indexOffset = 0;
+      draw.vertexOffset = 0;
+      draw.instanceOffset = 0;
 
-    GLNOTIMP("Not fetching feedback object count for glDrawTransformFeedbackInstanced() display");
+      draw.flags |= DrawFlags::Drawcall | DrawFlags::Instanced;
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.numIndices = 1;
-    draw.numInstances = 1;
-    draw.indexOffset = 0;
-    draw.vertexOffset = 0;
-    draw.instanceOffset = 0;
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
 
-    draw.flags |= eDraw_Drawcall;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-
-    AddDrawcall(draw, true);
+      AddDrawcall(draw, true);
+    }
   }
 
   return true;
@@ -515,62 +533,65 @@ void WrappedOpenGL::glDrawTransformFeedbackInstanced(GLenum mode, GLuint id, GLs
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDrawTransformFeedbackInstanced(mode, id, instancecount);
+  SERIALISE_TIME_CALL(m_Real.glDrawTransformFeedbackInstanced(mode, id, instancecount));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DRAW_FEEDBACK_INSTANCED);
-    Serialise_glDrawTransformFeedbackInstanced(mode, id, instancecount);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDrawTransformFeedbackInstanced(ser, mode, id, instancecount);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glDrawTransformFeedbackStream(GLenum mode, GLuint id, GLuint stream)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDrawTransformFeedbackStream(SerialiserType &ser, GLenum mode,
+                                                            GLuint xfbHandle, GLuint stream)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(ResourceId, fid, GetResourceManager()->GetID(FeedbackRes(GetCtx(), id)));
-  SERIALISE_ELEMENT(uint32_t, Stream, stream);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT_LOCAL(xfb, FeedbackRes(GetCtx(), xfbHandle));
+  SERIALISE_ELEMENT(stream);
 
-  if(m_State <= EXECUTING)
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glDrawTransformFeedbackStream(
-        Mode, fid == ResourceId() ? 0 : GetResourceManager()->GetLiveResource(fid).name, Stream);
-  }
+    m_Real.glDrawTransformFeedbackStream(mode, xfb.name, stream);
 
-  const string desc = m_pSerialiser->GetDebugStr();
+    if(IsLoading(m_State))
+    {
+      AddEvent();
 
-  Serialise_DebugMessages();
+      GLNOTIMP("Not fetching feedback object count for glDrawTransformFeedbackStream() display");
 
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-    string name = "glDrawTransformFeedbackStream(<?>)";
+      DrawcallDescription draw;
+      draw.name = ToStr(gl_CurChunk) + "(<?>)";
+      draw.numIndices = 1;
+      draw.numInstances = 1;
+      draw.indexOffset = 0;
+      draw.vertexOffset = 0;
+      draw.instanceOffset = 0;
 
-    GLNOTIMP("Not fetching feedback object count for glDrawTransformFeedbackStream() display");
+      draw.flags |= DrawFlags::Drawcall;
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.numIndices = 1;
-    draw.numInstances = 1;
-    draw.indexOffset = 0;
-    draw.vertexOffset = 0;
-    draw.instanceOffset = 0;
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
 
-    draw.flags |= eDraw_Drawcall;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-
-    AddDrawcall(draw, true);
+      AddDrawcall(draw, true);
+    }
   }
 
   return true;
@@ -580,67 +601,69 @@ void WrappedOpenGL::glDrawTransformFeedbackStream(GLenum mode, GLuint id, GLuint
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDrawTransformFeedbackStream(mode, id, stream);
+  SERIALISE_TIME_CALL(m_Real.glDrawTransformFeedbackStream(mode, id, stream));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DRAW_FEEDBACK_STREAM);
-    Serialise_glDrawTransformFeedbackStream(mode, id, stream);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDrawTransformFeedbackStream(ser, mode, id, stream);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glDrawTransformFeedbackStreamInstanced(GLenum mode, GLuint id,
-                                                                     GLuint stream,
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDrawTransformFeedbackStreamInstanced(SerialiserType &ser, GLenum mode,
+                                                                     GLuint xfbHandle, GLuint stream,
                                                                      GLsizei instancecount)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(ResourceId, fid, GetResourceManager()->GetID(FeedbackRes(GetCtx(), id)));
-  SERIALISE_ELEMENT(uint32_t, Stream, stream);
-  SERIALISE_ELEMENT(uint32_t, Count, instancecount);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT_LOCAL(xfb, FeedbackRes(GetCtx(), xfbHandle));
+  SERIALISE_ELEMENT(stream);
+  SERIALISE_ELEMENT(instancecount);
 
-  if(m_State <= EXECUTING)
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glDrawTransformFeedbackStreamInstanced(
-        Mode, fid == ResourceId() ? 0 : GetResourceManager()->GetLiveResource(fid).name, Stream,
-        Count);
-  }
+    m_Real.glDrawTransformFeedbackStreamInstanced(mode, xfb.name, stream, instancecount);
 
-  const string desc = m_pSerialiser->GetDebugStr();
+    if(IsLoading(m_State))
+    {
+      AddEvent();
 
-  Serialise_DebugMessages();
+      GLNOTIMP(
+          "Not fetching feedback object count for glDrawTransformFeedbackStreamInstanced() "
+          "display");
 
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-    string name = "glDrawTransformFeedbackStreamInstanced(<?>)";
+      DrawcallDescription draw;
+      draw.name = ToStr(gl_CurChunk) + "(<?>)";
+      draw.numIndices = 1;
+      draw.numInstances = 1;
+      draw.indexOffset = 0;
+      draw.vertexOffset = 0;
+      draw.instanceOffset = 0;
 
-    GLNOTIMP(
-        "Not fetching feedback object count for glDrawTransformFeedbackStreamInstanced() display");
+      draw.flags |= DrawFlags::Drawcall | DrawFlags::Instanced;
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.numIndices = 1;
-    draw.numInstances = 1;
-    draw.indexOffset = 0;
-    draw.vertexOffset = 0;
-    draw.instanceOffset = 0;
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
 
-    draw.flags |= eDraw_Drawcall;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-
-    AddDrawcall(draw, true);
+      AddDrawcall(draw, true);
+    }
   }
 
   return true;
@@ -651,129 +674,304 @@ void WrappedOpenGL::glDrawTransformFeedbackStreamInstanced(GLenum mode, GLuint i
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDrawTransformFeedbackStreamInstanced(mode, id, stream, instancecount);
+  SERIALISE_TIME_CALL(m_Real.glDrawTransformFeedbackStreamInstanced(mode, id, stream, instancecount));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DRAW_FEEDBACK_STREAM_INSTANCED);
-    Serialise_glDrawTransformFeedbackStreamInstanced(mode, id, stream, instancecount);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDrawTransformFeedbackStreamInstanced(ser, mode, id, stream, instancecount);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glDrawArrays(GLenum mode, GLint first, GLsizei count)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDrawArrays(SerialiserType &ser, GLenum mode, GLint first,
+                                           GLsizei count)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(int32_t, First, first);
-  SERIALISE_ELEMENT(uint32_t, Count, count);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT(first);
+  SERIALISE_ELEMENT(count);
 
-  if(m_State <= EXECUTING)
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glDrawArrays(Mode, First, Count);
-  }
+    m_Real.glDrawArrays(mode, first, count);
 
-  const string desc = m_pSerialiser->GetDebugStr();
+    if(IsLoading(m_State))
+    {
+      AddEvent();
 
-  Serialise_DebugMessages();
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%u)", ToStr(gl_CurChunk).c_str(), count);
+      draw.numIndices = count;
+      draw.numInstances = 1;
+      draw.indexOffset = 0;
+      draw.vertexOffset = first;
+      draw.instanceOffset = 0;
 
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-    string name = "glDrawArrays(" + ToStr::Get(Count) + ")";
+      draw.flags |= DrawFlags::Drawcall;
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.numIndices = Count;
-    draw.numInstances = 1;
-    draw.indexOffset = 0;
-    draw.vertexOffset = First;
-    draw.instanceOffset = 0;
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
 
-    draw.flags |= eDraw_Drawcall;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-
-    AddDrawcall(draw, true);
+      AddDrawcall(draw, true);
+    }
   }
 
   return true;
+}
+
+WrappedOpenGL::ClientMemoryData *WrappedOpenGL::CopyClientMemoryArrays(GLint first, GLsizei count,
+                                                                       GLenum indexType,
+                                                                       const void *&indices)
+{
+  PUSH_CURRENT_CHUNK;
+  RDCASSERT(IsActiveCapturing(m_State));
+  ContextData &cd = GetCtxData();
+
+  GLint idxbuf = 0;
+  GLsizeiptr idxlen = 0;
+  const void *mmIndices = indices;
+  if(indexType != eGL_NONE)
+  {
+    idxlen = GLsizeiptr(count) * GetIdxSize(indexType);
+
+    m_Real.glGetIntegerv(eGL_ELEMENT_ARRAY_BUFFER_BINDING, &idxbuf);
+    if(idxbuf == 0)
+    {
+      // Bind and update fake index buffer, to draw from the 'immediate' index data
+      gl_CurChunk = GLChunk::glBindBuffer;
+      glBindBuffer(eGL_ELEMENT_ARRAY_BUFFER, cd.m_ClientMemoryIBO);
+
+      gl_CurChunk = GLChunk::glBufferData;
+      glBufferData(eGL_ELEMENT_ARRAY_BUFFER, idxlen, indices, eGL_STATIC_DRAW);
+
+      // Set offset to 0 - means we read data from start of our fake index buffer
+      indices = 0;
+    }
+  }
+
+  GLResourceRecord *varecord = cd.m_VertexArrayRecord;
+  if(varecord)    // Early out if VAO bound, as VAOs are VBO-only.
+    return NULL;
+
+  ClientMemoryData *clientMemory = new ClientMemoryData;
+  m_Real.glGetIntegerv(eGL_ARRAY_BUFFER_BINDING, (GLint *)&clientMemory->prevArrayBufferBinding);
+
+  for(GLuint i = 0; i < ARRAY_COUNT(cd.m_ClientMemoryVBOs); i++)
+  {
+    GLint enabled = 0;
+    m_Real.glGetVertexAttribiv(i, eGL_VERTEX_ATTRIB_ARRAY_ENABLED, &enabled);
+    if(!enabled)
+      continue;
+
+    // Check that the attrib is using client-memory.
+    GLuint buffer;
+    m_Real.glGetVertexAttribiv(i, eGL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, (GLint *)&buffer);
+    if(buffer != 0)
+      continue;
+
+    if(indexType != eGL_NONE && first == -1)
+    {
+      // First time we know we are using client-memory along with indices.
+      // Iterate over the indices to find the range of client memory to copy.
+      if(idxbuf != 0)
+      {
+        // If we were using a real index buffer, read it back to check its range.
+        mmIndices = m_Real.glMapBufferRange(eGL_ELEMENT_ARRAY_BUFFER, (size_t)indices, idxlen,
+                                            eGL_MAP_READ_BIT);
+      }
+
+      size_t min = ~0u, max = 0;
+      GLsizei j;
+      switch(indexType)
+      {
+        case eGL_UNSIGNED_BYTE:
+          for(j = 0; j < count; j++)
+          {
+            min = RDCMIN(min, (size_t)((GLubyte *)mmIndices)[j]);
+            max = RDCMAX(max, (size_t)((GLubyte *)mmIndices)[j]);
+          }
+          break;
+        case eGL_UNSIGNED_SHORT:
+          for(j = 0; j < count; j++)
+          {
+            min = RDCMIN(min, (size_t)((GLushort *)mmIndices)[j]);
+            max = RDCMAX(max, (size_t)((GLushort *)mmIndices)[j]);
+          }
+          break;
+        case eGL_UNSIGNED_INT:
+          for(j = 0; j < count; j++)
+          {
+            min = RDCMIN(min, (size_t)((GLuint *)mmIndices)[j]);
+            max = RDCMAX(max, (size_t)((GLuint *)mmIndices)[j]);
+          }
+          break;
+        default:;
+      }
+
+      first = (GLint)min;
+      count = (GLint)(max - min + 1);
+
+      if(idxbuf != 0)
+        m_Real.glUnmapBuffer(eGL_ELEMENT_ARRAY_BUFFER);
+    }
+
+    // App initially used client memory, so copy it into the temporary buffer.
+    ClientMemoryData::VertexAttrib attrib;
+    memset(&attrib, 0, sizeof(attrib));
+    attrib.index = i;
+    m_Real.glGetVertexAttribiv(i, eGL_VERTEX_ATTRIB_ARRAY_SIZE, &attrib.size);
+    m_Real.glGetVertexAttribiv(i, eGL_VERTEX_ATTRIB_ARRAY_TYPE, (GLint *)&attrib.type);
+    m_Real.glGetVertexAttribiv(i, eGL_VERTEX_ATTRIB_ARRAY_NORMALIZED, (GLint *)&attrib.normalized);
+    m_Real.glGetVertexAttribiv(i, eGL_VERTEX_ATTRIB_ARRAY_STRIDE, &attrib.stride);
+    m_Real.glGetVertexAttribPointerv(i, eGL_VERTEX_ATTRIB_ARRAY_POINTER, &attrib.pointer);
+
+    GLint totalStride = attrib.stride ? attrib.stride : (GLint)GLTypeSize(attrib.type) * attrib.size;
+
+    gl_CurChunk = GLChunk::glBindBuffer;
+    glBindBuffer(eGL_ARRAY_BUFFER, cd.m_ClientMemoryVBOs[i]);
+
+    // Copy all client memory, and the pointer becomes a zero offset.
+    gl_CurChunk = GLChunk::glBufferData;
+    glBufferData(eGL_ARRAY_BUFFER, (first + count) * totalStride, attrib.pointer, eGL_STATIC_DRAW);
+
+    gl_CurChunk = GLChunk::glVertexAttribPointer;
+    glVertexAttribPointer(attrib.index, attrib.size, attrib.type, attrib.normalized, attrib.stride,
+                          NULL);
+
+    clientMemory->attribs.push_back(attrib);
+  }
+
+  return clientMemory;
+}
+
+void WrappedOpenGL::RestoreClientMemoryArrays(ClientMemoryData *clientMemoryArrays, GLenum indexType)
+{
+  PUSH_CURRENT_CHUNK;
+
+  if(indexType != eGL_NONE)
+  {
+    ContextData &cd = GetCtxData();
+    GLuint idxbuf = 0;
+    m_Real.glGetIntegerv(eGL_ELEMENT_ARRAY_BUFFER_BINDING, (GLint *)&idxbuf);
+    if(idxbuf == cd.m_ClientMemoryIBO)
+    {
+      // Restore the zero buffer binding if we were using the fake index buffer.
+      gl_CurChunk = GLChunk::glBindBuffer;
+      glBindBuffer(eGL_ELEMENT_ARRAY_BUFFER, 0);
+    }
+  }
+
+  if(!clientMemoryArrays)
+    return;
+
+  // Restore the 0-buffer bindings and attrib pointers.
+  gl_CurChunk = GLChunk::glBindBuffer;
+  glBindBuffer(eGL_ARRAY_BUFFER, 0);
+
+  for(const ClientMemoryData::VertexAttrib &attrib : clientMemoryArrays->attribs)
+  {
+    gl_CurChunk = GLChunk::glVertexAttribPointer;
+    glVertexAttribPointer(attrib.index, attrib.size, attrib.type, attrib.normalized, attrib.stride,
+                          attrib.pointer);
+  }
+
+  gl_CurChunk = GLChunk::glBindBuffer;
+  glBindBuffer(eGL_ARRAY_BUFFER, clientMemoryArrays->prevArrayBufferBinding);
+
+  delete clientMemoryArrays;
 }
 
 void WrappedOpenGL::glDrawArrays(GLenum mode, GLint first, GLsizei count)
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDrawArrays(mode, first, count);
+  SERIALISE_TIME_CALL(m_Real.glDrawArrays(mode, first, count));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DRAWARRAYS);
-    Serialise_glDrawArrays(mode, first, count);
+    const void *indices = NULL;
+    ClientMemoryData *clientMemory = CopyClientMemoryArrays(first, count, eGL_NONE, indices);
+
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDrawArrays(ser, mode, first, count);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
+
+    RestoreClientMemoryArrays(clientMemory, eGL_NONE);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glDrawArraysIndirect(GLenum mode, const void *indirect)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDrawArraysIndirect(SerialiserType &ser, GLenum mode,
+                                                   const void *indirect)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(uint64_t, Offset, (uint64_t)indirect);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT_LOCAL(offset, (uint64_t)indirect);
 
-  if(m_State <= EXECUTING)
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glDrawArraysIndirect(Mode, (const void *)Offset);
-  }
+    m_Real.glDrawArraysIndirect(mode, (const void *)offset);
 
-  const string desc = m_pSerialiser->GetDebugStr();
+    if(IsLoading(m_State))
+    {
+      DrawArraysIndirectCommand params;
+      m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, (GLintptr)offset, sizeof(params), &params);
 
-  Serialise_DebugMessages();
+      AddEvent();
 
-  if(m_State == READING)
-  {
-    DrawArraysIndirectCommand params;
-    m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, (GLintptr)Offset, sizeof(params), &params);
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%u, %u)", ToStr(gl_CurChunk).c_str(), params.count,
+                                    params.instanceCount);
+      draw.numIndices = params.count;
+      draw.numInstances = params.instanceCount;
+      draw.vertexOffset = params.first;
+      draw.instanceOffset = params.baseInstance;
 
-    AddEvent(desc);
-    string name = "glDrawArraysIndirect(" + ToStr::Get(params.count) + ", " +
-                  ToStr::Get(params.instanceCount) + ">)";
+      draw.flags |= DrawFlags::Drawcall | DrawFlags::Instanced | DrawFlags::Indirect;
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.numIndices = params.count;
-    draw.numInstances = params.instanceCount;
-    draw.vertexOffset = params.first;
-    draw.instanceOffset = params.baseInstance;
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
 
-    draw.flags |= eDraw_Drawcall | eDraw_Instanced | eDraw_Indirect;
+      AddDrawcall(draw, true);
 
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
+      GLuint buf = 0;
+      m_Real.glGetIntegerv(eGL_DRAW_INDIRECT_BUFFER_BINDING, (GLint *)&buf);
 
-    AddDrawcall(draw, true);
-
-    GLuint buf = 0;
-    m_Real.glGetIntegerv(eGL_DRAW_INDIRECT_BUFFER_BINDING, (GLint *)&buf);
-
-    m_ResourceUses[GetResourceManager()->GetID(BufferRes(GetCtx(), buf))].push_back(
-        EventUsage(m_CurEventID, eUsage_Indirect));
+      m_ResourceUses[GetResourceManager()->GetID(BufferRes(GetCtx(), buf))].push_back(
+          EventUsage(m_CurEventID, ResourceUsage::Indirect));
+    }
   }
 
   return true;
@@ -783,62 +981,64 @@ void WrappedOpenGL::glDrawArraysIndirect(GLenum mode, const void *indirect)
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDrawArraysIndirect(mode, indirect);
+  SERIALISE_TIME_CALL(m_Real.glDrawArraysIndirect(mode, indirect));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DRAWARRAYS_INDIRECT);
-    Serialise_glDrawArraysIndirect(mode, indirect);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDrawArraysIndirect(ser, mode, indirect);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glDrawArraysInstanced(GLenum mode, GLint first, GLsizei count,
-                                                    GLsizei instancecount)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDrawArraysInstanced(SerialiserType &ser, GLenum mode, GLint first,
+                                                    GLsizei count, GLsizei instancecount)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(int32_t, First, first);
-  SERIALISE_ELEMENT(uint32_t, Count, count);
-  SERIALISE_ELEMENT(uint32_t, InstanceCount, instancecount);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT(first);
+  SERIALISE_ELEMENT(count);
+  SERIALISE_ELEMENT(instancecount);
 
-  if(m_State <= EXECUTING)
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glDrawArraysInstanced(Mode, First, Count, InstanceCount);
-  }
+    m_Real.glDrawArraysInstanced(mode, first, count, instancecount);
 
-  const string desc = m_pSerialiser->GetDebugStr();
+    if(IsLoading(m_State))
+    {
+      AddEvent();
 
-  Serialise_DebugMessages();
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%u, %u)", ToStr(gl_CurChunk).c_str(), count, instancecount);
+      draw.numIndices = count;
+      draw.numInstances = instancecount;
+      draw.indexOffset = 0;
+      draw.vertexOffset = first;
+      draw.instanceOffset = 0;
 
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-    string name =
-        "glDrawArraysInstanced(" + ToStr::Get(Count) + ", " + ToStr::Get(InstanceCount) + ")";
+      draw.flags |= DrawFlags::Drawcall | DrawFlags::Instanced;
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.numIndices = Count;
-    draw.numInstances = InstanceCount;
-    draw.indexOffset = 0;
-    draw.vertexOffset = First;
-    draw.instanceOffset = 0;
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
 
-    draw.flags |= eDraw_Drawcall | eDraw_Instanced;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-
-    AddDrawcall(draw, true);
+      AddDrawcall(draw, true);
+    }
   }
 
   return true;
@@ -849,64 +1049,72 @@ void WrappedOpenGL::glDrawArraysInstanced(GLenum mode, GLint first, GLsizei coun
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDrawArraysInstanced(mode, first, count, instancecount);
+  SERIALISE_TIME_CALL(m_Real.glDrawArraysInstanced(mode, first, count, instancecount));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DRAWARRAYS_INSTANCED);
-    Serialise_glDrawArraysInstanced(mode, first, count, instancecount);
+    const void *indices = NULL;
+    ClientMemoryData *clientMemory = CopyClientMemoryArrays(first, count, eGL_NONE, indices);
+
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDrawArraysInstanced(ser, mode, first, count, instancecount);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
+
+    RestoreClientMemoryArrays(clientMemory, eGL_NONE);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glDrawArraysInstancedBaseInstance(GLenum mode, GLint first,
-                                                                GLsizei count, GLsizei instancecount,
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDrawArraysInstancedBaseInstance(SerialiserType &ser, GLenum mode,
+                                                                GLint first, GLsizei count,
+                                                                GLsizei instancecount,
                                                                 GLuint baseinstance)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(int32_t, First, first);
-  SERIALISE_ELEMENT(uint32_t, Count, count);
-  SERIALISE_ELEMENT(uint32_t, InstanceCount, instancecount);
-  SERIALISE_ELEMENT(uint32_t, BaseInstance, baseinstance);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT(first);
+  SERIALISE_ELEMENT(count);
+  SERIALISE_ELEMENT(instancecount);
+  SERIALISE_ELEMENT(baseinstance);
 
-  if(m_State <= EXECUTING)
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glDrawArraysInstancedBaseInstance(Mode, First, Count, InstanceCount, BaseInstance);
-  }
+    m_Real.glDrawArraysInstancedBaseInstance(mode, first, count, instancecount, baseinstance);
 
-  const string desc = m_pSerialiser->GetDebugStr();
+    if(IsLoading(m_State))
+    {
+      AddEvent();
 
-  Serialise_DebugMessages();
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%u, %u)", ToStr(gl_CurChunk).c_str(), count, instancecount);
+      draw.numIndices = count;
+      draw.numInstances = instancecount;
+      draw.indexOffset = 0;
+      draw.vertexOffset = first;
+      draw.instanceOffset = baseinstance;
 
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-    string name = "glDrawArraysInstancedBaseInstance(" + ToStr::Get(Count) + ", " +
-                  ToStr::Get(InstanceCount) + ")";
+      draw.flags |= DrawFlags::Drawcall | DrawFlags::Instanced;
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.numIndices = Count;
-    draw.numInstances = InstanceCount;
-    draw.indexOffset = 0;
-    draw.vertexOffset = First;
-    draw.instanceOffset = BaseInstance;
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
 
-    draw.flags |= eDraw_Drawcall | eDraw_Instanced;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-
-    AddDrawcall(draw, true);
+      AddDrawcall(draw, true);
+    }
   }
 
   return true;
@@ -917,22 +1125,31 @@ void WrappedOpenGL::glDrawArraysInstancedBaseInstance(GLenum mode, GLint first, 
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDrawArraysInstancedBaseInstance(mode, first, count, instancecount, baseinstance);
+  SERIALISE_TIME_CALL(
+      m_Real.glDrawArraysInstancedBaseInstance(mode, first, count, instancecount, baseinstance));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DRAWARRAYS_INSTANCEDBASEINSTANCE);
-    Serialise_glDrawArraysInstancedBaseInstance(mode, first, count, instancecount, baseinstance);
+    const void *indices = NULL;
+    ClientMemoryData *clientMemory = CopyClientMemoryArrays(first, count, eGL_NONE, indices);
+
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDrawArraysInstancedBaseInstance(ser, mode, first, count, instancecount, baseinstance);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
+
+    RestoreClientMemoryArrays(clientMemory, eGL_NONE);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
@@ -944,129 +1161,53 @@ bool WrappedOpenGL::Check_preElements()
 
   if(idxbuf == 0)
   {
-    AddDebugMessage(eDbgCategory_Undefined, eDbgSeverity_High, eDbgSource_IncorrectAPIUse,
-                    "No index buffer bound at indexed draw!.");
+    AddDebugMessage(MessageCategory::Undefined, MessageSeverity::High,
+                    MessageSource::IncorrectAPIUse, "No index buffer bound at indexed draw!.");
     return false;
   }
 
   return true;
 }
 
-byte *WrappedOpenGL::Common_preElements(GLsizei Count, GLenum Type, uint64_t &IdxOffset)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDrawElements(SerialiserType &ser, GLenum mode, GLsizei count,
+                                             GLenum type, const void *indicesPtr)
 {
-  GLint idxbuf = 0;
-  // while writing, check to see if an index buffer is bound
-  if(m_State >= WRITING)
-    m_Real.glGetIntegerv(eGL_ELEMENT_ARRAY_BUFFER_BINDING, &idxbuf);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT(count);
+  SERIALISE_ELEMENT(type);
+  SERIALISE_ELEMENT_LOCAL(indices, (uint64_t)indicesPtr);
 
-  // serialise whether we're reading indices as memory
-  SERIALISE_ELEMENT(bool, IndicesFromMemory, idxbuf == 0);
+  Serialise_DebugMessages(ser);
 
-  if(IndicesFromMemory)
-  {
-    uint32_t IdxSize = Type == eGL_UNSIGNED_BYTE ? 1 : Type == eGL_UNSIGNED_SHORT
-                                                           ? 2
-                                                           : /*Type == eGL_UNSIGNED_INT*/ 4;
+  SERIALISE_CHECK_READ_ERRORS();
 
-    // serialise the actual data (IdxOffset is a pointer not an offset in this case)
-    SERIALISE_ELEMENT_BUF(byte *, idxdata, (void *)IdxOffset, size_t(IdxSize * Count));
-
-    if(m_State <= EXECUTING)
-    {
-      GLsizeiptr idxlen = GLsizeiptr(IdxSize * Count);
-
-      // resize fake index buffer if necessary
-      if(idxlen > m_FakeIdxSize)
-      {
-        m_Real.glBindBuffer(eGL_ELEMENT_ARRAY_BUFFER, 0);
-        m_Real.glDeleteBuffers(1, &m_FakeIdxBuf);
-
-        m_FakeIdxSize = idxlen;
-
-        m_Real.glGenBuffers(1, &m_FakeIdxBuf);
-        m_Real.glBindBuffer(eGL_ELEMENT_ARRAY_BUFFER, m_FakeIdxBuf);
-        m_Real.glNamedBufferStorageEXT(m_FakeIdxBuf, m_FakeIdxSize, NULL, GL_DYNAMIC_STORAGE_BIT);
-      }
-
-      // bind and update fake index buffer, to draw from the 'immediate' index data
-      m_Real.glBindBuffer(eGL_ELEMENT_ARRAY_BUFFER, m_FakeIdxBuf);
-
-      m_Real.glNamedBufferSubDataEXT(m_FakeIdxBuf, 0, idxlen, idxdata);
-
-      // Set offset to 0 - means we read data from start of our fake index buffer
-      IdxOffset = 0;
-
-      // we'll delete this later (only when replaying)
-      return idxdata;
-    }
-
-    // can just return NULL, since we don't need to do any cleanup or deletion
-  }
-
-  return NULL;
-}
-
-void WrappedOpenGL::Common_postElements(byte *idxDelete)
-{
-  // unbind temporary fake index buffer we used to pass 'immediate' index data
-  if(idxDelete)
-  {
-    m_Real.glBindBuffer(eGL_ELEMENT_ARRAY_BUFFER, 0);
-
-    AddDebugMessage(eDbgCategory_Deprecated, eDbgSeverity_High, eDbgSource_IncorrectAPIUse,
-                    "Assuming GL core profile is used then specifying indices as a raw array, "
-                    "not as offset into element array buffer, is illegal.");
-
-    // delete serialised data
-    SAFE_DELETE_ARRAY(idxDelete);
-  }
-}
-
-bool WrappedOpenGL::Serialise_glDrawElements(GLenum mode, GLsizei count, GLenum type,
-                                             const void *indices)
-{
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(uint32_t, Count, count);
-  SERIALISE_ELEMENT(GLenum, Type, type);
-  SERIALISE_ELEMENT(uint64_t, IdxOffset, (uint64_t)indices);
-
-  byte *idxDelete = Common_preElements(Count, Type, IdxOffset);
-
-  if(m_State <= EXECUTING)
+  if(IsReplayingAndReading())
   {
     if(Check_preElements())
-      m_Real.glDrawElements(Mode, Count, Type, (const void *)IdxOffset);
+      m_Real.glDrawElements(mode, count, type, (const void *)indices);
 
-    Common_postElements(idxDelete);
-  }
+    if(IsLoading(m_State))
+    {
+      AddEvent();
 
-  const string desc = m_pSerialiser->GetDebugStr();
+      uint32_t IdxSize = GetIdxSize(type);
 
-  Serialise_DebugMessages();
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%u)", ToStr(gl_CurChunk).c_str(), count);
+      draw.numIndices = count;
+      draw.numInstances = 1;
+      draw.indexOffset = uint32_t(indices) / IdxSize;
+      draw.vertexOffset = 0;
+      draw.instanceOffset = 0;
 
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-    string name = "glDrawElements(" + ToStr::Get(Count) + ")";
+      draw.flags |= DrawFlags::Drawcall | DrawFlags::UseIBuffer;
 
-    uint32_t IdxSize = Type == eGL_UNSIGNED_BYTE ? 1 : Type == eGL_UNSIGNED_SHORT
-                                                           ? 2
-                                                           : /*Type == eGL_UNSIGNED_INT*/ 4;
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
+      draw.indexByteWidth = IdxSize;
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.numIndices = Count;
-    draw.numInstances = 1;
-    draw.indexOffset = uint32_t(IdxOffset) / IdxSize;
-    draw.vertexOffset = 0;
-    draw.instanceOffset = 0;
-
-    draw.flags |= eDraw_Drawcall | eDraw_UseIBuffer;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-    draw.indexByteWidth = IdxSize;
-
-    AddDrawcall(draw, true);
+      AddDrawcall(draw, true);
+    }
   }
 
   return true;
@@ -1076,74 +1217,81 @@ void WrappedOpenGL::glDrawElements(GLenum mode, GLsizei count, GLenum type, cons
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDrawElements(mode, count, type, indices);
+  SERIALISE_TIME_CALL(m_Real.glDrawElements(mode, count, type, indices));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DRAWELEMENTS);
-    Serialise_glDrawElements(mode, count, type, indices);
+    ClientMemoryData *clientMemory = CopyClientMemoryArrays(-1, count, type, indices);
+
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDrawElements(ser, mode, count, type, indices);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
+
+    RestoreClientMemoryArrays(clientMemory, type);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glDrawElementsIndirect(GLenum mode, GLenum type, const void *indirect)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDrawElementsIndirect(SerialiserType &ser, GLenum mode, GLenum type,
+                                                     const void *indirect)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(GLenum, Type, type);
-  SERIALISE_ELEMENT(uint64_t, Offset, (uint64_t)indirect);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT(type);
+  SERIALISE_ELEMENT_LOCAL(offset, (uint64_t)indirect);
 
-  if(m_State <= EXECUTING)
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glDrawElementsIndirect(Mode, Type, (const void *)Offset);
-  }
+    m_Real.glDrawElementsIndirect(mode, type, (const void *)offset);
 
-  const string desc = m_pSerialiser->GetDebugStr();
+    if(IsLoading(m_State))
+    {
+      DrawElementsIndirectCommand params;
+      m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, (GLintptr)offset, sizeof(params), &params);
 
-  Serialise_DebugMessages();
+      AddEvent();
 
-  if(m_State == READING)
-  {
-    DrawElementsIndirectCommand params;
-    m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, (GLintptr)Offset, sizeof(params), &params);
+      uint32_t IdxSize = GetIdxSize(type);
 
-    AddEvent(desc);
-    string name = "glDrawElementsIndirect(" + ToStr::Get(params.count) + ", " +
-                  ToStr::Get(params.instanceCount) + ">)";
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(<%u, %u>)", ToStr(gl_CurChunk).c_str(), params.count,
+                                    params.instanceCount);
+      draw.numIndices = params.count;
+      draw.numInstances = params.instanceCount;
+      draw.indexOffset = params.firstIndex;
+      draw.baseVertex = params.baseVertex;
+      draw.instanceOffset = params.baseInstance;
 
-    uint32_t IdxSize = Type == eGL_UNSIGNED_BYTE ? 1 : Type == eGL_UNSIGNED_SHORT
-                                                           ? 2
-                                                           : /*Type == eGL_UNSIGNED_INT*/ 4;
+      draw.flags |=
+          DrawFlags::Drawcall | DrawFlags::UseIBuffer | DrawFlags::Instanced | DrawFlags::Indirect;
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.numIndices = params.count;
-    draw.numInstances = params.instanceCount;
-    draw.indexOffset = params.firstIndex;
-    draw.baseVertex = params.baseVertex;
-    draw.instanceOffset = params.baseInstance;
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
+      draw.indexByteWidth = IdxSize;
 
-    draw.flags |= eDraw_Drawcall | eDraw_UseIBuffer | eDraw_Instanced | eDraw_Indirect;
+      AddDrawcall(draw, true);
 
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-    draw.indexByteWidth = IdxSize;
+      GLuint buf = 0;
+      m_Real.glGetIntegerv(eGL_DRAW_INDIRECT_BUFFER_BINDING, (GLint *)&buf);
 
-    AddDrawcall(draw, true);
-
-    GLuint buf = 0;
-    m_Real.glGetIntegerv(eGL_DRAW_INDIRECT_BUFFER_BINDING, (GLint *)&buf);
-
-    m_ResourceUses[GetResourceManager()->GetID(BufferRes(GetCtx(), buf))].push_back(
-        EventUsage(m_CurEventID, eUsage_Indirect));
+      m_ResourceUses[GetResourceManager()->GetID(BufferRes(GetCtx(), buf))].push_back(
+          EventUsage(m_CurEventID, ResourceUsage::Indirect));
+    }
   }
 
   return true;
@@ -1153,73 +1301,71 @@ void WrappedOpenGL::glDrawElementsIndirect(GLenum mode, GLenum type, const void 
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDrawElementsIndirect(mode, type, indirect);
+  SERIALISE_TIME_CALL(m_Real.glDrawElementsIndirect(mode, type, indirect));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DRAWELEMENTS_INDIRECT);
-    Serialise_glDrawElementsIndirect(mode, type, indirect);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDrawElementsIndirect(ser, mode, type, indirect);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glDrawRangeElements(GLenum mode, GLuint start, GLuint end,
-                                                  GLsizei count, GLenum type, const void *indices)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDrawRangeElements(SerialiserType &ser, GLenum mode, GLuint start,
+                                                  GLuint end, GLsizei count, GLenum type,
+                                                  const void *indicesPtr)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(uint32_t, Start, start);
-  SERIALISE_ELEMENT(uint32_t, End, end);
-  SERIALISE_ELEMENT(uint32_t, Count, count);
-  SERIALISE_ELEMENT(GLenum, Type, type);
-  SERIALISE_ELEMENT(uint64_t, IdxOffset, (uint64_t)indices);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT(start);
+  SERIALISE_ELEMENT(end);
+  SERIALISE_ELEMENT(count);
+  SERIALISE_ELEMENT(type);
+  SERIALISE_ELEMENT_LOCAL(indices, (uint64_t)indicesPtr);
 
-  byte *idxDelete = Common_preElements(Count, Type, IdxOffset);
+  Serialise_DebugMessages(ser);
 
-  if(m_State <= EXECUTING)
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
     if(Check_preElements())
-      m_Real.glDrawRangeElements(Mode, Start, End, Count, Type, (const void *)IdxOffset);
+      m_Real.glDrawRangeElements(mode, start, end, count, type, (const void *)indices);
 
-    Common_postElements(idxDelete);
-  }
+    if(IsLoading(m_State))
+    {
+      AddEvent();
 
-  const string desc = m_pSerialiser->GetDebugStr();
+      uint32_t IdxSize = GetIdxSize(type);
 
-  Serialise_DebugMessages();
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%u)", ToStr(gl_CurChunk).c_str(), count);
+      draw.numIndices = count;
+      draw.numInstances = 1;
+      draw.indexOffset = uint32_t(indices) / IdxSize;
+      draw.vertexOffset = 0;
+      draw.instanceOffset = 0;
 
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-    string name = "glDrawRangeElements(" + ToStr::Get(Count) + ")";
+      draw.flags |= DrawFlags::Drawcall | DrawFlags::UseIBuffer;
 
-    uint32_t IdxSize = Type == eGL_UNSIGNED_BYTE ? 1 : Type == eGL_UNSIGNED_SHORT
-                                                           ? 2
-                                                           : /*Type == eGL_UNSIGNED_INT*/ 4;
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
+      draw.indexByteWidth = IdxSize;
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.numIndices = Count;
-    draw.numInstances = 1;
-    draw.indexOffset = uint32_t(IdxOffset) / IdxSize;
-    draw.vertexOffset = 0;
-    draw.instanceOffset = 0;
-
-    draw.flags |= eDraw_Drawcall | eDraw_UseIBuffer;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-    draw.indexByteWidth = IdxSize;
-
-    AddDrawcall(draw, true);
+      AddDrawcall(draw, true);
+    }
   }
 
   return true;
@@ -1230,76 +1376,78 @@ void WrappedOpenGL::glDrawRangeElements(GLenum mode, GLuint start, GLuint end, G
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDrawRangeElements(mode, start, end, count, type, indices);
+  SERIALISE_TIME_CALL(m_Real.glDrawRangeElements(mode, start, end, count, type, indices));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DRAWRANGEELEMENTS);
-    Serialise_glDrawRangeElements(mode, start, end, count, type, indices);
+    ClientMemoryData *clientMemory = CopyClientMemoryArrays(-1, count, type, indices);
+
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDrawRangeElements(ser, mode, start, end, count, type, indices);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
+
+    RestoreClientMemoryArrays(clientMemory, type);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glDrawRangeElementsBaseVertex(GLenum mode, GLuint start, GLuint end,
-                                                            GLsizei count, GLenum type,
-                                                            const void *indices, GLint basevertex)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDrawRangeElementsBaseVertex(SerialiserType &ser, GLenum mode,
+                                                            GLuint start, GLuint end, GLsizei count,
+                                                            GLenum type, const void *indicesPtr,
+                                                            GLint basevertex)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(uint32_t, Start, start);
-  SERIALISE_ELEMENT(uint32_t, End, end);
-  SERIALISE_ELEMENT(uint32_t, Count, count);
-  SERIALISE_ELEMENT(GLenum, Type, type);
-  SERIALISE_ELEMENT(uint64_t, IdxOffset, (uint64_t)indices);
-  SERIALISE_ELEMENT(uint32_t, BaseVtx, basevertex);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT(start);
+  SERIALISE_ELEMENT(end);
+  SERIALISE_ELEMENT(count);
+  SERIALISE_ELEMENT(type);
+  SERIALISE_ELEMENT_LOCAL(indices, (uint64_t)indicesPtr);
+  SERIALISE_ELEMENT(basevertex);
 
-  byte *idxDelete = Common_preElements(Count, Type, IdxOffset);
+  Serialise_DebugMessages(ser);
 
-  if(m_State <= EXECUTING)
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
     if(Check_preElements())
-      m_Real.glDrawRangeElementsBaseVertex(Mode, Start, End, Count, Type, (const void *)IdxOffset,
-                                           BaseVtx);
+      m_Real.glDrawRangeElementsBaseVertex(mode, start, end, count, type, (const void *)indices,
+                                           basevertex);
 
-    Common_postElements(idxDelete);
-  }
+    if(IsLoading(m_State))
+    {
+      AddEvent();
 
-  const string desc = m_pSerialiser->GetDebugStr();
+      uint32_t IdxSize = GetIdxSize(type);
 
-  Serialise_DebugMessages();
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%u)", ToStr(gl_CurChunk).c_str(), count);
+      draw.numIndices = count;
+      draw.numInstances = 1;
+      draw.indexOffset = uint32_t(indices) / IdxSize;
+      draw.baseVertex = basevertex;
+      draw.instanceOffset = 0;
 
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-    string name = "glDrawRangeElementsBaseVertex(" + ToStr::Get(Count) + ")";
+      draw.flags |= DrawFlags::Drawcall | DrawFlags::UseIBuffer;
 
-    uint32_t IdxSize = Type == eGL_UNSIGNED_BYTE ? 1 : Type == eGL_UNSIGNED_SHORT
-                                                           ? 2
-                                                           : /*Type == eGL_UNSIGNED_INT*/ 4;
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
+      draw.indexByteWidth = IdxSize;
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.numIndices = Count;
-    draw.numInstances = 1;
-    draw.indexOffset = uint32_t(IdxOffset) / IdxSize;
-    draw.baseVertex = BaseVtx;
-    draw.instanceOffset = 0;
-
-    draw.flags |= eDraw_Drawcall | eDraw_UseIBuffer;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-    draw.indexByteWidth = IdxSize;
-
-    AddDrawcall(draw, true);
+      AddDrawcall(draw, true);
+    }
   }
 
   return true;
@@ -1311,72 +1459,75 @@ void WrappedOpenGL::glDrawRangeElementsBaseVertex(GLenum mode, GLuint start, GLu
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDrawRangeElementsBaseVertex(mode, start, end, count, type, indices, basevertex);
+  SERIALISE_TIME_CALL(
+      m_Real.glDrawRangeElementsBaseVertex(mode, start, end, count, type, indices, basevertex));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DRAWRANGEELEMENTSBASEVERTEX);
-    Serialise_glDrawRangeElementsBaseVertex(mode, start, end, count, type, indices, basevertex);
+    ClientMemoryData *clientMemory = CopyClientMemoryArrays(-1, count, type, indices);
+
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDrawRangeElementsBaseVertex(ser, mode, start, end, count, type, indices, basevertex);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
+
+    RestoreClientMemoryArrays(clientMemory, type);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glDrawElementsBaseVertex(GLenum mode, GLsizei count, GLenum type,
-                                                       const void *indices, GLint basevertex)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDrawElementsBaseVertex(SerialiserType &ser, GLenum mode,
+                                                       GLsizei count, GLenum type,
+                                                       const void *indicesPtr, GLint basevertex)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(uint32_t, Count, count);
-  SERIALISE_ELEMENT(GLenum, Type, type);
-  SERIALISE_ELEMENT(uint64_t, IdxOffset, (uint64_t)indices);
-  SERIALISE_ELEMENT(int32_t, BaseVtx, basevertex);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT(count);
+  SERIALISE_ELEMENT(type);
+  SERIALISE_ELEMENT_LOCAL(indices, (uint64_t)indicesPtr);
+  SERIALISE_ELEMENT(basevertex);
 
-  byte *idxDelete = Common_preElements(Count, Type, IdxOffset);
+  Serialise_DebugMessages(ser);
 
-  if(m_State <= EXECUTING)
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
     if(Check_preElements())
-      m_Real.glDrawElementsBaseVertex(Mode, Count, Type, (const void *)IdxOffset, BaseVtx);
+      m_Real.glDrawElementsBaseVertex(mode, count, type, (const void *)indices, basevertex);
 
-    Common_postElements(idxDelete);
-  }
+    if(IsLoading(m_State))
+    {
+      AddEvent();
 
-  const string desc = m_pSerialiser->GetDebugStr();
+      uint32_t IdxSize = GetIdxSize(type);
 
-  Serialise_DebugMessages();
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%u)", ToStr(gl_CurChunk).c_str(), count);
+      draw.numIndices = count;
+      draw.numInstances = 1;
+      draw.indexOffset = uint32_t(indices) / IdxSize;
+      draw.baseVertex = basevertex;
+      draw.instanceOffset = 0;
 
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-    string name = "glDrawElementsBaseVertex(" + ToStr::Get(Count) + ")";
+      draw.flags |= DrawFlags::Drawcall | DrawFlags::UseIBuffer;
 
-    uint32_t IdxSize = Type == eGL_UNSIGNED_BYTE ? 1 : Type == eGL_UNSIGNED_SHORT
-                                                           ? 2
-                                                           : /*Type == eGL_UNSIGNED_INT*/ 4;
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
+      draw.indexByteWidth = IdxSize;
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.numIndices = Count;
-    draw.numInstances = 1;
-    draw.indexOffset = uint32_t(IdxOffset) / IdxSize;
-    draw.baseVertex = BaseVtx;
-    draw.instanceOffset = 0;
-
-    draw.flags |= eDraw_Drawcall | eDraw_UseIBuffer;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-    draw.indexByteWidth = IdxSize;
-
-    AddDrawcall(draw, true);
+      AddDrawcall(draw, true);
+    }
   }
 
   return true;
@@ -1387,72 +1538,74 @@ void WrappedOpenGL::glDrawElementsBaseVertex(GLenum mode, GLsizei count, GLenum 
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDrawElementsBaseVertex(mode, count, type, indices, basevertex);
+  SERIALISE_TIME_CALL(m_Real.glDrawElementsBaseVertex(mode, count, type, indices, basevertex));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DRAWELEMENTS_BASEVERTEX);
-    Serialise_glDrawElementsBaseVertex(mode, count, type, indices, basevertex);
+    ClientMemoryData *clientMemory = CopyClientMemoryArrays(-1, count, type, indices);
+
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDrawElementsBaseVertex(ser, mode, count, type, indices, basevertex);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
+
+    RestoreClientMemoryArrays(clientMemory, type);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glDrawElementsInstanced(GLenum mode, GLsizei count, GLenum type,
-                                                      const void *indices, GLsizei instancecount)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDrawElementsInstanced(SerialiserType &ser, GLenum mode,
+                                                      GLsizei count, GLenum type,
+                                                      const void *indicesPtr, GLsizei instancecount)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(uint32_t, Count, count);
-  SERIALISE_ELEMENT(GLenum, Type, type);
-  SERIALISE_ELEMENT(uint64_t, IdxOffset, (uint64_t)indices);
-  SERIALISE_ELEMENT(uint32_t, InstCount, instancecount);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT(count);
+  SERIALISE_ELEMENT(type);
+  SERIALISE_ELEMENT_LOCAL(indices, (uint64_t)indicesPtr);
+  SERIALISE_ELEMENT(instancecount);
 
-  byte *idxDelete = Common_preElements(Count, Type, IdxOffset);
+  Serialise_DebugMessages(ser);
 
-  if(m_State <= EXECUTING)
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
     if(Check_preElements())
-      m_Real.glDrawElementsInstanced(Mode, Count, Type, (const void *)IdxOffset, InstCount);
+      m_Real.glDrawElementsInstanced(mode, count, type, (const void *)indices, instancecount);
 
-    Common_postElements(idxDelete);
-  }
+    if(IsLoading(m_State))
+    {
+      AddEvent();
 
-  const string desc = m_pSerialiser->GetDebugStr();
+      uint32_t IdxSize = GetIdxSize(type);
 
-  Serialise_DebugMessages();
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%u, %u)", ToStr(gl_CurChunk).c_str(), count, instancecount);
+      draw.numIndices = count;
+      draw.numInstances = instancecount;
+      draw.indexOffset = uint32_t(indices) / IdxSize;
+      draw.vertexOffset = 0;
+      draw.instanceOffset = 0;
 
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-    string name = "glDrawElementsInstanced(" + ToStr::Get(Count) + ")";
+      draw.flags |= DrawFlags::Drawcall | DrawFlags::UseIBuffer | DrawFlags::Instanced;
 
-    uint32_t IdxSize = Type == eGL_UNSIGNED_BYTE ? 1 : Type == eGL_UNSIGNED_SHORT
-                                                           ? 2
-                                                           : /*Type == eGL_UNSIGNED_INT*/ 4;
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
+      draw.indexByteWidth = IdxSize;
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.numIndices = Count;
-    draw.numInstances = InstCount;
-    draw.indexOffset = uint32_t(IdxOffset) / IdxSize;
-    draw.vertexOffset = 0;
-    draw.instanceOffset = 0;
-
-    draw.flags |= eDraw_Drawcall | eDraw_UseIBuffer;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-    draw.indexByteWidth = IdxSize;
-
-    AddDrawcall(draw, true);
+      AddDrawcall(draw, true);
+    }
   }
 
   return true;
@@ -1463,76 +1616,78 @@ void WrappedOpenGL::glDrawElementsInstanced(GLenum mode, GLsizei count, GLenum t
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDrawElementsInstanced(mode, count, type, indices, instancecount);
+  SERIALISE_TIME_CALL(m_Real.glDrawElementsInstanced(mode, count, type, indices, instancecount));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DRAWELEMENTS_INSTANCED);
-    Serialise_glDrawElementsInstanced(mode, count, type, indices, instancecount);
+    ClientMemoryData *clientMemory = CopyClientMemoryArrays(-1, count, type, indices);
+
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDrawElementsInstanced(ser, mode, count, type, indices, instancecount);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
+
+    RestoreClientMemoryArrays(clientMemory, type);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glDrawElementsInstancedBaseInstance(GLenum mode, GLsizei count,
-                                                                  GLenum type, const void *indices,
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDrawElementsInstancedBaseInstance(SerialiserType &ser, GLenum mode,
+                                                                  GLsizei count, GLenum type,
+                                                                  const void *indicesPtr,
                                                                   GLsizei instancecount,
                                                                   GLuint baseinstance)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(uint32_t, Count, count);
-  SERIALISE_ELEMENT(GLenum, Type, type);
-  SERIALISE_ELEMENT(uint64_t, IdxOffset, (uint64_t)indices);
-  SERIALISE_ELEMENT(uint32_t, InstCount, instancecount);
-  SERIALISE_ELEMENT(uint32_t, BaseInstance, baseinstance);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT(count);
+  SERIALISE_ELEMENT(type);
+  SERIALISE_ELEMENT_LOCAL(indices, (uint64_t)indicesPtr);
+  SERIALISE_ELEMENT(instancecount);
+  SERIALISE_ELEMENT(baseinstance);
 
-  byte *idxDelete = Common_preElements(Count, Type, IdxOffset);
+  Serialise_DebugMessages(ser);
 
-  if(m_State <= EXECUTING)
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
     if(Check_preElements())
-      m_Real.glDrawElementsInstancedBaseInstance(Mode, Count, Type, (const void *)IdxOffset,
-                                                 InstCount, BaseInstance);
+      m_Real.glDrawElementsInstancedBaseInstance(mode, count, type, (const void *)indices,
+                                                 instancecount, baseinstance);
 
-    Common_postElements(idxDelete);
-  }
+    if(IsLoading(m_State))
+    {
+      AddEvent();
 
-  const string desc = m_pSerialiser->GetDebugStr();
+      uint32_t IdxSize = GetIdxSize(type);
 
-  Serialise_DebugMessages();
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%u, %u)", ToStr(gl_CurChunk).c_str(), count, instancecount);
+      draw.numIndices = count;
+      draw.numInstances = instancecount;
+      draw.indexOffset = uint32_t(indices) / IdxSize;
+      draw.vertexOffset = 0;
+      draw.instanceOffset = baseinstance;
 
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-    string name = "glDrawElementsInstancedBaseInstance(" + ToStr::Get(Count) + ")";
+      draw.flags |= DrawFlags::Drawcall | DrawFlags::Instanced | DrawFlags::UseIBuffer;
 
-    uint32_t IdxSize = Type == eGL_UNSIGNED_BYTE ? 1 : Type == eGL_UNSIGNED_SHORT
-                                                           ? 2
-                                                           : /*Type == eGL_UNSIGNED_INT*/ 4;
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
+      draw.indexByteWidth = IdxSize;
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.numIndices = Count;
-    draw.numInstances = InstCount;
-    draw.indexOffset = uint32_t(IdxOffset) / IdxSize;
-    draw.vertexOffset = 0;
-    draw.instanceOffset = BaseInstance;
-
-    draw.flags |= eDraw_Drawcall | eDraw_UseIBuffer;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-    draw.indexByteWidth = IdxSize;
-
-    AddDrawcall(draw, true);
+      AddDrawcall(draw, true);
+    }
   }
 
   return true;
@@ -1544,78 +1699,80 @@ void WrappedOpenGL::glDrawElementsInstancedBaseInstance(GLenum mode, GLsizei cou
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDrawElementsInstancedBaseInstance(mode, count, type, indices, instancecount, baseinstance);
+  SERIALISE_TIME_CALL(m_Real.glDrawElementsInstancedBaseInstance(mode, count, type, indices,
+                                                                 instancecount, baseinstance));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DRAWELEMENTS_INSTANCEDBASEINSTANCE);
-    Serialise_glDrawElementsInstancedBaseInstance(mode, count, type, indices, instancecount,
+    ClientMemoryData *clientMemory = CopyClientMemoryArrays(-1, count, type, indices);
+
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDrawElementsInstancedBaseInstance(ser, mode, count, type, indices, instancecount,
                                                   baseinstance);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
+
+    RestoreClientMemoryArrays(clientMemory, type);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glDrawElementsInstancedBaseVertex(GLenum mode, GLsizei count,
-                                                                GLenum type, const void *indices,
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glDrawElementsInstancedBaseVertex(SerialiserType &ser, GLenum mode,
+                                                                GLsizei count, GLenum type,
+                                                                const void *indicesPtr,
                                                                 GLsizei instancecount,
                                                                 GLint basevertex)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(uint32_t, Count, count);
-  SERIALISE_ELEMENT(GLenum, Type, type);
-  SERIALISE_ELEMENT(uint64_t, IdxOffset, (uint64_t)indices);
-  SERIALISE_ELEMENT(uint32_t, InstCount, instancecount);
-  SERIALISE_ELEMENT(int32_t, BaseVertex, basevertex);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT(count);
+  SERIALISE_ELEMENT(type);
+  SERIALISE_ELEMENT_LOCAL(indices, (uint64_t)indicesPtr);
+  SERIALISE_ELEMENT(instancecount);
+  SERIALISE_ELEMENT(basevertex);
 
-  byte *idxDelete = Common_preElements(Count, Type, IdxOffset);
+  Serialise_DebugMessages(ser);
 
-  if(m_State <= EXECUTING)
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
     if(Check_preElements())
-      m_Real.glDrawElementsInstancedBaseVertex(Mode, Count, Type, (const void *)IdxOffset,
-                                               InstCount, BaseVertex);
+      m_Real.glDrawElementsInstancedBaseVertex(mode, count, type, (const void *)indices,
+                                               instancecount, basevertex);
 
-    Common_postElements(idxDelete);
-  }
+    if(IsLoading(m_State))
+    {
+      AddEvent();
 
-  const string desc = m_pSerialiser->GetDebugStr();
+      uint32_t IdxSize = GetIdxSize(type);
 
-  Serialise_DebugMessages();
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%u, %u)", ToStr(gl_CurChunk).c_str(), count, instancecount);
+      draw.numIndices = count;
+      draw.numInstances = instancecount;
+      draw.indexOffset = uint32_t(indices) / IdxSize;
+      draw.baseVertex = basevertex;
+      draw.instanceOffset = 0;
 
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-    string name = "glDrawElementsInstancedBaseVertex(" + ToStr::Get(Count) + ", " +
-                  ToStr::Get(InstCount) + ")";
+      draw.flags |= DrawFlags::Drawcall | DrawFlags::Instanced | DrawFlags::UseIBuffer;
 
-    uint32_t IdxSize = Type == eGL_UNSIGNED_BYTE ? 1 : Type == eGL_UNSIGNED_SHORT
-                                                           ? 2
-                                                           : /*Type == eGL_UNSIGNED_INT*/ 4;
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
+      draw.indexByteWidth = IdxSize;
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.numIndices = Count;
-    draw.numInstances = InstCount;
-    draw.indexOffset = uint32_t(IdxOffset) / IdxSize;
-    draw.baseVertex = BaseVertex;
-    draw.instanceOffset = 0;
-
-    draw.flags |= eDraw_Drawcall | eDraw_UseIBuffer;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-    draw.indexByteWidth = IdxSize;
-
-    AddDrawcall(draw, true);
+      AddDrawcall(draw, true);
+    }
   }
 
   return true;
@@ -1627,78 +1784,79 @@ void WrappedOpenGL::glDrawElementsInstancedBaseVertex(GLenum mode, GLsizei count
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDrawElementsInstancedBaseVertex(mode, count, type, indices, instancecount, basevertex);
+  SERIALISE_TIME_CALL(m_Real.glDrawElementsInstancedBaseVertex(mode, count, type, indices,
+                                                               instancecount, basevertex));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DRAWELEMENTS_INSTANCEDBASEVERTEX);
-    Serialise_glDrawElementsInstancedBaseVertex(mode, count, type, indices, instancecount,
+    ClientMemoryData *clientMemory = CopyClientMemoryArrays(-1, count, type, indices);
+
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glDrawElementsInstancedBaseVertex(ser, mode, count, type, indices, instancecount,
                                                 basevertex);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
+
+    RestoreClientMemoryArrays(clientMemory, type);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
+template <typename SerialiserType>
 bool WrappedOpenGL::Serialise_glDrawElementsInstancedBaseVertexBaseInstance(
-    GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instancecount,
-    GLint basevertex, GLuint baseinstance)
+    SerialiserType &ser, GLenum mode, GLsizei count, GLenum type, const void *indicesPtr,
+    GLsizei instancecount, GLint basevertex, GLuint baseinstance)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(uint32_t, Count, count);
-  SERIALISE_ELEMENT(GLenum, Type, type);
-  SERIALISE_ELEMENT(uint64_t, IdxOffset, (uint64_t)indices);
-  SERIALISE_ELEMENT(uint32_t, InstCount, instancecount);
-  SERIALISE_ELEMENT(int32_t, BaseVertex, basevertex);
-  SERIALISE_ELEMENT(uint32_t, BaseInstance, baseinstance);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT(count);
+  SERIALISE_ELEMENT(type);
+  SERIALISE_ELEMENT_LOCAL(indices, (uint64_t)indicesPtr);
+  SERIALISE_ELEMENT(instancecount);
+  SERIALISE_ELEMENT(basevertex);
+  SERIALISE_ELEMENT(baseinstance);
 
-  byte *idxDelete = Common_preElements(Count, Type, IdxOffset);
+  Serialise_DebugMessages(ser);
 
-  if(m_State <= EXECUTING)
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
     if(Check_preElements())
-      m_Real.glDrawElementsInstancedBaseVertexBaseInstance(
-          Mode, Count, Type, (const void *)IdxOffset, InstCount, BaseVertex, BaseInstance);
+      m_Real.glDrawElementsInstancedBaseVertexBaseInstance(mode, count, type, (const void *)indices,
+                                                           instancecount, basevertex, baseinstance);
 
-    Common_postElements(idxDelete);
-  }
+    if(IsLoading(m_State))
+    {
+      AddEvent();
 
-  const string desc = m_pSerialiser->GetDebugStr();
+      uint32_t IdxSize = GetIdxSize(type);
 
-  Serialise_DebugMessages();
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%u, %u)", ToStr(gl_CurChunk).c_str(), count, instancecount);
+      draw.numIndices = count;
+      draw.numInstances = instancecount;
+      draw.indexOffset = uint32_t(indices) / IdxSize;
+      draw.baseVertex = basevertex;
+      draw.instanceOffset = baseinstance;
 
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-    string name = "glDrawElementsInstancedBaseVertexBaseInstance(" + ToStr::Get(Count) + ", " +
-                  ToStr::Get(InstCount) + ")";
+      draw.flags |= DrawFlags::Drawcall | DrawFlags::Instanced | DrawFlags::UseIBuffer;
 
-    uint32_t IdxSize = Type == eGL_UNSIGNED_BYTE ? 1 : Type == eGL_UNSIGNED_SHORT
-                                                           ? 2
-                                                           : /*Type == eGL_UNSIGNED_INT*/ 4;
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
+      draw.indexByteWidth = IdxSize;
 
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.numIndices = Count;
-    draw.numInstances = InstCount;
-    draw.indexOffset = uint32_t(IdxOffset) / IdxSize;
-    draw.baseVertex = BaseVertex;
-    draw.instanceOffset = BaseInstance;
-
-    draw.flags |= eDraw_Drawcall | eDraw_UseIBuffer;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-    draw.indexByteWidth = IdxSize;
-
-    AddDrawcall(draw, true);
+      AddDrawcall(draw, true);
+    }
   }
 
   return true;
@@ -1712,131 +1870,129 @@ void WrappedOpenGL::glDrawElementsInstancedBaseVertexBaseInstance(GLenum mode, G
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glDrawElementsInstancedBaseVertexBaseInstance(mode, count, type, indices, instancecount,
-                                                       basevertex, baseinstance);
+  SERIALISE_TIME_CALL(m_Real.glDrawElementsInstancedBaseVertexBaseInstance(
+      mode, count, type, indices, instancecount, basevertex, baseinstance));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(DRAWELEMENTS_INSTANCEDBASEVERTEXBASEINSTANCE);
+    ClientMemoryData *clientMemory = CopyClientMemoryArrays(-1, count, type, indices);
+
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
     Serialise_glDrawElementsInstancedBaseVertexBaseInstance(
-        mode, count, type, indices, instancecount, basevertex, baseinstance);
+        ser, mode, count, type, indices, instancecount, basevertex, baseinstance);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
+
+    RestoreClientMemoryArrays(clientMemory, type);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glMultiDrawArrays(GLenum mode, const GLint *first,
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glMultiDrawArrays(SerialiserType &ser, GLenum mode, const GLint *first,
                                                 const GLsizei *count, GLsizei drawcount)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(uint32_t, Count, drawcount);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT_ARRAY(first, drawcount);
+  SERIALISE_ELEMENT_ARRAY(count, drawcount);
+  SERIALISE_ELEMENT(drawcount);
 
-  SERIALISE_ELEMENT_ARR(int32_t, firstArray, first, Count);
-  SERIALISE_ELEMENT_ARR(int32_t, countArray, count, Count);
+  Serialise_DebugMessages(ser);
 
-  if(m_State == READING)
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glMultiDrawArrays(Mode, firstArray, countArray, Count);
+    if(IsLoading(m_State))
+    {
+      m_Real.glMultiDrawArrays(mode, first, count, drawcount);
+
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%i)", ToStr(gl_CurChunk).c_str(), drawcount);
+      draw.flags |= DrawFlags::MultiDraw;
+
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
+
+      AddDrawcall(draw, false);
+
+      m_DrawcallStack.push_back(&m_DrawcallStack.back()->children.back());
+
+      for(GLsizei i = 0; i < drawcount; i++)
+      {
+        m_CurEventID++;
+
+        DrawcallDescription multidraw;
+        multidraw.numIndices = count[i];
+        multidraw.vertexOffset = first[i];
+
+        multidraw.name =
+            StringFormat::Fmt("%s[%i](%u)", ToStr(gl_CurChunk).c_str(), i, multidraw.numIndices);
+
+        multidraw.flags |= DrawFlags::Drawcall;
+
+        multidraw.topology = MakePrimitiveTopology(m_Real, mode);
+
+        AddEvent();
+        AddDrawcall(multidraw, true);
+      }
+
+      m_DrawcallStack.pop_back();
+    }
+    else if(IsActiveReplaying(m_State))
+    {
+      size_t i = 0;
+      for(; i < m_Events.size(); i++)
+      {
+        if(m_Events[i].eventId >= m_CurEventID)
+          break;
+      }
+
+      while(i > 1 && m_Events[i - 1].fileOffset == m_Events[i].fileOffset)
+        i--;
+
+      uint32_t baseEventID = m_Events[i].eventId;
+
+      if(m_LastEventID < baseEventID)
+      {
+        // To add the multidraw, we made an event N that is the 'parent' marker, then
+        // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
+        // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
+        // the first sub-draw in that range.
+      }
+      else if(m_FirstEventID <= baseEventID && m_LastEventID >= baseEventID)
+      {
+        // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
+        // by just reducing the drawcount parameter to however many we want to replay. This only
+        // works if we're replaying from the first multidraw to the nth (n less than drawcount)
+        m_Real.glMultiDrawArrays(mode, first, count,
+                                 RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID + 1));
+      }
+      else
+      {
+        // otherwise we do the 'hard' case, draw only one multidraw
+        // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
+        // a single draw.
+        RDCASSERT(m_LastEventID == m_FirstEventID);
+
+        uint32_t drawidx = (m_LastEventID - baseEventID);
+
+        m_Real.glDrawArrays(mode, first[drawidx], count[drawidx]);
+      }
+
+      m_CurEventID += (uint32_t)drawcount;
+    }
   }
-  else if(m_State <= EXECUTING)
-  {
-    size_t i = 0;
-    for(; i < m_Events.size(); i++)
-    {
-      if(m_Events[i].eventID >= m_CurEventID)
-        break;
-    }
-
-    while(i > 1 && m_Events[i - 1].fileOffset == m_Events[i].fileOffset)
-      i--;
-
-    uint32_t baseEventID = m_Events[i].eventID;
-
-    if(m_LastEventID < baseEventID)
-    {
-      // To add the multidraw, we made an event N that is the 'parent' marker, then
-      // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
-      // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
-      // the first sub-draw in that range.
-    }
-    else if(m_FirstEventID <= baseEventID && m_LastEventID >= baseEventID)
-    {
-      // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
-      // by just reducing the Count parameter to however many we want to replay. This only
-      // works if we're replaying from the first multidraw to the nth (n less than Count)
-      m_Real.glMultiDrawArrays(Mode, firstArray, countArray,
-                               RDCMIN(Count, m_LastEventID - baseEventID + 1));
-    }
-    else
-    {
-      // otherwise we do the 'hard' case, draw only one multidraw
-      // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
-      // a single draw.
-      RDCASSERT(m_LastEventID == m_FirstEventID);
-
-      uint32_t drawidx = (m_LastEventID - baseEventID);
-
-      m_Real.glDrawArrays(Mode, firstArray[drawidx], countArray[drawidx]);
-    }
-  }
-
-  const string desc = m_pSerialiser->GetDebugStr();
-
-  Serialise_DebugMessages();
-
-  if(m_State == READING)
-  {
-    string name = "glMultiDrawArrays(" + ToStr::Get(Count) + ")";
-
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.flags |= eDraw_MultiDraw;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-
-    AddDrawcall(draw, false);
-
-    m_DrawcallStack.push_back(&m_DrawcallStack.back()->children.back());
-
-    m_CurEventID++;
-
-    for(uint32_t i = 0; i < Count; i++)
-    {
-      FetchDrawcall multidraw;
-      multidraw.numIndices = countArray[i];
-      multidraw.vertexOffset = firstArray[i];
-
-      multidraw.name =
-          "glMultiDrawArrays[" + ToStr::Get(i) + "](" + ToStr::Get(multidraw.numIndices) + ")";
-
-      multidraw.flags |= eDraw_Drawcall;
-
-      multidraw.topology = MakePrimitiveTopology(m_Real, Mode);
-
-      AddEvent(desc);
-      AddDrawcall(multidraw, true);
-
-      m_CurEventID++;
-    }
-
-    m_DrawcallStack.pop_back();
-  }
-  else
-  {
-    m_CurEventID += Count + 1;
-  }
-
-  SAFE_DELETE_ARRAY(firstArray);
-  SAFE_DELETE_ARRAY(countArray);
 
   return true;
 }
@@ -1846,160 +2002,147 @@ void WrappedOpenGL::glMultiDrawArrays(GLenum mode, const GLint *first, const GLs
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glMultiDrawArrays(mode, first, count, drawcount);
+  SERIALISE_TIME_CALL(m_Real.glMultiDrawArrays(mode, first, count, drawcount));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(MULTI_DRAWARRAYS);
-    Serialise_glMultiDrawArrays(mode, first, count, drawcount);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glMultiDrawArrays(ser, mode, first, count, drawcount);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glMultiDrawElements(GLenum mode, const GLsizei *count, GLenum type,
-                                                  const void *const *indices, GLsizei drawcount)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glMultiDrawElements(SerialiserType &ser, GLenum mode,
+                                                  const GLsizei *count, GLenum type,
+                                                  const void *const *indicesPtr, GLsizei drawcount)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(GLenum, Type, type);
-  SERIALISE_ELEMENT(uint32_t, Count, drawcount);
-
-  SERIALISE_ELEMENT_ARR(int32_t, countArray, count, Count);
-
-  void **idxOffsArray = new void *[Count];
-
-  // serialise pointer array as uint64s
-  if(m_State >= WRITING)
+  // need to serialise the array by hand since the pointers are really offsets :(.
+  std::vector<uint64_t> indices;
+  if(ser.IsWriting())
   {
-    for(uint32_t i = 0; i < Count; i++)
-    {
-      uint64_t ptr = (uint64_t)indices[i];
-      m_pSerialiser->Serialise("idxOffsArray", ptr);
-    }
-  }
-  else
-  {
-    for(uint32_t i = 0; i < Count; i++)
-    {
-      uint64_t ptr = 0;
-      m_pSerialiser->Serialise("idxOffsArray", ptr);
-      idxOffsArray[i] = (void *)ptr;
-    }
+    indices.reserve(drawcount);
+    for(GLsizei i = 0; i < drawcount; i++)
+      indices.push_back((uint64_t)indicesPtr[i]);
   }
 
-  if(m_State == READING)
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT_ARRAY(count, drawcount);
+  SERIALISE_ELEMENT(type);
+  SERIALISE_ELEMENT(indices);
+  SERIALISE_ELEMENT(drawcount);
+
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glMultiDrawElements(Mode, countArray, Type, idxOffsArray, Count);
+    std::vector<const void *> inds;
+    inds.reserve(drawcount);
+    for(GLsizei i = 0; i < drawcount; i++)
+      inds.push_back((const void *)indices[i]);
+
+    if(IsLoading(m_State))
+    {
+      m_Real.glMultiDrawElements(mode, count, type, inds.data(), drawcount);
+
+      uint32_t IdxSize = GetIdxSize(type);
+
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%i)", ToStr(gl_CurChunk).c_str(), drawcount);
+
+      draw.flags |= DrawFlags::MultiDraw;
+      draw.indexByteWidth = IdxSize;
+      draw.numIndices = 0;
+
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
+
+      AddDrawcall(draw, false);
+
+      m_DrawcallStack.push_back(&m_DrawcallStack.back()->children.back());
+
+      for(GLsizei i = 0; i < drawcount; i++)
+      {
+        m_CurEventID++;
+
+        DrawcallDescription multidraw;
+        multidraw.numIndices = count[i];
+        multidraw.indexOffset = (uint32_t)(indices[i] & 0xFFFFFFFF);
+        multidraw.indexByteWidth = IdxSize;
+
+        multidraw.indexOffset /= IdxSize;
+
+        multidraw.name =
+            StringFormat::Fmt("%s[%i](%u)", ToStr(gl_CurChunk).c_str(), i, multidraw.numIndices);
+
+        multidraw.flags |= DrawFlags::Drawcall | DrawFlags::UseIBuffer;
+
+        multidraw.topology = MakePrimitiveTopology(m_Real, mode);
+
+        AddEvent();
+        AddDrawcall(multidraw, true);
+      }
+
+      m_DrawcallStack.pop_back();
+    }
+    else if(IsActiveReplaying(m_State))
+    {
+      size_t i = 0;
+      for(; i < m_Events.size(); i++)
+      {
+        if(m_Events[i].eventId >= m_CurEventID)
+          break;
+      }
+
+      while(i > 1 && m_Events[i - 1].fileOffset == m_Events[i].fileOffset)
+        i--;
+
+      uint32_t baseEventID = m_Events[i].eventId;
+
+      if(m_LastEventID < baseEventID)
+      {
+        // To add the multidraw, we made an event N that is the 'parent' marker, then
+        // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
+        // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
+        // the first sub-draw in that range.
+      }
+      else if(m_FirstEventID <= baseEventID && m_LastEventID >= baseEventID)
+      {
+        // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
+        // by just reducing the Count parameter to however many we want to replay. This only
+        // works if we're replaying from the first multidraw to the nth (n less than Count)
+        m_Real.glMultiDrawElements(mode, count, type, inds.data(),
+                                   RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID + 1));
+      }
+      else
+      {
+        // otherwise we do the 'hard' case, draw only one multidraw
+        // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
+        // a single draw.
+        RDCASSERT(m_LastEventID == m_FirstEventID);
+
+        uint32_t drawidx = (m_LastEventID - baseEventID);
+
+        m_Real.glDrawElements(mode, count[drawidx], type, inds[drawidx]);
+      }
+
+      m_CurEventID += (uint32_t)drawcount;
+    }
   }
-  else if(m_State <= EXECUTING)
-  {
-    size_t i = 0;
-    for(; i < m_Events.size(); i++)
-    {
-      if(m_Events[i].eventID >= m_CurEventID)
-        break;
-    }
-
-    while(i > 1 && m_Events[i - 1].fileOffset == m_Events[i].fileOffset)
-      i--;
-
-    uint32_t baseEventID = m_Events[i].eventID;
-
-    if(m_LastEventID < baseEventID)
-    {
-      // To add the multidraw, we made an event N that is the 'parent' marker, then
-      // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
-      // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
-      // the first sub-draw in that range.
-    }
-    else if(m_FirstEventID <= baseEventID && m_LastEventID >= baseEventID)
-    {
-      // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
-      // by just reducing the Count parameter to however many we want to replay. This only
-      // works if we're replaying from the first multidraw to the nth (n less than Count)
-      m_Real.glMultiDrawElements(Mode, countArray, Type, idxOffsArray,
-                                 RDCMIN(Count, m_LastEventID - baseEventID + 1));
-    }
-    else
-    {
-      // otherwise we do the 'hard' case, draw only one multidraw
-      // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
-      // a single draw.
-      RDCASSERT(m_LastEventID == m_FirstEventID);
-
-      uint32_t drawidx = (m_LastEventID - baseEventID);
-
-      m_Real.glDrawElements(Mode, countArray[drawidx], Type, idxOffsArray[drawidx]);
-    }
-  }
-
-  const string desc = m_pSerialiser->GetDebugStr();
-
-  Serialise_DebugMessages();
-
-  if(m_State == READING)
-  {
-    string name = "glMultiDrawElements(" + ToStr::Get(Count) + ")";
-
-    uint32_t IdxSize = Type == eGL_UNSIGNED_BYTE ? 1 : Type == eGL_UNSIGNED_SHORT
-                                                           ? 2
-                                                           : /*Type == eGL_UNSIGNED_INT*/ 4;
-
-    FetchDrawcall draw;
-    draw.name = name;
-
-    draw.flags |= eDraw_MultiDraw;
-    draw.indexByteWidth = IdxSize;
-    draw.numIndices = 0;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-
-    AddDrawcall(draw, false);
-
-    m_DrawcallStack.push_back(&m_DrawcallStack.back()->children.back());
-
-    m_CurEventID++;
-
-    for(uint32_t i = 0; i < Count; i++)
-    {
-      FetchDrawcall multidraw;
-      multidraw.numIndices = countArray[i];
-      multidraw.indexOffset = (uint32_t)uint64_t(idxOffsArray[i]) & 0xFFFFFFFF;
-      multidraw.indexByteWidth = IdxSize;
-
-      multidraw.indexOffset /= IdxSize;
-
-      multidraw.name =
-          "glMultiDrawElements[" + ToStr::Get(i) + "](" + ToStr::Get(multidraw.numIndices) + ")";
-
-      multidraw.flags |= eDraw_Drawcall | eDraw_UseIBuffer;
-
-      multidraw.topology = MakePrimitiveTopology(m_Real, Mode);
-
-      AddEvent(desc);
-      AddDrawcall(multidraw, true);
-
-      m_CurEventID++;
-    }
-
-    m_DrawcallStack.pop_back();
-  }
-  else
-  {
-    m_CurEventID += Count + 1;
-  }
-
-  SAFE_DELETE_ARRAY(countArray);
-  SAFE_DELETE_ARRAY(idxOffsArray);
 
   return true;
 }
@@ -2009,165 +2152,152 @@ void WrappedOpenGL::glMultiDrawElements(GLenum mode, const GLsizei *count, GLenu
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glMultiDrawElements(mode, count, type, indices, drawcount);
+  SERIALISE_TIME_CALL(m_Real.glMultiDrawElements(mode, count, type, indices, drawcount));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(MULTI_DRAWELEMENTS);
-    Serialise_glMultiDrawElements(mode, count, type, indices, drawcount);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glMultiDrawElements(ser, mode, count, type, indices, drawcount);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *count,
-                                                            GLenum type, const void *const *indices,
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glMultiDrawElementsBaseVertex(SerialiserType &ser, GLenum mode,
+                                                            const GLsizei *count, GLenum type,
+                                                            const void *const *indicesPtr,
                                                             GLsizei drawcount,
                                                             const GLint *basevertex)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(GLenum, Type, type);
-  SERIALISE_ELEMENT(uint32_t, Count, drawcount);
-
-  SERIALISE_ELEMENT_ARR(int32_t, countArray, count, Count);
-  SERIALISE_ELEMENT_ARR(int32_t, baseArray, basevertex, Count);
-
-  void **idxOffsArray = new void *[Count];
-
-  // serialise pointer array as uint64s
-  if(m_State >= WRITING)
+  // need to serialise the array by hand since the pointers are really offsets :(.
+  std::vector<uint64_t> indices;
+  if(ser.IsWriting())
   {
-    for(uint32_t i = 0; i < Count; i++)
-    {
-      uint64_t ptr = (uint64_t)indices[i];
-      m_pSerialiser->Serialise("idxOffsArray", ptr);
-    }
-  }
-  else
-  {
-    for(uint32_t i = 0; i < Count; i++)
-    {
-      uint64_t ptr = 0;
-      m_pSerialiser->Serialise("idxOffsArray", ptr);
-      idxOffsArray[i] = (void *)ptr;
-    }
+    indices.reserve(drawcount);
+    for(GLsizei i = 0; i < drawcount; i++)
+      indices.push_back((uint64_t)indicesPtr[i]);
   }
 
-  if(m_State == READING)
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT_ARRAY(count, drawcount);
+  SERIALISE_ELEMENT(type);
+  SERIALISE_ELEMENT(indices);
+  SERIALISE_ELEMENT(drawcount);
+  SERIALISE_ELEMENT_ARRAY(basevertex, drawcount);
+
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glMultiDrawElementsBaseVertex(Mode, countArray, Type, idxOffsArray, Count, baseArray);
+    std::vector<const void *> inds;
+    inds.reserve(drawcount);
+    for(GLsizei i = 0; i < drawcount; i++)
+      inds.push_back((const void *)indices[i]);
+
+    if(IsLoading(m_State))
+    {
+      m_Real.glMultiDrawElementsBaseVertex(mode, count, type, inds.data(), drawcount, basevertex);
+
+      uint32_t IdxSize = GetIdxSize(type);
+
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%i)", ToStr(gl_CurChunk).c_str(), drawcount);
+
+      draw.flags |= DrawFlags::MultiDraw;
+
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
+      draw.indexByteWidth = IdxSize;
+
+      AddDrawcall(draw, false);
+
+      m_DrawcallStack.push_back(&m_DrawcallStack.back()->children.back());
+
+      for(GLsizei i = 0; i < drawcount; i++)
+      {
+        m_CurEventID++;
+
+        DrawcallDescription multidraw;
+        multidraw.numIndices = count[i];
+        multidraw.indexOffset = (uint32_t)(indices[i] & 0xFFFFFFFF);
+        multidraw.baseVertex = basevertex[i];
+
+        multidraw.indexOffset /= IdxSize;
+
+        multidraw.name =
+            StringFormat::Fmt("%s[%i](%u)", ToStr(gl_CurChunk).c_str(), i, multidraw.numIndices);
+
+        multidraw.flags |= DrawFlags::Drawcall | DrawFlags::UseIBuffer;
+
+        multidraw.topology = MakePrimitiveTopology(m_Real, mode);
+        multidraw.indexByteWidth = IdxSize;
+
+        AddEvent();
+        AddDrawcall(multidraw, true);
+      }
+
+      m_DrawcallStack.pop_back();
+    }
+    else if(IsActiveReplaying(m_State))
+    {
+      size_t i = 0;
+      for(; i < m_Events.size(); i++)
+      {
+        if(m_Events[i].eventId >= m_CurEventID)
+          break;
+      }
+
+      while(i > 1 && m_Events[i - 1].fileOffset == m_Events[i].fileOffset)
+        i--;
+
+      uint32_t baseEventID = m_Events[i].eventId;
+
+      if(m_LastEventID < baseEventID)
+      {
+        // To add the multidraw, we made an event N that is the 'parent' marker, then
+        // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
+        // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
+        // the first sub-draw in that range.
+      }
+      else if(m_FirstEventID <= baseEventID && m_LastEventID >= baseEventID)
+      {
+        // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
+        // by just reducing the Count parameter to however many we want to replay. This only
+        // works if we're replaying from the first multidraw to the nth (n less than Count)
+        m_Real.glMultiDrawElementsBaseVertex(
+            mode, count, type, inds.data(),
+            RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID + 1), basevertex);
+      }
+      else
+      {
+        // otherwise we do the 'hard' case, draw only one multidraw
+        // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
+        // a single draw.
+        RDCASSERT(m_LastEventID == m_FirstEventID);
+
+        uint32_t drawidx = (m_LastEventID - baseEventID);
+
+        m_Real.glDrawElementsBaseVertex(mode, count[drawidx], type, inds[drawidx],
+                                        basevertex[drawidx]);
+      }
+
+      m_CurEventID += (uint32_t)drawcount;
+    }
   }
-  else if(m_State <= EXECUTING)
-  {
-    size_t i = 0;
-    for(; i < m_Events.size(); i++)
-    {
-      if(m_Events[i].eventID >= m_CurEventID)
-        break;
-    }
-
-    while(i > 1 && m_Events[i - 1].fileOffset == m_Events[i].fileOffset)
-      i--;
-
-    uint32_t baseEventID = m_Events[i].eventID;
-
-    if(m_LastEventID < baseEventID)
-    {
-      // To add the multidraw, we made an event N that is the 'parent' marker, then
-      // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
-      // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
-      // the first sub-draw in that range.
-    }
-    else if(m_FirstEventID <= baseEventID && m_LastEventID >= baseEventID)
-    {
-      // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
-      // by just reducing the Count parameter to however many we want to replay. This only
-      // works if we're replaying from the first multidraw to the nth (n less than Count)
-      m_Real.glMultiDrawElementsBaseVertex(Mode, countArray, Type, idxOffsArray,
-                                           RDCMIN(Count, m_LastEventID - baseEventID + 1), baseArray);
-    }
-    else
-    {
-      // otherwise we do the 'hard' case, draw only one multidraw
-      // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
-      // a single draw.
-      RDCASSERT(m_LastEventID == m_FirstEventID);
-
-      uint32_t drawidx = (m_LastEventID - baseEventID);
-
-      m_Real.glDrawElementsBaseVertex(Mode, countArray[drawidx], Type, idxOffsArray[drawidx],
-                                      baseArray[drawidx]);
-    }
-  }
-
-  const string desc = m_pSerialiser->GetDebugStr();
-
-  Serialise_DebugMessages();
-
-  if(m_State == READING)
-  {
-    string name = "glMultiDrawElementsBaseVertex(" + ToStr::Get(Count) + ")";
-
-    uint32_t IdxSize = Type == eGL_UNSIGNED_BYTE ? 1 : Type == eGL_UNSIGNED_SHORT
-                                                           ? 2
-                                                           : /*Type == eGL_UNSIGNED_INT*/ 4;
-
-    FetchDrawcall draw;
-    draw.name = name;
-
-    draw.flags |= eDraw_MultiDraw;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-    draw.indexByteWidth = IdxSize;
-
-    AddDrawcall(draw, false);
-
-    m_DrawcallStack.push_back(&m_DrawcallStack.back()->children.back());
-
-    m_CurEventID++;
-
-    for(uint32_t i = 0; i < Count; i++)
-    {
-      FetchDrawcall multidraw;
-      multidraw.numIndices = countArray[i];
-      multidraw.indexOffset = (uint32_t)uint64_t(idxOffsArray[i]) & 0xFFFFFFFF;
-      multidraw.baseVertex = baseArray[i];
-
-      multidraw.indexOffset /= IdxSize;
-
-      multidraw.name = "glMultiDrawElementsBaseVertex[" + ToStr::Get(i) + "](" +
-                       ToStr::Get(multidraw.numIndices) + ")";
-
-      multidraw.flags |= eDraw_Drawcall | eDraw_UseIBuffer;
-
-      multidraw.topology = MakePrimitiveTopology(m_Real, Mode);
-      multidraw.indexByteWidth = IdxSize;
-
-      AddEvent(desc);
-      AddDrawcall(multidraw, true);
-
-      m_CurEventID++;
-    }
-
-    m_DrawcallStack.pop_back();
-  }
-  else
-  {
-    m_CurEventID += Count + 1;
-  }
-
-  SAFE_DELETE_ARRAY(countArray);
-  SAFE_DELETE_ARRAY(baseArray);
-  SAFE_DELETE_ARRAY(idxOffsArray);
 
   return true;
 }
@@ -2178,158 +2308,183 @@ void WrappedOpenGL::glMultiDrawElementsBaseVertex(GLenum mode, const GLsizei *co
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glMultiDrawElementsBaseVertex(mode, count, type, indices, drawcount, basevertex);
+  SERIALISE_TIME_CALL(
+      m_Real.glMultiDrawElementsBaseVertex(mode, count, type, indices, drawcount, basevertex));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(MULTI_DRAWELEMENTSBASEVERTEX);
-    Serialise_glMultiDrawElementsBaseVertex(mode, count, type, indices, drawcount, basevertex);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glMultiDrawElementsBaseVertex(ser, mode, count, type, indices, drawcount, basevertex);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glMultiDrawArraysIndirect(GLenum mode, const void *indirect,
-                                                        GLsizei drawcount, GLsizei stride)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glMultiDrawArraysIndirect(SerialiserType &ser, GLenum mode,
+                                                        const void *indirect, GLsizei drawcount,
+                                                        GLsizei stride)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(uint64_t, Offset, (uint64_t)indirect);
-  SERIALISE_ELEMENT(uint32_t, Count, drawcount);
-  SERIALISE_ELEMENT(uint32_t, Stride, stride);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT_LOCAL(offset, (uint64_t)indirect);
+  SERIALISE_ELEMENT(drawcount);
+  SERIALISE_ELEMENT(stride);
 
-  if(m_State == READING)
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glMultiDrawArraysIndirect(Mode, (const void *)Offset, Count, Stride);
-  }
-  else if(m_State <= EXECUTING)
-  {
-    size_t i = 0;
-    for(; i < m_Events.size(); i++)
+    if(IsLoading(m_State))
     {
-      if(m_Events[i].eventID >= m_CurEventID)
-        break;
+      m_Real.glMultiDrawArraysIndirect(mode, (const void *)offset, drawcount, stride);
+
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%i)", ToStr(gl_CurChunk).c_str(), drawcount);
+
+      draw.flags |= DrawFlags::MultiDraw;
+
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
+
+      AddDrawcall(draw, false);
+
+      m_DrawcallStack.push_back(&m_DrawcallStack.back()->children.back());
+
+      {
+        GLuint buf = 0;
+        m_Real.glGetIntegerv(eGL_DRAW_INDIRECT_BUFFER_BINDING, (GLint *)&buf);
+
+        m_ResourceUses[GetResourceManager()->GetID(BufferRes(GetCtx(), buf))].push_back(
+            EventUsage(m_CurEventID, ResourceUsage::Indirect));
+      }
+
+      GLintptr offs = (GLintptr)offset;
+
+      SDChunk *baseChunk = m_StructuredFile->chunks.back();
+
+      for(GLsizei i = 0; i < drawcount; i++)
+      {
+        m_CurEventID++;
+
+        DrawArraysIndirectCommand params;
+
+        m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
+
+        if(stride)
+          offs += stride;
+        else
+          offs += sizeof(params);
+
+        DrawcallDescription multidraw;
+        multidraw.numIndices = params.count;
+        multidraw.numInstances = params.instanceCount;
+        multidraw.vertexOffset = params.first;
+        multidraw.instanceOffset = params.baseInstance;
+
+        multidraw.name = StringFormat::Fmt("%s[%i](<%u, %u>)", ToStr(gl_CurChunk).c_str(), i,
+                                           multidraw.numIndices, multidraw.numInstances);
+
+        multidraw.flags |= DrawFlags::Drawcall | DrawFlags::Instanced | DrawFlags::Indirect;
+
+        multidraw.topology = MakePrimitiveTopology(m_Real, mode);
+
+        // add a fake chunk for this individual indirect draw
+        SDChunk *fakeChunk = new SDChunk(multidraw.name.c_str());
+        fakeChunk->metadata.chunkID = (uint32_t)GLChunk::glIndirectSubCommand;
+        // just copy the metadata
+        fakeChunk->metadata = baseChunk->metadata;
+
+        fakeChunk->AddChild(makeSDObject("drawIndex", (uint32_t)i));
+        fakeChunk->AddChild(makeSDObject("offset", (uint64_t)offs));
+
+        SDObject *command = new SDObject("command", "DrawArraysIndirectCommand");
+
+        command->type.basetype = SDBasic::Struct;
+        command->type.byteSize = sizeof(DrawArraysIndirectCommand);
+
+        command->AddChild(makeSDObject("count", params.count));
+        command->AddChild(makeSDObject("instanceCount", params.instanceCount));
+        command->AddChild(makeSDObject("first", params.first));
+        command->AddChild(makeSDObject("baseInstance", params.baseInstance));
+
+        fakeChunk->AddChild(command);
+
+        m_StructuredFile->chunks.push_back(fakeChunk);
+
+        AddEvent();
+        AddDrawcall(multidraw, true);
+      }
+
+      m_DrawcallStack.pop_back();
     }
-
-    while(i > 1 && m_Events[i - 1].fileOffset == m_Events[i].fileOffset)
-      i--;
-
-    uint32_t baseEventID = m_Events[i].eventID;
-
-    if(m_LastEventID < baseEventID)
+    else if(IsActiveReplaying(m_State))
     {
-      // To add the multidraw, we made an event N that is the 'parent' marker, then
-      // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
-      // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
-      // the first sub-draw in that range.
-    }
-    else if(m_FirstEventID <= baseEventID && m_LastEventID >= baseEventID)
-    {
-      // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
-      // by just reducing the Count parameter to however many we want to replay. This only
-      // works if we're replaying from the first multidraw to the nth (n less than Count)
-      m_Real.glMultiDrawArraysIndirect(Mode, (const void *)Offset,
-                                       RDCMIN(Count, m_LastEventID - baseEventID + 1), Stride);
-    }
-    else
-    {
-      // otherwise we do the 'hard' case, draw only one multidraw
-      // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
-      // a single draw.
-      RDCASSERT(m_LastEventID == m_FirstEventID);
+      size_t i = 0;
+      for(; i < m_Events.size(); i++)
+      {
+        if(m_Events[i].eventId >= m_CurEventID)
+          break;
+      }
 
-      uint32_t drawidx = (m_LastEventID - baseEventID);
+      while(i > 1 && m_Events[i - 1].fileOffset == m_Events[i].fileOffset)
+        i--;
 
-      DrawArraysIndirectCommand params;
+      uint32_t baseEventID = m_Events[i].eventId;
 
-      GLintptr offs = (GLintptr)Offset;
-      if(Stride != 0)
-        offs += Stride * drawidx;
+      if(m_LastEventID < baseEventID)
+      {
+        // To add the multidraw, we made an event N that is the 'parent' marker, then
+        // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
+        // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
+        // the first sub-draw in that range.
+      }
+      else if(m_FirstEventID <= baseEventID && m_LastEventID >= baseEventID)
+      {
+        // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
+        // by just reducing the Count parameter to however many we want to replay. This only
+        // works if we're replaying from the first multidraw to the nth (n less than Count)
+        m_Real.glMultiDrawArraysIndirect(
+            mode, (const void *)offset,
+            RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID + 1), stride);
+      }
       else
-        offs += sizeof(params) * drawidx;
+      {
+        // otherwise we do the 'hard' case, draw only one multidraw
+        // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
+        // a single draw.
+        RDCASSERT(m_LastEventID == m_FirstEventID);
 
-      m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
+        uint32_t drawidx = (m_LastEventID - baseEventID);
 
-      m_Real.glDrawArraysInstancedBaseInstance(Mode, params.first, params.count,
-                                               params.instanceCount, params.baseInstance);
+        DrawArraysIndirectCommand params;
+
+        GLintptr offs = (GLintptr)offset;
+        if(stride != 0)
+          offs += stride * drawidx;
+        else
+          offs += sizeof(params) * drawidx;
+
+        m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
+
+        m_Real.glDrawArraysInstancedBaseInstance(mode, params.first, params.count,
+                                                 params.instanceCount, params.baseInstance);
+      }
+
+      m_CurEventID += drawcount;
     }
-  }
-
-  const string desc = m_pSerialiser->GetDebugStr();
-
-  Serialise_DebugMessages();
-
-  if(m_State == READING)
-  {
-    string name = "glMultiDrawArraysIndirect(" + ToStr::Get(Count) + ")";
-
-    FetchDrawcall draw;
-    draw.name = name;
-
-    draw.flags |= eDraw_MultiDraw;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-
-    AddDrawcall(draw, false);
-
-    m_DrawcallStack.push_back(&m_DrawcallStack.back()->children.back());
-
-    {
-      GLuint buf = 0;
-      m_Real.glGetIntegerv(eGL_DRAW_INDIRECT_BUFFER_BINDING, (GLint *)&buf);
-
-      m_ResourceUses[GetResourceManager()->GetID(BufferRes(GetCtx(), buf))].push_back(
-          EventUsage(m_CurEventID, eUsage_Indirect));
-    }
-
-    m_CurEventID++;
-
-    GLintptr offs = (GLintptr)Offset;
-
-    for(uint32_t i = 0; i < Count; i++)
-    {
-      DrawArraysIndirectCommand params;
-
-      m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
-
-      if(Stride)
-        offs += Stride;
-      else
-        offs += sizeof(params);
-
-      FetchDrawcall multidraw;
-      multidraw.numIndices = params.count;
-      multidraw.numInstances = params.instanceCount;
-      multidraw.vertexOffset = params.first;
-      multidraw.instanceOffset = params.baseInstance;
-
-      multidraw.name = "glMultiDrawArraysIndirect[" + ToStr::Get(i) + "](<" +
-                       ToStr::Get(multidraw.numIndices) + ", " +
-                       ToStr::Get(multidraw.numInstances) + ">)";
-
-      multidraw.flags |= eDraw_Drawcall | eDraw_Instanced | eDraw_Indirect;
-
-      multidraw.topology = MakePrimitiveTopology(m_Real, Mode);
-
-      AddEvent(desc);
-      AddDrawcall(multidraw, true);
-
-      m_CurEventID++;
-    }
-
-    m_DrawcallStack.pop_back();
-  }
-  else
-  {
-    m_CurEventID += Count + 1;
   }
 
   return true;
@@ -2340,168 +2495,194 @@ void WrappedOpenGL::glMultiDrawArraysIndirect(GLenum mode, const void *indirect,
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glMultiDrawArraysIndirect(mode, indirect, drawcount, stride);
+  SERIALISE_TIME_CALL(m_Real.glMultiDrawArraysIndirect(mode, indirect, drawcount, stride));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(MULTI_DRAWARRAYS_INDIRECT);
-    Serialise_glMultiDrawArraysIndirect(mode, indirect, drawcount, stride);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glMultiDrawArraysIndirect(ser, mode, indirect, drawcount, stride);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glMultiDrawElementsIndirect(GLenum mode, GLenum type,
-                                                          const void *indirect, GLsizei drawcount,
-                                                          GLsizei stride)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glMultiDrawElementsIndirect(SerialiserType &ser, GLenum mode,
+                                                          GLenum type, const void *indirect,
+                                                          GLsizei drawcount, GLsizei stride)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(GLenum, Type, type);
-  SERIALISE_ELEMENT(uint64_t, Offset, (uint64_t)indirect);
-  SERIALISE_ELEMENT(uint32_t, Count, drawcount);
-  SERIALISE_ELEMENT(uint32_t, Stride, stride);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT(type);
+  SERIALISE_ELEMENT_LOCAL(offset, (uint64_t)indirect);
+  SERIALISE_ELEMENT(drawcount);
+  SERIALISE_ELEMENT(stride);
 
-  uint32_t IdxSize = Type == eGL_UNSIGNED_BYTE ? 1 : Type == eGL_UNSIGNED_SHORT
-                                                         ? 2
-                                                         : /*Type == eGL_UNSIGNED_INT*/ 4;
+  Serialise_DebugMessages(ser);
 
-  if(m_State == READING)
+  SERIALISE_CHECK_READ_ERRORS();
+
+  uint32_t IdxSize = GetIdxSize(type);
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glMultiDrawElementsIndirect(Mode, Type, (const void *)Offset, Count, Stride);
-  }
-  else if(m_State <= EXECUTING)
-  {
-    size_t i = 0;
-    for(; i < m_Events.size(); i++)
+    if(IsLoading(m_State))
     {
-      if(m_Events[i].eventID >= m_CurEventID)
-        break;
+      GLRenderState state(&m_Real);
+      state.FetchState(this);
+
+      m_Real.glMultiDrawElementsIndirect(mode, type, (const void *)offset, drawcount, stride);
+
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%i)", ToStr(gl_CurChunk).c_str(), drawcount);
+
+      draw.flags |= DrawFlags::MultiDraw;
+
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
+      draw.indexByteWidth = IdxSize;
+
+      AddDrawcall(draw, false);
+
+      m_DrawcallStack.push_back(&m_DrawcallStack.back()->children.back());
+
+      {
+        GLuint buf = 0;
+        m_Real.glGetIntegerv(eGL_DRAW_INDIRECT_BUFFER_BINDING, (GLint *)&buf);
+
+        m_ResourceUses[GetResourceManager()->GetID(BufferRes(GetCtx(), buf))].push_back(
+            EventUsage(m_CurEventID, ResourceUsage::Indirect));
+      }
+
+      GLintptr offs = (GLintptr)offset;
+
+      SDChunk *baseChunk = m_StructuredFile->chunks.back();
+
+      for(GLsizei i = 0; i < drawcount; i++)
+      {
+        m_CurEventID++;
+
+        DrawElementsIndirectCommand params;
+
+        m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
+
+        if(stride)
+          offs += stride;
+        else
+          offs += sizeof(params);
+
+        DrawcallDescription multidraw;
+        multidraw.numIndices = params.count;
+        multidraw.numInstances = params.instanceCount;
+        multidraw.indexOffset = params.firstIndex;
+        multidraw.baseVertex = params.baseVertex;
+        multidraw.instanceOffset = params.baseInstance;
+
+        multidraw.name = StringFormat::Fmt("%s[%i](<%u, %u>)", ToStr(gl_CurChunk).c_str(), i,
+                                           multidraw.numIndices, multidraw.numInstances);
+
+        multidraw.flags |= DrawFlags::Drawcall | DrawFlags::UseIBuffer | DrawFlags::Instanced |
+                           DrawFlags::Indirect;
+
+        multidraw.topology = MakePrimitiveTopology(m_Real, mode);
+        multidraw.indexByteWidth = IdxSize;
+
+        // add a fake chunk for this individual indirect draw
+        SDChunk *fakeChunk = new SDChunk(multidraw.name.c_str());
+        fakeChunk->metadata.chunkID = (uint32_t)GLChunk::glIndirectSubCommand;
+        // just copy the metadata
+        fakeChunk->metadata = baseChunk->metadata;
+
+        fakeChunk->AddChild(makeSDObject("drawIndex", (uint32_t)i));
+        fakeChunk->AddChild(makeSDObject("offset", (uint64_t)offs));
+
+        SDObject *command = new SDObject("command", "DrawElementsIndirectCommand");
+
+        command->type.basetype = SDBasic::Struct;
+        command->type.byteSize = sizeof(DrawElementsIndirectCommand);
+
+        command->AddChild(makeSDObject("count", params.count));
+        command->AddChild(makeSDObject("instanceCount", params.instanceCount));
+        command->AddChild(makeSDObject("firstIndex", params.firstIndex));
+        command->AddChild(makeSDObject("baseVertex", params.baseVertex));
+        command->AddChild(makeSDObject("baseInstance", params.baseInstance));
+
+        fakeChunk->AddChild(command);
+
+        m_StructuredFile->chunks.push_back(fakeChunk);
+
+        AddEvent();
+        AddDrawcall(multidraw, true);
+      }
+
+      m_DrawcallStack.pop_back();
     }
-
-    while(i > 1 && m_Events[i - 1].fileOffset == m_Events[i].fileOffset)
-      i--;
-
-    uint32_t baseEventID = m_Events[i].eventID;
-
-    if(m_LastEventID < baseEventID)
+    else if(IsActiveReplaying(m_State))
     {
-      // To add the multidraw, we made an event N that is the 'parent' marker, then
-      // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
-      // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
-      // the first sub-draw in that range.
-    }
-    else if(m_FirstEventID <= baseEventID && m_LastEventID >= baseEventID)
-    {
-      // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
-      // by just reducing the Count parameter to however many we want to replay. This only
-      // works if we're replaying from the first multidraw to the nth (n less than Count)
-      m_Real.glMultiDrawElementsIndirect(Mode, Type, (const void *)Offset,
-                                         RDCMIN(Count, m_LastEventID - baseEventID + 1), Stride);
-    }
-    else
-    {
-      // otherwise we do the 'hard' case, draw only one multidraw
-      // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
-      // a single draw.
-      RDCASSERT(m_LastEventID == m_FirstEventID);
+      size_t i = 0;
+      for(; i < m_Events.size(); i++)
+      {
+        if(m_Events[i].eventId >= m_CurEventID)
+          break;
+      }
 
-      uint32_t drawidx = (m_LastEventID - baseEventID);
+      while(i > 1 && m_Events[i - 1].fileOffset == m_Events[i].fileOffset)
+        i--;
 
-      DrawElementsIndirectCommand params;
+      uint32_t baseEventID = m_Events[i].eventId;
 
-      GLintptr offs = (GLintptr)Offset;
-      if(Stride != 0)
-        offs += Stride * drawidx;
+      if(m_LastEventID < baseEventID)
+      {
+        // To add the multidraw, we made an event N that is the 'parent' marker, then
+        // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
+        // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
+        // the first sub-draw in that range.
+      }
+      else if(m_FirstEventID <= baseEventID && m_LastEventID >= baseEventID)
+      {
+        // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
+        // by just reducing the Count parameter to however many we want to replay. This only
+        // works if we're replaying from the first multidraw to the nth (n less than Count)
+        m_Real.glMultiDrawElementsIndirect(
+            mode, type, (const void *)offset,
+            RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID + 1), stride);
+      }
       else
-        offs += sizeof(params) * drawidx;
+      {
+        // otherwise we do the 'hard' case, draw only one multidraw
+        // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
+        // a single draw.
+        RDCASSERT(m_LastEventID == m_FirstEventID);
 
-      m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
+        uint32_t drawidx = (m_LastEventID - baseEventID);
 
-      m_Real.glDrawElementsInstancedBaseVertexBaseInstance(
-          Mode, params.count, Type, (const void *)ptrdiff_t(params.firstIndex * IdxSize),
-          params.instanceCount, params.baseVertex, params.baseInstance);
+        DrawElementsIndirectCommand params;
+
+        GLintptr offs = (GLintptr)offset;
+        if(stride != 0)
+          offs += stride * drawidx;
+        else
+          offs += sizeof(params) * drawidx;
+
+        m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
+
+        m_Real.glDrawElementsInstancedBaseVertexBaseInstance(
+            mode, params.count, type, (const void *)(ptrdiff_t(params.firstIndex) * IdxSize),
+            params.instanceCount, params.baseVertex, params.baseInstance);
+      }
+
+      m_CurEventID += drawcount;
     }
-  }
-
-  const string desc = m_pSerialiser->GetDebugStr();
-
-  Serialise_DebugMessages();
-
-  if(m_State == READING)
-  {
-    string name = "glMultiDrawElementsIndirect(" + ToStr::Get(Count) + ")";
-
-    FetchDrawcall draw;
-    draw.name = name;
-
-    draw.flags |= eDraw_MultiDraw;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-    draw.indexByteWidth = IdxSize;
-
-    AddDrawcall(draw, false);
-
-    m_DrawcallStack.push_back(&m_DrawcallStack.back()->children.back());
-
-    {
-      GLuint buf = 0;
-      m_Real.glGetIntegerv(eGL_DRAW_INDIRECT_BUFFER_BINDING, (GLint *)&buf);
-
-      m_ResourceUses[GetResourceManager()->GetID(BufferRes(GetCtx(), buf))].push_back(
-          EventUsage(m_CurEventID, eUsage_Indirect));
-    }
-
-    m_CurEventID++;
-
-    GLintptr offs = (GLintptr)Offset;
-
-    for(uint32_t i = 0; i < Count; i++)
-    {
-      DrawElementsIndirectCommand params;
-
-      m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
-
-      if(Stride)
-        offs += Stride;
-      else
-        offs += sizeof(params);
-
-      FetchDrawcall multidraw;
-      multidraw.numIndices = params.count;
-      multidraw.numInstances = params.instanceCount;
-      multidraw.indexOffset = params.firstIndex;
-      multidraw.baseVertex = params.baseVertex;
-      multidraw.instanceOffset = params.baseInstance;
-
-      multidraw.name = "glMultiDrawElementsIndirect[" + ToStr::Get(i) + "](<" +
-                       ToStr::Get(multidraw.numIndices) + ", " +
-                       ToStr::Get(multidraw.numInstances) + ">)";
-
-      multidraw.flags |= eDraw_Drawcall | eDraw_UseIBuffer | eDraw_Instanced | eDraw_Indirect;
-
-      multidraw.topology = MakePrimitiveTopology(m_Real, Mode);
-      multidraw.indexByteWidth = IdxSize;
-
-      AddEvent(desc);
-      AddDrawcall(multidraw, true);
-
-      m_CurEventID++;
-    }
-
-    m_DrawcallStack.pop_back();
-  }
-  else
-  {
-    m_CurEventID += Count + 1;
   }
 
   return true;
@@ -2512,479 +2693,506 @@ void WrappedOpenGL::glMultiDrawElementsIndirect(GLenum mode, GLenum type, const 
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glMultiDrawElementsIndirect(mode, type, indirect, drawcount, stride);
+  SERIALISE_TIME_CALL(m_Real.glMultiDrawElementsIndirect(mode, type, indirect, drawcount, stride));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(MULTI_DRAWELEMENTS_INDIRECT);
-    Serialise_glMultiDrawElementsIndirect(mode, type, indirect, drawcount, stride);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glMultiDrawElementsIndirect(ser, mode, type, indirect, drawcount, stride);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glMultiDrawArraysIndirectCountARB(GLenum mode, GLintptr indirect,
-                                                                GLintptr drawcount,
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glMultiDrawArraysIndirectCountARB(SerialiserType &ser, GLenum mode,
+                                                                const void *indirect,
+                                                                GLintptr drawcountPtr,
                                                                 GLsizei maxdrawcount, GLsizei stride)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(uint64_t, Offset, (uint64_t)indirect);
-  SERIALISE_ELEMENT(uint64_t, Count, (uint64_t)drawcount);
-  SERIALISE_ELEMENT(uint32_t, MaxCount, maxdrawcount);
-  SERIALISE_ELEMENT(uint32_t, Stride, stride);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT_LOCAL(offset, (uint64_t)indirect);
+  SERIALISE_ELEMENT_LOCAL(drawcount, (uint64_t)drawcountPtr);
+  SERIALISE_ELEMENT(maxdrawcount);
+  SERIALISE_ELEMENT(stride);
 
-  uint32_t realdrawcount = 0;
+  Serialise_DebugMessages(ser);
 
-  if(m_State < WRITING)
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, (GLintptr)Count, sizeof(realdrawcount),
+    GLsizei realdrawcount = 0;
+
+    m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, (GLintptr)drawcount, sizeof(realdrawcount),
                               &realdrawcount);
 
-    realdrawcount = RDCMIN(MaxCount, realdrawcount);
-  }
+    realdrawcount = RDCMIN(maxdrawcount, realdrawcount);
 
-  if(m_State == READING)
-  {
-    m_Real.glMultiDrawArraysIndirectCountARB(Mode, (GLintptr)Offset, (GLintptr)Count, MaxCount,
-                                             Stride);
-  }
-  else if(m_State <= EXECUTING)
-  {
-    size_t i = 0;
-    for(; i < m_Events.size(); i++)
+    if(IsLoading(m_State))
     {
-      if(m_Events[i].eventID >= m_CurEventID)
-        break;
+      m_Real.glMultiDrawArraysIndirectCountARB(mode, (const void *)offset, (GLintptr)drawcount,
+                                               maxdrawcount, stride);
+
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(<%i>)", ToStr(gl_CurChunk).c_str(), realdrawcount);
+
+      draw.flags |= DrawFlags::MultiDraw;
+
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
+
+      AddDrawcall(draw, false);
+
+      m_DrawcallStack.push_back(&m_DrawcallStack.back()->children.back());
+
+      {
+        GLuint buf = 0;
+        m_Real.glGetIntegerv(eGL_DRAW_INDIRECT_BUFFER_BINDING, (GLint *)&buf);
+
+        m_ResourceUses[GetResourceManager()->GetID(BufferRes(GetCtx(), buf))].push_back(
+            EventUsage(m_CurEventID, ResourceUsage::Indirect));
+      }
+
+      GLintptr offs = (GLintptr)offset;
+
+      SDChunk *baseChunk = m_StructuredFile->chunks.back();
+
+      for(GLsizei i = 0; i < realdrawcount; i++)
+      {
+        m_CurEventID++;
+
+        DrawArraysIndirectCommand params;
+
+        m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
+
+        if(stride)
+          offs += stride;
+        else
+          offs += sizeof(params);
+
+        DrawcallDescription multidraw;
+        multidraw.numIndices = params.count;
+        multidraw.numInstances = params.instanceCount;
+        multidraw.vertexOffset = params.first;
+        multidraw.instanceOffset = params.baseInstance;
+
+        multidraw.name = StringFormat::Fmt("%s[%i](<%u, %u>)", ToStr(gl_CurChunk).c_str(), i,
+                                           multidraw.numIndices, multidraw.numInstances);
+
+        multidraw.flags |= DrawFlags::Drawcall | DrawFlags::Instanced | DrawFlags::Indirect;
+
+        multidraw.topology = MakePrimitiveTopology(m_Real, mode);
+
+        // add a fake chunk for this individual indirect draw
+        SDChunk *fakeChunk = new SDChunk(multidraw.name.c_str());
+        fakeChunk->metadata.chunkID = (uint32_t)GLChunk::glIndirectSubCommand;
+        // just copy the metadata
+        fakeChunk->metadata = baseChunk->metadata;
+
+        fakeChunk->AddChild(makeSDObject("drawIndex", (uint32_t)i));
+        fakeChunk->AddChild(makeSDObject("offset", (uint64_t)offs));
+
+        SDObject *command = new SDObject("command", "DrawArraysIndirectCommand");
+
+        command->type.basetype = SDBasic::Struct;
+        command->type.byteSize = sizeof(DrawArraysIndirectCommand);
+
+        command->AddChild(makeSDObject("count", params.count));
+        command->AddChild(makeSDObject("instanceCount", params.instanceCount));
+        command->AddChild(makeSDObject("first", params.first));
+        command->AddChild(makeSDObject("baseInstance", params.baseInstance));
+
+        fakeChunk->AddChild(command);
+
+        m_StructuredFile->chunks.push_back(fakeChunk);
+
+        AddEvent();
+        AddDrawcall(multidraw, true);
+      }
+
+      m_DrawcallStack.pop_back();
     }
-
-    while(i > 1 && m_Events[i - 1].fileOffset == m_Events[i].fileOffset)
-      i--;
-
-    uint32_t baseEventID = m_Events[i].eventID;
-
-    if(m_LastEventID < baseEventID)
+    else if(IsActiveReplaying(m_State))
     {
-      // To add the multidraw, we made an event N that is the 'parent' marker, then
-      // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
-      // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
-      // the first sub-draw in that range.
-    }
-    else if(m_FirstEventID <= baseEventID && m_LastEventID >= baseEventID)
-    {
-      // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
-      // by just reducing the Count parameter to however many we want to replay. This only
-      // works if we're replaying from the first multidraw to the nth (n less than Count)
-      m_Real.glMultiDrawArraysIndirect(
-          Mode, (const void *)Offset, RDCMIN(realdrawcount, m_LastEventID - baseEventID + 1), Stride);
-    }
-    else
-    {
-      // otherwise we do the 'hard' case, draw only one multidraw
-      // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
-      // a single draw.
-      RDCASSERT(m_LastEventID == m_FirstEventID);
+      size_t i = 0;
+      for(; i < m_Events.size(); i++)
+      {
+        if(m_Events[i].eventId >= m_CurEventID)
+          break;
+      }
 
-      uint32_t drawidx = (m_LastEventID - baseEventID);
+      while(i > 1 && m_Events[i - 1].fileOffset == m_Events[i].fileOffset)
+        i--;
 
-      DrawArraysIndirectCommand params;
+      uint32_t baseEventID = m_Events[i].eventId;
 
-      GLintptr offs = (GLintptr)Offset;
-      if(Stride != 0)
-        offs += Stride * drawidx;
+      if(m_LastEventID < baseEventID)
+      {
+        // To add the multidraw, we made an event N that is the 'parent' marker, then
+        // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
+        // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
+        // the first sub-draw in that range.
+      }
+      else if(m_FirstEventID <= baseEventID && m_LastEventID >= baseEventID)
+      {
+        // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
+        // by just reducing the Count parameter to however many we want to replay. This only
+        // works if we're replaying from the first multidraw to the nth (n less than Count)
+        m_Real.glMultiDrawArraysIndirect(
+            mode, (const void *)offset,
+            RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID + 1), stride);
+      }
       else
-        offs += sizeof(params) * drawidx;
+      {
+        // otherwise we do the 'hard' case, draw only one multidraw
+        // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
+        // a single draw.
+        RDCASSERT(m_LastEventID == m_FirstEventID);
 
-      m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
+        uint32_t drawidx = (m_LastEventID - baseEventID);
 
-      m_Real.glDrawArraysInstancedBaseInstance(Mode, params.first, params.count,
-                                               params.instanceCount, params.baseInstance);
+        DrawArraysIndirectCommand params;
+
+        GLintptr offs = (GLintptr)offset;
+        if(stride != 0)
+          offs += stride * drawidx;
+        else
+          offs += sizeof(params) * drawidx;
+
+        m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
+
+        m_Real.glDrawArraysInstancedBaseInstance(mode, params.first, params.count,
+                                                 params.instanceCount, params.baseInstance);
+      }
+
+      m_CurEventID += realdrawcount;
     }
-  }
-
-  const string desc = m_pSerialiser->GetDebugStr();
-
-  Serialise_DebugMessages();
-
-  if(m_State == READING)
-  {
-    string name = "glMultiDrawArraysIndirectCountARB(<" + ToStr::Get(realdrawcount) + ">)";
-
-    FetchDrawcall draw;
-    draw.name = name;
-
-    draw.flags |= eDraw_MultiDraw;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-
-    AddDrawcall(draw, false);
-
-    m_DrawcallStack.push_back(&m_DrawcallStack.back()->children.back());
-
-    {
-      GLuint buf = 0;
-      m_Real.glGetIntegerv(eGL_DRAW_INDIRECT_BUFFER_BINDING, (GLint *)&buf);
-
-      m_ResourceUses[GetResourceManager()->GetID(BufferRes(GetCtx(), buf))].push_back(
-          EventUsage(m_CurEventID, eUsage_Indirect));
-    }
-
-    m_CurEventID++;
-
-    GLintptr offs = (GLintptr)Offset;
-
-    for(uint32_t i = 0; i < realdrawcount; i++)
-    {
-      DrawArraysIndirectCommand params;
-
-      m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
-
-      if(Stride)
-        offs += Stride;
-      else
-        offs += sizeof(params);
-
-      FetchDrawcall multidraw;
-      multidraw.numIndices = params.count;
-      multidraw.numInstances = params.instanceCount;
-      multidraw.vertexOffset = params.first;
-      multidraw.instanceOffset = params.baseInstance;
-
-      multidraw.name = "glMultiDrawArraysIndirect[" + ToStr::Get(i) + "](<" +
-                       ToStr::Get(multidraw.numIndices) + ", " +
-                       ToStr::Get(multidraw.numInstances) + ">)";
-
-      multidraw.flags |= eDraw_Drawcall | eDraw_Instanced | eDraw_Indirect;
-
-      multidraw.topology = MakePrimitiveTopology(m_Real, Mode);
-
-      AddEvent(desc);
-      AddDrawcall(multidraw, true);
-
-      m_CurEventID++;
-    }
-
-    m_DrawcallStack.pop_back();
-  }
-  else
-  {
-    m_CurEventID += realdrawcount + 1;
   }
 
   return true;
 }
 
-void WrappedOpenGL::glMultiDrawArraysIndirectCountARB(GLenum mode, GLintptr indirect,
+void WrappedOpenGL::glMultiDrawArraysIndirectCountARB(GLenum mode, const void *indirect,
                                                       GLintptr drawcount, GLsizei maxdrawcount,
                                                       GLsizei stride)
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glMultiDrawArraysIndirectCountARB(mode, indirect, drawcount, maxdrawcount, stride);
+  SERIALISE_TIME_CALL(
+      m_Real.glMultiDrawArraysIndirectCountARB(mode, indirect, drawcount, maxdrawcount, stride));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(MULTI_DRAWARRAYS_INDIRECT_COUNT);
-    Serialise_glMultiDrawArraysIndirectCountARB(mode, indirect, drawcount, maxdrawcount, stride);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glMultiDrawArraysIndirectCountARB(ser, mode, indirect, drawcount, maxdrawcount, stride);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glMultiDrawElementsIndirectCountARB(GLenum mode, GLenum type,
-                                                                  GLintptr indirect,
-                                                                  GLintptr drawcount,
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glMultiDrawElementsIndirectCountARB(SerialiserType &ser, GLenum mode,
+                                                                  GLenum type, const void *indirect,
+                                                                  GLintptr drawcountPtr,
                                                                   GLsizei maxdrawcount,
                                                                   GLsizei stride)
 {
-  SERIALISE_ELEMENT(GLenum, Mode, mode);
-  SERIALISE_ELEMENT(GLenum, Type, type);
-  SERIALISE_ELEMENT(uint64_t, Offset, (uint64_t)indirect);
-  SERIALISE_ELEMENT(uint64_t, Count, (uint64_t)drawcount);
-  SERIALISE_ELEMENT(uint32_t, MaxCount, maxdrawcount);
-  SERIALISE_ELEMENT(uint32_t, Stride, stride);
+  SERIALISE_ELEMENT(mode);
+  SERIALISE_ELEMENT(type);
+  SERIALISE_ELEMENT_LOCAL(offset, (uint64_t)indirect);
+  SERIALISE_ELEMENT_LOCAL(drawcount, (uint64_t)drawcountPtr);
+  SERIALISE_ELEMENT(maxdrawcount);
+  SERIALISE_ELEMENT(stride);
 
-  uint32_t IdxSize = Type == eGL_UNSIGNED_BYTE ? 1 : Type == eGL_UNSIGNED_SHORT
-                                                         ? 2
-                                                         : /*Type == eGL_UNSIGNED_INT*/ 4;
+  Serialise_DebugMessages(ser);
 
-  uint32_t realdrawcount = 0;
+  SERIALISE_CHECK_READ_ERRORS();
 
-  if(m_State < WRITING)
+  if(IsReplayingAndReading())
   {
-    m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, (GLintptr)Count, sizeof(realdrawcount),
+    uint32_t IdxSize = GetIdxSize(type);
+
+    GLsizei realdrawcount = 0;
+
+    m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, (GLintptr)drawcount, sizeof(realdrawcount),
                               &realdrawcount);
 
-    realdrawcount = RDCMIN(MaxCount, realdrawcount);
-  }
+    realdrawcount = RDCMIN(maxdrawcount, realdrawcount);
 
-  if(m_State == READING)
-  {
-    m_Real.glMultiDrawElementsIndirectCountARB(Mode, Type, (GLintptr)Offset, (GLintptr)Count,
-                                               MaxCount, Stride);
-  }
-  else if(m_State <= EXECUTING)
-  {
-    size_t i = 0;
-    for(; i < m_Events.size(); i++)
+    if(IsLoading(m_State))
     {
-      if(m_Events[i].eventID >= m_CurEventID)
-        break;
+      m_Real.glMultiDrawElementsIndirectCountARB(mode, type, (const void *)offset,
+                                                 (GLintptr)drawcount, maxdrawcount, stride);
+
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(<%i>)", ToStr(gl_CurChunk).c_str(), realdrawcount);
+
+      draw.flags |= DrawFlags::MultiDraw;
+
+      draw.topology = MakePrimitiveTopology(m_Real, mode);
+      draw.indexByteWidth = IdxSize;
+
+      AddDrawcall(draw, false);
+
+      m_DrawcallStack.push_back(&m_DrawcallStack.back()->children.back());
+
+      {
+        GLuint buf = 0;
+        m_Real.glGetIntegerv(eGL_DRAW_INDIRECT_BUFFER_BINDING, (GLint *)&buf);
+
+        m_ResourceUses[GetResourceManager()->GetID(BufferRes(GetCtx(), buf))].push_back(
+            EventUsage(m_CurEventID, ResourceUsage::Indirect));
+      }
+
+      GLintptr offs = (GLintptr)offset;
+
+      SDChunk *baseChunk = m_StructuredFile->chunks.back();
+
+      for(GLsizei i = 0; i < realdrawcount; i++)
+      {
+        m_CurEventID++;
+
+        DrawElementsIndirectCommand params;
+
+        m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
+
+        if(stride)
+          offs += stride;
+        else
+          offs += sizeof(params);
+
+        DrawcallDescription multidraw;
+        multidraw.numIndices = params.count;
+        multidraw.numInstances = params.instanceCount;
+        multidraw.indexOffset = params.firstIndex;
+        multidraw.baseVertex = params.baseVertex;
+        multidraw.instanceOffset = params.baseInstance;
+
+        multidraw.name = StringFormat::Fmt("%s[%i](<%u, %u>)", ToStr(gl_CurChunk).c_str(), i,
+                                           multidraw.numIndices, multidraw.numInstances);
+
+        multidraw.flags |= DrawFlags::Drawcall | DrawFlags::UseIBuffer | DrawFlags::Instanced |
+                           DrawFlags::Indirect;
+
+        multidraw.topology = MakePrimitiveTopology(m_Real, mode);
+        multidraw.indexByteWidth = IdxSize;
+
+        // add a fake chunk for this individual indirect draw
+        SDChunk *fakeChunk = new SDChunk(multidraw.name.c_str());
+        fakeChunk->metadata.chunkID = (uint32_t)GLChunk::glIndirectSubCommand;
+        // just copy the metadata
+        fakeChunk->metadata = baseChunk->metadata;
+
+        fakeChunk->AddChild(makeSDObject("drawIndex", (uint32_t)i));
+        fakeChunk->AddChild(makeSDObject("offset", (uint64_t)offs));
+
+        SDObject *command = new SDObject("command", "DrawElementsIndirectCommand");
+
+        command->type.basetype = SDBasic::Struct;
+        command->type.byteSize = sizeof(DrawElementsIndirectCommand);
+
+        command->AddChild(makeSDObject("count", params.count));
+        command->AddChild(makeSDObject("instanceCount", params.instanceCount));
+        command->AddChild(makeSDObject("firstIndex", params.firstIndex));
+        command->AddChild(makeSDObject("baseVertex", params.baseVertex));
+        command->AddChild(makeSDObject("baseInstance", params.baseInstance));
+
+        fakeChunk->AddChild(command);
+
+        m_StructuredFile->chunks.push_back(fakeChunk);
+
+        AddEvent();
+        AddDrawcall(multidraw, true);
+      }
+
+      m_DrawcallStack.pop_back();
     }
-
-    while(i > 1 && m_Events[i - 1].fileOffset == m_Events[i].fileOffset)
-      i--;
-
-    uint32_t baseEventID = m_Events[i].eventID;
-
-    if(m_LastEventID < baseEventID)
+    else if(IsActiveReplaying(m_State))
     {
-      // To add the multidraw, we made an event N that is the 'parent' marker, then
-      // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
-      // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
-      // the first sub-draw in that range.
-    }
-    else if(m_FirstEventID <= baseEventID && m_LastEventID >= baseEventID)
-    {
-      // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
-      // by just reducing the Count parameter to however many we want to replay. This only
-      // works if we're replaying from the first multidraw to the nth (n less than Count)
-      m_Real.glMultiDrawElementsIndirect(Mode, Type, (const void *)Offset,
-                                         RDCMIN(realdrawcount, m_LastEventID - baseEventID + 1),
-                                         Stride);
-    }
-    else
-    {
-      // otherwise we do the 'hard' case, draw only one multidraw
-      // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
-      // a single draw.
-      RDCASSERT(m_LastEventID == m_FirstEventID);
+      size_t i = 0;
+      for(; i < m_Events.size(); i++)
+      {
+        if(m_Events[i].eventId >= m_CurEventID)
+          break;
+      }
 
-      uint32_t drawidx = (m_LastEventID - baseEventID);
+      while(i > 1 && m_Events[i - 1].fileOffset == m_Events[i].fileOffset)
+        i--;
 
-      DrawElementsIndirectCommand params;
+      uint32_t baseEventID = m_Events[i].eventId;
 
-      GLintptr offs = (GLintptr)Offset;
-      if(Stride != 0)
-        offs += Stride * drawidx;
+      if(m_LastEventID < baseEventID)
+      {
+        // To add the multidraw, we made an event N that is the 'parent' marker, then
+        // N+1, N+2, N+3, ... for each of the sub-draws. If the first sub-draw is selected
+        // then we'll replay up to N but not N+1, so just do nothing - we DON'T want to draw
+        // the first sub-draw in that range.
+      }
+      else if(m_FirstEventID <= baseEventID && m_LastEventID >= baseEventID)
+      {
+        // if we're replaying part-way into a multidraw, we can replay the first part 'easily'
+        // by just reducing the Count parameter to however many we want to replay. This only
+        // works if we're replaying from the first multidraw to the nth (n less than Count)
+        m_Real.glMultiDrawElementsIndirect(
+            mode, type, (const void *)offset,
+            RDCMIN((uint32_t)drawcount, m_LastEventID - baseEventID + 1), stride);
+      }
       else
-        offs += sizeof(params) * drawidx;
+      {
+        // otherwise we do the 'hard' case, draw only one multidraw
+        // note we'll never be asked to do e.g. 3rd-7th of a multidraw. Only ever 0th-nth or
+        // a single draw.
+        RDCASSERT(m_LastEventID == m_FirstEventID);
 
-      m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
+        uint32_t drawidx = (m_LastEventID - baseEventID);
 
-      m_Real.glDrawElementsInstancedBaseVertexBaseInstance(
-          Mode, params.count, Type, (const void *)ptrdiff_t(params.firstIndex * IdxSize),
-          params.instanceCount, params.baseVertex, params.baseInstance);
+        DrawElementsIndirectCommand params;
+
+        GLintptr offs = (GLintptr)offset;
+        if(stride != 0)
+          offs += stride * drawidx;
+        else
+          offs += sizeof(params) * drawidx;
+
+        m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
+
+        m_Real.glDrawElementsInstancedBaseVertexBaseInstance(
+            mode, params.count, type, (const void *)(ptrdiff_t(params.firstIndex) * IdxSize),
+            params.instanceCount, params.baseVertex, params.baseInstance);
+      }
+
+      m_CurEventID += realdrawcount;
     }
-  }
-
-  const string desc = m_pSerialiser->GetDebugStr();
-
-  Serialise_DebugMessages();
-
-  if(m_State == READING)
-  {
-    string name = "glMultiDrawElementsIndirectCountARB(<" + ToStr::Get(realdrawcount) + ">)";
-
-    FetchDrawcall draw;
-    draw.name = name;
-
-    draw.flags |= eDraw_MultiDraw;
-
-    draw.topology = MakePrimitiveTopology(m_Real, Mode);
-    draw.indexByteWidth = IdxSize;
-
-    AddDrawcall(draw, false);
-
-    m_DrawcallStack.push_back(&m_DrawcallStack.back()->children.back());
-
-    {
-      GLuint buf = 0;
-      m_Real.glGetIntegerv(eGL_DRAW_INDIRECT_BUFFER_BINDING, (GLint *)&buf);
-
-      m_ResourceUses[GetResourceManager()->GetID(BufferRes(GetCtx(), buf))].push_back(
-          EventUsage(m_CurEventID, eUsage_Indirect));
-    }
-
-    m_CurEventID++;
-
-    GLintptr offs = (GLintptr)Offset;
-
-    for(uint32_t i = 0; i < realdrawcount; i++)
-    {
-      DrawElementsIndirectCommand params;
-
-      m_Real.glGetBufferSubData(eGL_DRAW_INDIRECT_BUFFER, offs, sizeof(params), &params);
-
-      if(Stride)
-        offs += Stride;
-      else
-        offs += sizeof(params);
-
-      FetchDrawcall multidraw;
-      multidraw.numIndices = params.count;
-      multidraw.numInstances = params.instanceCount;
-      multidraw.indexOffset = params.firstIndex;
-      multidraw.baseVertex = params.baseVertex;
-      multidraw.instanceOffset = params.baseInstance;
-
-      multidraw.name = "glMultiDrawElementsIndirect[" + ToStr::Get(i) + "](" +
-                       ToStr::Get(multidraw.numIndices) + ", " +
-                       ToStr::Get(multidraw.numInstances) + ")";
-
-      multidraw.flags |= eDraw_Drawcall | eDraw_UseIBuffer | eDraw_Instanced | eDraw_Indirect;
-
-      multidraw.topology = MakePrimitiveTopology(m_Real, Mode);
-      multidraw.indexByteWidth = IdxSize;
-
-      AddEvent(desc);
-      AddDrawcall(multidraw, true);
-
-      m_CurEventID++;
-    }
-
-    m_DrawcallStack.pop_back();
-  }
-  else
-  {
-    m_CurEventID += realdrawcount + 1;
   }
 
   return true;
 }
 
-void WrappedOpenGL::glMultiDrawElementsIndirectCountARB(GLenum mode, GLenum type, GLintptr indirect,
-                                                        GLintptr drawcount, GLsizei maxdrawcount,
-                                                        GLsizei stride)
+void WrappedOpenGL::glMultiDrawElementsIndirectCountARB(GLenum mode, GLenum type,
+                                                        const void *indirect, GLintptr drawcount,
+                                                        GLsizei maxdrawcount, GLsizei stride)
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glMultiDrawElementsIndirectCountARB(mode, type, indirect, drawcount, maxdrawcount, stride);
+  SERIALISE_TIME_CALL(m_Real.glMultiDrawElementsIndirectCountARB(mode, type, indirect, drawcount,
+                                                                 maxdrawcount, stride));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(MULTI_DRAWELEMENTS_INDIRECT_COUNT);
-    Serialise_glMultiDrawElementsIndirectCountARB(mode, type, indirect, drawcount, maxdrawcount,
-                                                  stride);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glMultiDrawElementsIndirectCountARB(ser, mode, type, indirect, drawcount,
+                                                  maxdrawcount, stride);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
 
-bool WrappedOpenGL::Serialise_glClearNamedFramebufferfv(GLuint framebuffer, GLenum buffer,
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glClearNamedFramebufferfv(SerialiserType &ser,
+                                                        GLuint framebufferHandle, GLenum buffer,
                                                         GLint drawbuffer, const GLfloat *value)
 {
-  SERIALISE_ELEMENT(ResourceId, Id,
-                    (framebuffer ? GetResourceManager()->GetID(FramebufferRes(GetCtx(), framebuffer))
-                                 : ResourceId()));
-  SERIALISE_ELEMENT(GLenum, buf, buffer);
-  SERIALISE_ELEMENT(int32_t, drawbuf, drawbuffer);
+  SERIALISE_ELEMENT_LOCAL(framebuffer, FramebufferRes(GetCtx(), framebufferHandle));
+  SERIALISE_ELEMENT(buffer);
+  SERIALISE_ELEMENT(drawbuffer);
+  SERIALISE_ELEMENT_ARRAY(value, buffer == eGL_DEPTH ? 1 : 4);
 
-  if(m_State <= EXECUTING)
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    if(Id == ResourceId())
-      framebuffer = m_FakeBB_FBO;
-    else
-      framebuffer = GetResourceManager()->GetLiveResource(Id).name;
-  }
-
-  string name;
-
-  if(buf != eGL_DEPTH)
-  {
-    Vec4f v;
-    if(value)
-      v = *((Vec4f *)value);
-
-    m_pSerialiser->SerialisePODArray<4>("value", (float *)&v.x);
-
-    if(m_State == READING)
-      name = "glClearBufferfv(" + ToStr::Get(buf) + ", " + ToStr::Get(drawbuf) + ", " +
-             ToStr::Get(v.x) + ", " + ToStr::Get(v.y) + ", " + ToStr::Get(v.z) + ", " +
-             ToStr::Get(v.w) + ")";
+    if(framebuffer.name == 0)
+      framebuffer.name = m_FakeBB_FBO;
 
     // use ARB_direct_state_access functions here as we use EXT_direct_state_access elsewhere. If
     // we are running without ARB_dsa support, these functions are emulated in the obvious way. This
-    // is
-    // necessary since these functions can be serialised even if ARB_dsa was not used originally,
-    // and
-    // we need to support this case.
-    if(m_State <= EXECUTING)
-      m_Real.glClearNamedFramebufferfv(framebuffer, buf, drawbuf, &v.x);
-  }
-  else
-  {
-    SERIALISE_ELEMENT(float, val, *value);
+    // is necessary since these functions can be serialised even if ARB_dsa was not used originally,
+    // and we need to support this case.
+    m_Real.glClearNamedFramebufferfv(framebuffer.name, buffer, drawbuffer, value);
 
-    if(m_State == READING)
-      name = "glClearBufferfv(" + ToStr::Get(buf) + ", " + ToStr::Get(drawbuf) + ", " +
-             ToStr::Get(val) + ")";
-
-    if(m_State <= EXECUTING)
-      m_Real.glClearNamedFramebufferfv(framebuffer, buf, drawbuf, &val);
-  }
-
-  const string desc = m_pSerialiser->GetDebugStr();
-
-  Serialise_DebugMessages();
-
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.flags |= eDraw_Clear;
-    if(buf == eGL_COLOR)
-      draw.flags |= eDraw_ClearColour;
-    else
-      draw.flags |= eDraw_ClearDepthStencil;
-
-    AddDrawcall(draw, true);
-
-    GLuint attachment = 0;
-    GLenum attachName =
-        buf == eGL_COLOR ? GLenum(eGL_COLOR_ATTACHMENT0 + drawbuf) : eGL_DEPTH_ATTACHMENT;
-    GLenum type = eGL_TEXTURE;
-    m_Real.glGetNamedFramebufferAttachmentParameterivEXT(
-        framebuffer, attachName, eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, (GLint *)&attachment);
-    m_Real.glGetNamedFramebufferAttachmentParameterivEXT(
-        framebuffer, attachName, eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, (GLint *)&type);
-
-    if(attachment)
+    if(IsLoading(m_State))
     {
-      if(type == eGL_TEXTURE)
-        m_ResourceUses[GetResourceManager()->GetID(TextureRes(GetCtx(), attachment))].push_back(
-            EventUsage(m_CurEventID, eUsage_Clear));
+      AddEvent();
+
+      std::string name;
+
+      if(buffer == eGL_DEPTH)
+        name = StringFormat::Fmt("%s(%s, %i, %f)", ToStr(gl_CurChunk).c_str(),
+                                 ToStr(buffer).c_str(), drawbuffer, value[0]);
       else
-        m_ResourceUses[GetResourceManager()->GetID(RenderbufferRes(GetCtx(), attachment))].push_back(
-            EventUsage(m_CurEventID, eUsage_Clear));
+        name = StringFormat::Fmt("%s(%s, %i, %f, %f, %f, %f)", ToStr(gl_CurChunk).c_str(),
+                                 ToStr(buffer).c_str(), drawbuffer, value[0], value[1], value[2],
+                                 value[2]);
+
+      DrawcallDescription draw;
+      draw.name = name;
+      draw.flags |= DrawFlags::Clear;
+      if(buffer == eGL_COLOR)
+        draw.flags |= DrawFlags::ClearColor;
+      else
+        draw.flags |= DrawFlags::ClearDepthStencil;
+
+      GLuint attachment = 0;
+      GLenum attachName =
+          buffer == eGL_COLOR ? GLenum(eGL_COLOR_ATTACHMENT0 + drawbuffer) : eGL_DEPTH_ATTACHMENT;
+      GLenum type = eGL_TEXTURE;
+      m_Real.glGetNamedFramebufferAttachmentParameterivEXT(
+          framebuffer.name, attachName, eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, (GLint *)&attachment);
+      m_Real.glGetNamedFramebufferAttachmentParameterivEXT(
+          framebuffer.name, attachName, eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, (GLint *)&type);
+
+      if(attachment)
+      {
+        ResourceId id;
+
+        if(type == eGL_TEXTURE)
+          id = GetResourceManager()->GetID(TextureRes(GetCtx(), attachment));
+        else
+          id = GetResourceManager()->GetID(RenderbufferRes(GetCtx(), attachment));
+
+        m_ResourceUses[id].push_back(EventUsage(m_CurEventID, ResourceUsage::Clear));
+        draw.copyDestination = GetResourceManager()->GetOriginalID(id);
+      }
+
+      AddDrawcall(draw, true);
     }
   }
 
@@ -2996,22 +3204,25 @@ void WrappedOpenGL::glClearNamedFramebufferfv(GLuint framebuffer, GLenum buffer,
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glClearNamedFramebufferfv(framebuffer, buffer, drawbuffer, value);
+  SERIALISE_TIME_CALL(m_Real.glClearNamedFramebufferfv(framebuffer, buffer, drawbuffer, value));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(CLEARBUFFERF);
-    Serialise_glClearNamedFramebufferfv(framebuffer, buffer, drawbuffer, value);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glClearNamedFramebufferfv(ser, framebuffer, buffer, drawbuffer, value);
 
     m_ContextRecord->AddChunk(scope.Get());
 
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
-    state.FetchState(GetCtx(), this);
+    GLRenderState state(&m_Real);
+    state.FetchState(this);
     state.MarkReferenced(this, false);
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
-    GLRenderState state(&m_Real, m_pSerialiser, m_State);
+    GLRenderState state(&m_Real);
     state.MarkDirty(this);
   }
 }
@@ -3020,109 +3231,94 @@ void WrappedOpenGL::glClearBufferfv(GLenum buffer, GLint drawbuffer, const GLflo
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glClearBufferfv(buffer, drawbuffer, value);
+  SERIALISE_TIME_CALL(m_Real.glClearBufferfv(buffer, drawbuffer, value));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
     GLuint framebuffer = 0;
     if(GetCtxData().m_DrawFramebufferRecord)
       framebuffer = GetCtxData().m_DrawFramebufferRecord->Resource.name;
 
-    SCOPED_SERIALISE_CONTEXT(CLEARBUFFERF);
-    Serialise_glClearNamedFramebufferfv(framebuffer, buffer, drawbuffer, value);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glClearNamedFramebufferfv(ser, framebuffer, buffer, drawbuffer, value);
 
     m_ContextRecord->AddChunk(scope.Get());
   }
 }
 
-bool WrappedOpenGL::Serialise_glClearNamedFramebufferiv(GLuint framebuffer, GLenum buffer,
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glClearNamedFramebufferiv(SerialiserType &ser,
+                                                        GLuint framebufferHandle, GLenum buffer,
                                                         GLint drawbuffer, const GLint *value)
 {
-  SERIALISE_ELEMENT(ResourceId, Id,
-                    (framebuffer ? GetResourceManager()->GetID(FramebufferRes(GetCtx(), framebuffer))
-                                 : ResourceId()));
-  SERIALISE_ELEMENT(GLenum, buf, buffer);
-  SERIALISE_ELEMENT(int32_t, drawbuf, drawbuffer);
+  SERIALISE_ELEMENT_LOCAL(framebuffer, FramebufferRes(GetCtx(), framebufferHandle));
+  SERIALISE_ELEMENT(buffer);
+  SERIALISE_ELEMENT(drawbuffer);
+  SERIALISE_ELEMENT_ARRAY(value, buffer == eGL_STENCIL ? 1 : 4);
 
-  if(m_State <= EXECUTING)
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    if(Id == ResourceId())
-      framebuffer = m_FakeBB_FBO;
-    else
-      framebuffer = GetResourceManager()->GetLiveResource(Id).name;
-  }
-
-  string name;
-
-  if(buf != eGL_STENCIL)
-  {
-    int32_t v[4];
-    if(value)
-      memcpy(v, value, sizeof(v));
-
-    m_pSerialiser->SerialisePODArray<4>("value", v);
-
-    if(m_State == READING)
-      name = "glClearBufferiv(" + ToStr::Get(buf) + ", " + ToStr::Get(drawbuf) + ", " +
-             ToStr::Get(v[0]) + ", " + ToStr::Get(v[1]) + ", " + ToStr::Get(v[2]) + ", " +
-             ToStr::Get(v[3]) + ")";
+    if(framebuffer.name == 0)
+      framebuffer.name = m_FakeBB_FBO;
 
     // use ARB_direct_state_access functions here as we use EXT_direct_state_access elsewhere. If
     // we are running without ARB_dsa support, these functions are emulated in the obvious way. This
-    // is
-    // necessary since these functions can be serialised even if ARB_dsa was not used originally,
-    // and
-    // we need to support this case.
-    if(m_State <= EXECUTING)
-      m_Real.glClearNamedFramebufferiv(framebuffer, buf, drawbuf, v);
-  }
-  else
-  {
-    SERIALISE_ELEMENT(int32_t, val, *value);
+    // is necessary since these functions can be serialised even if ARB_dsa was not used originally,
+    // and we need to support this case.
+    m_Real.glClearNamedFramebufferiv(framebuffer.name, buffer, drawbuffer, value);
 
-    if(m_State == READING)
-      name = "glClearBufferiv(" + ToStr::Get(buf) + ", " + ToStr::Get(drawbuf) + ", " +
-             ToStr::Get(val) + ")";
-
-    if(m_State <= EXECUTING)
-      m_Real.glClearNamedFramebufferiv(framebuffer, buf, drawbuf, &val);
-  }
-
-  const string desc = m_pSerialiser->GetDebugStr();
-
-  Serialise_DebugMessages();
-
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.flags |= eDraw_Clear;
-    if(buf == eGL_COLOR)
-      draw.flags |= eDraw_ClearColour;
-    else
-      draw.flags |= eDraw_ClearDepthStencil;
-
-    AddDrawcall(draw, true);
-
-    GLuint attachment = 0;
-    GLenum attachName =
-        buf == eGL_COLOR ? GLenum(eGL_COLOR_ATTACHMENT0 + drawbuf) : eGL_STENCIL_ATTACHMENT;
-    GLenum type = eGL_TEXTURE;
-    m_Real.glGetNamedFramebufferAttachmentParameterivEXT(
-        framebuffer, attachName, eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, (GLint *)&attachment);
-    m_Real.glGetNamedFramebufferAttachmentParameterivEXT(
-        framebuffer, attachName, eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, (GLint *)&type);
-
-    if(attachment)
+    if(IsLoading(m_State))
     {
-      if(type == eGL_TEXTURE)
-        m_ResourceUses[GetResourceManager()->GetID(TextureRes(GetCtx(), attachment))].push_back(
-            EventUsage(m_CurEventID, eUsage_Clear));
+      AddEvent();
+
+      std::string name;
+
+      if(buffer == eGL_STENCIL)
+        name = StringFormat::Fmt("%s(%s, %i, %i)", ToStr(gl_CurChunk).c_str(),
+                                 ToStr(buffer).c_str(), drawbuffer, value[0]);
       else
-        m_ResourceUses[GetResourceManager()->GetID(RenderbufferRes(GetCtx(), attachment))].push_back(
-            EventUsage(m_CurEventID, eUsage_Clear));
+        name = StringFormat::Fmt("%s(%s, %i, %i, %i, %i, %i)", ToStr(gl_CurChunk).c_str(),
+                                 ToStr(buffer).c_str(), drawbuffer, value[0], value[1], value[2],
+                                 value[3]);
+
+      DrawcallDescription draw;
+      draw.name = name;
+      draw.flags |= DrawFlags::Clear;
+      if(buffer == eGL_COLOR)
+        draw.flags |= DrawFlags::ClearColor;
+      else
+        draw.flags |= DrawFlags::ClearDepthStencil;
+
+      GLuint attachment = 0;
+      GLenum attachName =
+          buffer == eGL_COLOR ? GLenum(eGL_COLOR_ATTACHMENT0 + drawbuffer) : eGL_STENCIL_ATTACHMENT;
+      GLenum type = eGL_TEXTURE;
+      m_Real.glGetNamedFramebufferAttachmentParameterivEXT(
+          framebuffer.name, attachName, eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, (GLint *)&attachment);
+      m_Real.glGetNamedFramebufferAttachmentParameterivEXT(
+          framebuffer.name, attachName, eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, (GLint *)&type);
+
+      if(attachment)
+      {
+        ResourceId id;
+
+        if(type == eGL_TEXTURE)
+          id = GetResourceManager()->GetID(TextureRes(GetCtx(), attachment));
+        else
+          id = GetResourceManager()->GetID(RenderbufferRes(GetCtx(), attachment));
+
+        m_ResourceUses[id].push_back(EventUsage(m_CurEventID, ResourceUsage::Clear));
+        draw.copyDestination = GetResourceManager()->GetOriginalID(id);
+      }
+
+      AddDrawcall(draw, true);
     }
   }
 
@@ -3134,12 +3330,15 @@ void WrappedOpenGL::glClearNamedFramebufferiv(GLuint framebuffer, GLenum buffer,
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glClearNamedFramebufferiv(framebuffer, buffer, drawbuffer, value);
+  SERIALISE_TIME_CALL(m_Real.glClearNamedFramebufferiv(framebuffer, buffer, drawbuffer, value));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(CLEARBUFFERI);
-    Serialise_glClearNamedFramebufferiv(framebuffer, buffer, drawbuffer, value);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glClearNamedFramebufferiv(ser, framebuffer, buffer, drawbuffer, value);
 
     m_ContextRecord->AddChunk(scope.Get());
   }
@@ -3149,92 +3348,82 @@ void WrappedOpenGL::glClearBufferiv(GLenum buffer, GLint drawbuffer, const GLint
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glClearBufferiv(buffer, drawbuffer, value);
+  SERIALISE_TIME_CALL(m_Real.glClearBufferiv(buffer, drawbuffer, value));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
     GLuint framebuffer = 0;
     if(GetCtxData().m_DrawFramebufferRecord)
       framebuffer = GetCtxData().m_DrawFramebufferRecord->Resource.name;
 
-    SCOPED_SERIALISE_CONTEXT(CLEARBUFFERI);
-    Serialise_glClearNamedFramebufferiv(framebuffer, buffer, drawbuffer, value);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glClearNamedFramebufferiv(ser, framebuffer, buffer, drawbuffer, value);
 
     m_ContextRecord->AddChunk(scope.Get());
   }
 }
 
-bool WrappedOpenGL::Serialise_glClearNamedFramebufferuiv(GLuint framebuffer, GLenum buffer,
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glClearNamedFramebufferuiv(SerialiserType &ser,
+                                                         GLuint framebufferHandle, GLenum buffer,
                                                          GLint drawbuffer, const GLuint *value)
 {
-  SERIALISE_ELEMENT(ResourceId, Id,
-                    (framebuffer ? GetResourceManager()->GetID(FramebufferRes(GetCtx(), framebuffer))
-                                 : ResourceId()));
-  SERIALISE_ELEMENT(GLenum, buf, buffer);
-  SERIALISE_ELEMENT(int32_t, drawbuf, drawbuffer);
+  SERIALISE_ELEMENT_LOCAL(framebuffer, FramebufferRes(GetCtx(), framebufferHandle));
+  SERIALISE_ELEMENT(buffer);
+  SERIALISE_ELEMENT(drawbuffer);
+  SERIALISE_ELEMENT_ARRAY(value, 4);
 
-  if(m_State <= EXECUTING)
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    if(Id == ResourceId())
-      framebuffer = m_FakeBB_FBO;
-    else
-      framebuffer = GetResourceManager()->GetLiveResource(Id).name;
-  }
-
-  string name;
-
-  {
-    uint32_t v[4];
-    if(value)
-      memcpy(v, value, sizeof(v));
-
-    m_pSerialiser->SerialisePODArray<4>("value", v);
-
-    if(m_State == READING)
-      name = "glClearBufferuiv(" + ToStr::Get(buf) + ", " + ToStr::Get(drawbuf) + ", " +
-             ToStr::Get(v[0]) + ", " + ToStr::Get(v[1]) + ", " + ToStr::Get(v[2]) + ", " +
-             ToStr::Get(v[3]) + ")";
+    if(framebuffer.name == 0)
+      framebuffer.name = m_FakeBB_FBO;
 
     // use ARB_direct_state_access functions here as we use EXT_direct_state_access elsewhere. If
     // we are running without ARB_dsa support, these functions are emulated in the obvious way. This
-    // is
-    // necessary since these functions can be serialised even if ARB_dsa was not used originally,
-    // and
-    // we need to support this case.
-    if(m_State <= EXECUTING)
-      m_Real.glClearNamedFramebufferuiv(framebuffer, buf, drawbuf, v);
-  }
+    // is necessary since these functions can be serialised even if ARB_dsa was not used originally,
+    // and we need to support this case.
+    m_Real.glClearNamedFramebufferuiv(framebuffer.name, buffer, drawbuffer, value);
 
-  const string desc = m_pSerialiser->GetDebugStr();
-
-  Serialise_DebugMessages();
-
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.flags |= eDraw_Clear | eDraw_ClearColour;
-
-    AddDrawcall(draw, true);
-
-    GLuint attachment = 0;
-    GLenum attachName = GLenum(eGL_COLOR_ATTACHMENT0 + drawbuf);
-    GLenum type = eGL_TEXTURE;
-    m_Real.glGetNamedFramebufferAttachmentParameterivEXT(
-        framebuffer, attachName, eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, (GLint *)&attachment);
-    m_Real.glGetNamedFramebufferAttachmentParameterivEXT(
-        framebuffer, attachName, eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, (GLint *)&type);
-
-    if(attachment)
+    if(IsLoading(m_State))
     {
-      if(type == eGL_TEXTURE)
-        m_ResourceUses[GetResourceManager()->GetID(TextureRes(GetCtx(), attachment))].push_back(
-            EventUsage(m_CurEventID, eUsage_Clear));
-      else
-        m_ResourceUses[GetResourceManager()->GetID(RenderbufferRes(GetCtx(), attachment))].push_back(
-            EventUsage(m_CurEventID, eUsage_Clear));
+      AddEvent();
+
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%s, %i, %u, %u, %u, %u)", ToStr(gl_CurChunk).c_str(),
+                                    ToStr(buffer).c_str(), drawbuffer, value[0], value[1], value[2],
+                                    value[3]);
+
+      draw.flags |= DrawFlags::Clear | DrawFlags::ClearColor;
+
+      GLuint attachment = 0;
+      GLenum attachName = GLenum(eGL_COLOR_ATTACHMENT0 + drawbuffer);
+      GLenum type = eGL_TEXTURE;
+      m_Real.glGetNamedFramebufferAttachmentParameterivEXT(
+          framebuffer.name, attachName, eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, (GLint *)&attachment);
+      m_Real.glGetNamedFramebufferAttachmentParameterivEXT(
+          framebuffer.name, attachName, eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, (GLint *)&type);
+
+      if(attachment)
+      {
+        ResourceId id;
+
+        if(type == eGL_TEXTURE)
+          id = GetResourceManager()->GetID(TextureRes(GetCtx(), attachment));
+        else
+          id = GetResourceManager()->GetID(RenderbufferRes(GetCtx(), attachment));
+
+        m_ResourceUses[id].push_back(EventUsage(m_CurEventID, ResourceUsage::Clear));
+        draw.copyDestination = GetResourceManager()->GetOriginalID(id);
+      }
+
+      AddDrawcall(draw, true);
     }
   }
 
@@ -3246,12 +3435,15 @@ void WrappedOpenGL::glClearNamedFramebufferuiv(GLuint framebuffer, GLenum buffer
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glClearNamedFramebufferuiv(framebuffer, buffer, drawbuffer, value);
+  SERIALISE_TIME_CALL(m_Real.glClearNamedFramebufferuiv(framebuffer, buffer, drawbuffer, value));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(CLEARBUFFERUI);
-    Serialise_glClearNamedFramebufferuiv(framebuffer, buffer, drawbuffer, value);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glClearNamedFramebufferuiv(ser, framebuffer, buffer, drawbuffer, value);
 
     m_ContextRecord->AddChunk(scope.Get());
   }
@@ -3261,113 +3453,121 @@ void WrappedOpenGL::glClearBufferuiv(GLenum buffer, GLint drawbuffer, const GLui
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glClearBufferuiv(buffer, drawbuffer, value);
+  SERIALISE_TIME_CALL(m_Real.glClearBufferuiv(buffer, drawbuffer, value));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
     GLuint framebuffer = 0;
     if(GetCtxData().m_DrawFramebufferRecord)
       framebuffer = GetCtxData().m_DrawFramebufferRecord->Resource.name;
 
-    SCOPED_SERIALISE_CONTEXT(CLEARBUFFERUI);
-    Serialise_glClearNamedFramebufferuiv(framebuffer, buffer, drawbuffer, value);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glClearNamedFramebufferuiv(ser, framebuffer, buffer, drawbuffer, value);
 
     m_ContextRecord->AddChunk(scope.Get());
   }
 }
 
-bool WrappedOpenGL::Serialise_glClearNamedFramebufferfi(GLuint framebuffer, GLenum buffer,
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glClearNamedFramebufferfi(SerialiserType &ser, GLuint framebufferHandle,
+                                                        GLenum buffer, GLint drawbuffer,
                                                         GLfloat depth, GLint stencil)
 {
-  SERIALISE_ELEMENT(ResourceId, Id,
-                    (framebuffer ? GetResourceManager()->GetID(FramebufferRes(GetCtx(), framebuffer))
-                                 : ResourceId()));
-  SERIALISE_ELEMENT(GLenum, buf, buffer);
-  SERIALISE_ELEMENT(float, d, depth);
-  SERIALISE_ELEMENT(int32_t, s, stencil);
+  SERIALISE_ELEMENT_LOCAL(framebuffer, FramebufferRes(GetCtx(), framebufferHandle));
+  SERIALISE_ELEMENT(buffer);
+  SERIALISE_ELEMENT(drawbuffer);
+  SERIALISE_ELEMENT(depth);
+  SERIALISE_ELEMENT(stencil);
 
-  if(m_State <= EXECUTING)
+  Serialise_DebugMessages(ser);
+
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    if(Id == ResourceId())
-      framebuffer = m_FakeBB_FBO;
-    else
-      framebuffer = GetResourceManager()->GetLiveResource(Id).name;
-  }
+    if(framebuffer.name == 0)
+      framebuffer.name = m_FakeBB_FBO;
 
-  // use ARB_direct_state_access functions here as we use EXT_direct_state_access elsewhere. If
-  // we are running without ARB_dsa support, these functions are emulated in the obvious way. This
-  // is
-  // necessary since these functions can be serialised even if ARB_dsa was not used originally, and
-  // we need to support this case.
-  if(m_State <= EXECUTING)
-    m_Real.glClearNamedFramebufferfi(framebuffer, buf, d, s);
+    // use ARB_direct_state_access functions here as we use EXT_direct_state_access elsewhere. If
+    // we are running without ARB_dsa support, these functions are emulated in the obvious way. This
+    // is necessary since these functions can be serialised even if ARB_dsa was not used originally,
+    // and we need to support this case.
+    m_Real.glClearNamedFramebufferfi(framebuffer.name, buffer, drawbuffer, depth, stencil);
 
-  const string desc = m_pSerialiser->GetDebugStr();
-
-  Serialise_DebugMessages();
-
-  if(m_State == READING)
-  {
-    AddEvent(desc);
-    string name = "glClearBufferfi(" + ToStr::Get(d) + ToStr::Get(s) + ")";
-
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.flags |= eDraw_Clear | eDraw_ClearDepthStencil;
-
-    AddDrawcall(draw, true);
-
-    GLuint attachment = 0;
-    GLenum type = eGL_TEXTURE;
-    m_Real.glGetNamedFramebufferAttachmentParameterivEXT(framebuffer, eGL_DEPTH_ATTACHMENT,
-                                                         eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,
-                                                         (GLint *)&attachment);
-    m_Real.glGetNamedFramebufferAttachmentParameterivEXT(
-        framebuffer, eGL_DEPTH_ATTACHMENT, eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, (GLint *)&type);
-
-    if(attachment)
+    if(IsLoading(m_State))
     {
-      if(type == eGL_TEXTURE)
-        m_ResourceUses[GetResourceManager()->GetID(TextureRes(GetCtx(), attachment))].push_back(
-            EventUsage(m_CurEventID, eUsage_Clear));
-      else
-        m_ResourceUses[GetResourceManager()->GetID(RenderbufferRes(GetCtx(), attachment))].push_back(
-            EventUsage(m_CurEventID, eUsage_Clear));
-    }
+      AddEvent();
 
-    attachment = 0;
-    type = eGL_TEXTURE;
-    m_Real.glGetNamedFramebufferAttachmentParameterivEXT(framebuffer, eGL_STENCIL_ATTACHMENT,
-                                                         eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,
-                                                         (GLint *)&attachment);
-    m_Real.glGetNamedFramebufferAttachmentParameterivEXT(
-        framebuffer, eGL_STENCIL_ATTACHMENT, eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, (GLint *)&type);
+      DrawcallDescription draw;
+      draw.name = StringFormat::Fmt("%s(%f, %i)", ToStr(gl_CurChunk).c_str(), depth, stencil);
+      draw.flags |= DrawFlags::Clear | DrawFlags::ClearDepthStencil;
 
-    if(attachment)
-    {
-      if(type == eGL_TEXTURE)
-        m_ResourceUses[GetResourceManager()->GetID(TextureRes(GetCtx(), attachment))].push_back(
-            EventUsage(m_CurEventID, eUsage_Clear));
-      else
-        m_ResourceUses[GetResourceManager()->GetID(RenderbufferRes(GetCtx(), attachment))].push_back(
-            EventUsage(m_CurEventID, eUsage_Clear));
+      GLuint attachment = 0;
+      GLenum type = eGL_TEXTURE;
+      m_Real.glGetNamedFramebufferAttachmentParameterivEXT(framebuffer.name, eGL_DEPTH_ATTACHMENT,
+                                                           eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,
+                                                           (GLint *)&attachment);
+      m_Real.glGetNamedFramebufferAttachmentParameterivEXT(framebuffer.name, eGL_DEPTH_ATTACHMENT,
+                                                           eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,
+                                                           (GLint *)&type);
+
+      if(attachment)
+      {
+        ResourceId id;
+
+        if(type == eGL_TEXTURE)
+          id = GetResourceManager()->GetID(TextureRes(GetCtx(), attachment));
+        else
+          id = GetResourceManager()->GetID(RenderbufferRes(GetCtx(), attachment));
+
+        m_ResourceUses[id].push_back(EventUsage(m_CurEventID, ResourceUsage::Clear));
+        draw.copyDestination = GetResourceManager()->GetOriginalID(id);
+      }
+
+      AddDrawcall(draw, true);
+
+      attachment = 0;
+      type = eGL_TEXTURE;
+      m_Real.glGetNamedFramebufferAttachmentParameterivEXT(framebuffer.name, eGL_STENCIL_ATTACHMENT,
+                                                           eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,
+                                                           (GLint *)&attachment);
+      m_Real.glGetNamedFramebufferAttachmentParameterivEXT(framebuffer.name, eGL_STENCIL_ATTACHMENT,
+                                                           eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,
+                                                           (GLint *)&type);
+
+      if(attachment)
+      {
+        if(type == eGL_TEXTURE)
+          m_ResourceUses[GetResourceManager()->GetID(TextureRes(GetCtx(), attachment))].push_back(
+              EventUsage(m_CurEventID, ResourceUsage::Clear));
+        else
+          m_ResourceUses[GetResourceManager()->GetID(RenderbufferRes(GetCtx(), attachment))].push_back(
+              EventUsage(m_CurEventID, ResourceUsage::Clear));
+      }
     }
   }
 
   return true;
 }
 
-void WrappedOpenGL::glClearNamedFramebufferfi(GLuint framebuffer, GLenum buffer, GLfloat depth,
-                                              GLint stencil)
+void WrappedOpenGL::glClearNamedFramebufferfi(GLuint framebuffer, GLenum buffer, GLint drawbuffer,
+                                              GLfloat depth, GLint stencil)
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glClearNamedFramebufferfi(framebuffer, buffer, depth, stencil);
+  SERIALISE_TIME_CALL(
+      m_Real.glClearNamedFramebufferfi(framebuffer, buffer, drawbuffer, depth, stencil));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(CLEARBUFFERFI);
-    Serialise_glClearNamedFramebufferfi(framebuffer, buffer, depth, stencil);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glClearNamedFramebufferfi(ser, framebuffer, buffer, drawbuffer, depth, stencil);
 
     m_ContextRecord->AddChunk(scope.Get());
   }
@@ -3377,39 +3577,43 @@ void WrappedOpenGL::glClearBufferfi(GLenum buffer, GLint drawbuffer, GLfloat dep
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glClearBufferfi(buffer, drawbuffer, depth, stencil);
+  SERIALISE_TIME_CALL(m_Real.glClearBufferfi(buffer, drawbuffer, depth, stencil));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
     GLuint framebuffer = 0;
     if(GetCtxData().m_DrawFramebufferRecord)
       framebuffer = GetCtxData().m_DrawFramebufferRecord->Resource.name;
 
-    // drawbuffer is ignored, as it must be 0 anyway
-    SCOPED_SERIALISE_CONTEXT(CLEARBUFFERFI);
-    Serialise_glClearNamedFramebufferfi(framebuffer, buffer, depth, stencil);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glClearNamedFramebufferfi(ser, framebuffer, buffer, drawbuffer, depth, stencil);
 
     m_ContextRecord->AddChunk(scope.Get());
   }
 }
 
-bool WrappedOpenGL::Serialise_glClearNamedBufferDataEXT(GLuint buffer, GLenum internalformat,
-                                                        GLenum format, GLenum type, const void *data)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glClearNamedBufferDataEXT(SerialiserType &ser, GLuint bufferHandle,
+                                                        GLenum internalformat, GLenum format,
+                                                        GLenum type, const void *dataPtr)
 {
-  SERIALISE_ELEMENT(ResourceId, id, GetResourceManager()->GetID(BufferRes(GetCtx(), buffer)));
-  SERIALISE_ELEMENT(GLenum, InternalFormat, internalformat);
-  SERIALISE_ELEMENT(GLenum, Format, format);
-  SERIALISE_ELEMENT(GLenum, Type, type);
+  SERIALISE_ELEMENT_LOCAL(buffer, BufferRes(GetCtx(), bufferHandle));
+  SERIALISE_ELEMENT(internalformat);
+  SERIALISE_ELEMENT(format);
+  SERIALISE_ELEMENT(type);
 
-  uint64_t val[4] = {0};
+  uint64_t data[4] = {0};
 
-  if(m_State >= WRITING && data != NULL)
+  if(ser.IsWriting())
   {
     size_t s = 1;
-    switch(Format)
+    switch(format)
     {
       default:
-        RDCWARN("Unexpected format %x, defaulting to single component", Format);
+        RDCWARN("Unexpected format %x, defaulting to single component", format);
       // fall through
       case eGL_RED:
       case eGL_RED_INTEGER:
@@ -3429,7 +3633,7 @@ bool WrappedOpenGL::Serialise_glClearNamedBufferDataEXT(GLuint buffer, GLenum in
       case eGL_RGBA_INTEGER:
       case eGL_BGRA_INTEGER: s = 4; break;
     }
-    switch(Type)
+    switch(type)
     {
       case eGL_UNSIGNED_BYTE:
       case eGL_BYTE: s *= 1; break;
@@ -3439,7 +3643,7 @@ bool WrappedOpenGL::Serialise_glClearNamedBufferDataEXT(GLuint buffer, GLenum in
       case eGL_INT:
       case eGL_FLOAT: s *= 4; break;
       default:
-        RDCWARN("Unexpected type %x, defaulting to 1 byte type", Format);
+        RDCWARN("Unexpected type %x, defaulting to 1 byte type", type);
       // fall through
       case eGL_UNSIGNED_BYTE_3_3_2:
       case eGL_UNSIGNED_BYTE_2_3_3_REV: s = 1; break;
@@ -3454,15 +3658,20 @@ bool WrappedOpenGL::Serialise_glClearNamedBufferDataEXT(GLuint buffer, GLenum in
       case eGL_UNSIGNED_INT_10_10_10_2:
       case eGL_UNSIGNED_INT_2_10_10_10_REV: s = 4; break;
     }
-    memcpy(val, data, s);
+    if(dataPtr)
+      memcpy(data, dataPtr, s);
+    else
+      memset(data, 0, s);
   }
 
-  m_pSerialiser->SerialisePODArray<4>("data", val);
+  SERIALISE_ELEMENT(data);
 
-  if(m_State <= EXECUTING)
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glClearNamedBufferDataEXT(GetResourceManager()->GetLiveResource(id).name, InternalFormat,
-                                     Format, Type, (const void *)&val[0]);
+    m_Real.glClearNamedBufferDataEXT(buffer.name, internalformat, format, type,
+                                     (const void *)&data[0]);
   }
 
   return true;
@@ -3473,14 +3682,21 @@ void WrappedOpenGL::glClearNamedBufferDataEXT(GLuint buffer, GLenum internalform
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glClearNamedBufferDataEXT(buffer, internalformat, format, type, data);
+  SERIALISE_TIME_CALL(m_Real.glClearNamedBufferDataEXT(buffer, internalformat, format, type, data));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(CLEARBUFFERDATA);
-    Serialise_glClearNamedBufferDataEXT(buffer, internalformat, format, type, data);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glClearNamedBufferDataEXT(ser, buffer, internalformat, format, type, data);
 
     m_ContextRecord->AddChunk(scope.Get());
+  }
+  else if(IsBackgroundCapturing(m_State))
+  {
+    GetResourceManager()->MarkDirtyResource(BufferRes(GetCtx(), buffer));
   }
 }
 
@@ -3489,9 +3705,9 @@ void WrappedOpenGL::glClearBufferData(GLenum target, GLenum internalformat, GLen
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glClearBufferData(target, internalformat, format, type, data);
+  SERIALISE_TIME_CALL(m_Real.glClearBufferData(target, internalformat, format, type, data));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsCaptureMode(m_State))
   {
     GLResourceRecord *record = GetCtxData().m_BufferRecord[BufferIdx(target)];
     RDCASSERTMSG("Couldn't identify implicit object at binding. Mismatched or bad GLuint?", record,
@@ -3499,35 +3715,47 @@ void WrappedOpenGL::glClearBufferData(GLenum target, GLenum internalformat, GLen
 
     if(record)
     {
-      SCOPED_SERIALISE_CONTEXT(CLEARBUFFERDATA);
-      Serialise_glClearNamedBufferDataEXT(record->Resource.name, internalformat, format, type, data);
+      if(IsActiveCapturing(m_State))
+      {
+        USE_SCRATCH_SERIALISER();
 
-      m_ContextRecord->AddChunk(scope.Get());
+        ser.SetDrawChunk();
+        SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+        Serialise_glClearNamedBufferDataEXT(ser, record->Resource.name, internalformat, format,
+                                            type, data);
+
+        m_ContextRecord->AddChunk(scope.Get());
+      }
+      else if(IsBackgroundCapturing(m_State))
+      {
+        GetResourceManager()->MarkDirtyResource(record->GetResourceID());
+      }
     }
   }
 }
 
-bool WrappedOpenGL::Serialise_glClearNamedBufferSubDataEXT(GLuint buffer, GLenum internalformat,
-                                                           GLintptr offset, GLsizeiptr size,
-                                                           GLenum format, GLenum type,
-                                                           const void *data)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glClearNamedBufferSubDataEXT(SerialiserType &ser, GLuint bufferHandle,
+                                                           GLenum internalformat, GLintptr offsetPtr,
+                                                           GLsizeiptr sizePtr, GLenum format,
+                                                           GLenum type, const void *dataPtr)
 {
-  SERIALISE_ELEMENT(ResourceId, id, GetResourceManager()->GetID(BufferRes(GetCtx(), buffer)));
-  SERIALISE_ELEMENT(GLenum, InternalFormat, internalformat);
-  SERIALISE_ELEMENT(uint64_t, Offset, (uint64_t)offset);
-  SERIALISE_ELEMENT(uint64_t, Size, (uint64_t)size);
-  SERIALISE_ELEMENT(GLenum, Format, format);
-  SERIALISE_ELEMENT(GLenum, Type, type);
+  SERIALISE_ELEMENT_LOCAL(buffer, BufferRes(GetCtx(), bufferHandle));
+  SERIALISE_ELEMENT(internalformat);
+  SERIALISE_ELEMENT_LOCAL(offset, (uint64_t)offsetPtr);
+  SERIALISE_ELEMENT_LOCAL(size, (uint64_t)sizePtr);
+  SERIALISE_ELEMENT(format);
+  SERIALISE_ELEMENT(type);
 
-  uint64_t val[4] = {0};
+  uint64_t data[4] = {0};
 
-  if(m_State >= WRITING)
+  if(ser.IsWriting())
   {
     size_t s = 1;
-    switch(Format)
+    switch(format)
     {
       default:
-        RDCWARN("Unexpected format %x, defaulting to single component", Format);
+        RDCWARN("Unexpected format %x, defaulting to single component", format);
       // fall through
       case eGL_RED:
       case eGL_RED_INTEGER:
@@ -3547,7 +3775,7 @@ bool WrappedOpenGL::Serialise_glClearNamedBufferSubDataEXT(GLuint buffer, GLenum
       case eGL_RGBA_INTEGER:
       case eGL_BGRA_INTEGER: s = 4; break;
     }
-    switch(Type)
+    switch(type)
     {
       case eGL_UNSIGNED_BYTE:
       case eGL_BYTE: s *= 1; break;
@@ -3557,7 +3785,7 @@ bool WrappedOpenGL::Serialise_glClearNamedBufferSubDataEXT(GLuint buffer, GLenum
       case eGL_INT:
       case eGL_FLOAT: s *= 4; break;
       default:
-        RDCWARN("Unexpected type %x, defaulting to 1 byte type", Format);
+        RDCWARN("Unexpected type %x, defaulting to 1 byte type", type);
       // fall through
       case eGL_UNSIGNED_BYTE_3_3_2:
       case eGL_UNSIGNED_BYTE_2_3_3_REV: s = 1; break;
@@ -3572,16 +3800,20 @@ bool WrappedOpenGL::Serialise_glClearNamedBufferSubDataEXT(GLuint buffer, GLenum
       case eGL_UNSIGNED_INT_10_10_10_2:
       case eGL_UNSIGNED_INT_2_10_10_10_REV: s = 4; break;
     }
-    memcpy(val, data, s);
+    if(dataPtr)
+      memcpy(data, dataPtr, s);
+    else
+      memset(data, 0, s);
   }
 
-  m_pSerialiser->SerialisePODArray<4>("data", val);
+  SERIALISE_ELEMENT(data);
 
-  if(m_State <= EXECUTING)
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glClearNamedBufferSubDataEXT(GetResourceManager()->GetLiveResource(id).name,
-                                        InternalFormat, (GLintptr)Offset, (GLsizeiptr)Size, Format,
-                                        Type, (const void *)&val[0]);
+    m_Real.glClearNamedBufferSubDataEXT(buffer.name, internalformat, (GLintptr)offset,
+                                        (GLsizeiptr)size, format, type, (const void *)&data[0]);
   }
 
   return true;
@@ -3593,14 +3825,23 @@ void WrappedOpenGL::glClearNamedBufferSubDataEXT(GLuint buffer, GLenum internalf
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glClearNamedBufferSubDataEXT(buffer, internalformat, offset, size, format, type, data);
+  SERIALISE_TIME_CALL(m_Real.glClearNamedBufferSubDataEXT(buffer, internalformat, offset, size,
+                                                          format, type, data));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(CLEARBUFFERSUBDATA);
-    Serialise_glClearNamedBufferSubDataEXT(buffer, internalformat, offset, size, format, type, data);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glClearNamedBufferSubDataEXT(ser, buffer, internalformat, offset, size, format, type,
+                                           data);
 
     m_ContextRecord->AddChunk(scope.Get());
+  }
+  else if(IsBackgroundCapturing(m_State))
+  {
+    GetResourceManager()->MarkDirtyResource(BufferRes(GetCtx(), buffer));
   }
 }
 
@@ -3618,9 +3859,10 @@ void WrappedOpenGL::glClearBufferSubData(GLenum target, GLenum internalformat, G
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glClearBufferSubData(target, internalformat, offset, size, format, type, data);
+  SERIALISE_TIME_CALL(
+      m_Real.glClearBufferSubData(target, internalformat, offset, size, format, type, data));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsCaptureMode(m_State))
   {
     GLResourceRecord *record = GetCtxData().m_BufferRecord[BufferIdx(target)];
     RDCASSERTMSG("Couldn't identify implicit object at binding. Mismatched or bad GLuint?", record,
@@ -3628,138 +3870,151 @@ void WrappedOpenGL::glClearBufferSubData(GLenum target, GLenum internalformat, G
 
     if(record)
     {
-      SCOPED_SERIALISE_CONTEXT(CLEARBUFFERSUBDATA);
-      Serialise_glClearNamedBufferSubDataEXT(record->Resource.name, internalformat, offset, size,
-                                             format, type, data);
+      if(IsActiveCapturing(m_State))
+      {
+        USE_SCRATCH_SERIALISER();
 
-      m_ContextRecord->AddChunk(scope.Get());
+        ser.SetDrawChunk();
+        SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+        Serialise_glClearNamedBufferSubDataEXT(ser, record->Resource.name, internalformat, offset,
+                                               size, format, type, data);
+
+        m_ContextRecord->AddChunk(scope.Get());
+      }
+      else if(IsBackgroundCapturing(m_State))
+      {
+        GetResourceManager()->MarkDirtyResource(record->GetResourceID());
+      }
     }
   }
 }
 
-bool WrappedOpenGL::Serialise_glClear(GLbitfield mask)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glClear(SerialiserType &ser, GLbitfield mask)
 {
-  SERIALISE_ELEMENT(uint32_t, Mask, mask);
+  SERIALISE_ELEMENT(mask);
 
-  if(m_State <= EXECUTING)
-    m_Real.glClear(Mask);
+  Serialise_DebugMessages(ser);
 
-  const string desc = m_pSerialiser->GetDebugStr();
+  SERIALISE_CHECK_READ_ERRORS();
 
-  Serialise_DebugMessages();
-
-  if(m_State == READING)
+  if(IsReplayingAndReading())
   {
-    AddEvent(desc);
-    string name = "glClear(";
-    if(Mask & GL_COLOR_BUFFER_BIT)
+    m_Real.glClear(mask);
+
+    if(IsLoading(m_State))
     {
-      float col[4] = {0};
-      m_Real.glGetFloatv(eGL_COLOR_CLEAR_VALUE, &col[0]);
-      name += StringFormat::Fmt("Color = <%f, %f, %f, %f>, ", col[0], col[1], col[2], col[3]);
-    }
-    if(Mask & GL_DEPTH_BUFFER_BIT)
-    {
-      float depth = 0;
-      m_Real.glGetFloatv(eGL_DEPTH_CLEAR_VALUE, &depth);
-      name += StringFormat::Fmt("Depth = <%f>, ", depth);
-    }
-    if(Mask & GL_STENCIL_BUFFER_BIT)
-    {
-      GLint stencil = 0;
-      m_Real.glGetIntegerv(eGL_STENCIL_CLEAR_VALUE, &stencil);
-      name += StringFormat::Fmt("Stencil = <0x%02x>, ", stencil);
-    }
-
-    if(Mask & (eGL_DEPTH_BUFFER_BIT | eGL_COLOR_BUFFER_BIT | eGL_STENCIL_BUFFER_BIT))
-    {
-      name.pop_back();    // ','
-      name.pop_back();    // ' '
-    }
-
-    name += ")";
-
-    FetchDrawcall draw;
-    draw.name = name;
-    draw.flags |= eDraw_Clear;
-    if(Mask & GL_COLOR_BUFFER_BIT)
-      draw.flags |= eDraw_ClearColour;
-    if(Mask & (eGL_DEPTH_BUFFER_BIT | eGL_STENCIL_BUFFER_BIT))
-      draw.flags |= eDraw_ClearDepthStencil;
-
-    AddDrawcall(draw, true);
-
-    GLuint attachment = 0;
-    GLenum type = eGL_TEXTURE;
-
-    if(Mask & GL_DEPTH_BUFFER_BIT)
-    {
-      m_Real.glGetFramebufferAttachmentParameteriv(eGL_DRAW_FRAMEBUFFER, eGL_DEPTH_ATTACHMENT,
-                                                   eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,
-                                                   (GLint *)&attachment);
-      m_Real.glGetFramebufferAttachmentParameteriv(eGL_DRAW_FRAMEBUFFER, eGL_DEPTH_ATTACHMENT,
-                                                   eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,
-                                                   (GLint *)&type);
-
-      if(attachment)
+      AddEvent();
+      std::string name = ToStr(gl_CurChunk) + "(";
+      if(mask & GL_COLOR_BUFFER_BIT)
       {
-        if(type == eGL_TEXTURE)
-          m_ResourceUses[GetResourceManager()->GetID(TextureRes(GetCtx(), attachment))].push_back(
-              EventUsage(m_CurEventID, eUsage_Clear));
-        else
-          m_ResourceUses[GetResourceManager()->GetID(RenderbufferRes(GetCtx(), attachment))].push_back(
-              EventUsage(m_CurEventID, eUsage_Clear));
+        float col[4] = {0};
+        m_Real.glGetFloatv(eGL_COLOR_CLEAR_VALUE, &col[0]);
+        name += StringFormat::Fmt("Color = <%f, %f, %f, %f>, ", col[0], col[1], col[2], col[3]);
       }
-    }
-
-    attachment = 0;
-    type = eGL_TEXTURE;
-
-    if(Mask & GL_STENCIL_BUFFER_BIT)
-    {
-      m_Real.glGetFramebufferAttachmentParameteriv(eGL_DRAW_FRAMEBUFFER, eGL_STENCIL_ATTACHMENT,
-                                                   eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,
-                                                   (GLint *)&attachment);
-      m_Real.glGetFramebufferAttachmentParameteriv(eGL_DRAW_FRAMEBUFFER, eGL_STENCIL_ATTACHMENT,
-                                                   eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,
-                                                   (GLint *)&type);
-
-      if(attachment)
+      if(mask & GL_DEPTH_BUFFER_BIT)
       {
-        if(type == eGL_TEXTURE)
-          m_ResourceUses[GetResourceManager()->GetID(TextureRes(GetCtx(), attachment))].push_back(
-              EventUsage(m_CurEventID, eUsage_Clear));
-        else
-          m_ResourceUses[GetResourceManager()->GetID(RenderbufferRes(GetCtx(), attachment))].push_back(
-              EventUsage(m_CurEventID, eUsage_Clear));
+        float depth = 0;
+        m_Real.glGetFloatv(eGL_DEPTH_CLEAR_VALUE, &depth);
+        name += StringFormat::Fmt("Depth = <%f>, ", depth);
       }
-    }
-
-    if(Mask & GL_COLOR_BUFFER_BIT)
-    {
-      GLint numCols = 8;
-      m_Real.glGetIntegerv(eGL_MAX_COLOR_ATTACHMENTS, &numCols);
-
-      for(int i = 0; i < numCols; i++)
+      if(mask & GL_STENCIL_BUFFER_BIT)
       {
-        attachment = 0;
-        type = eGL_TEXTURE;
+        GLint stencil = 0;
+        m_Real.glGetIntegerv(eGL_STENCIL_CLEAR_VALUE, &stencil);
+        name += StringFormat::Fmt("Stencil = <0x%02x>, ", stencil);
+      }
 
-        m_Real.glGetFramebufferAttachmentParameteriv(
-            eGL_DRAW_FRAMEBUFFER, GLenum(eGL_COLOR_ATTACHMENT0 + i),
-            eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, (GLint *)&attachment);
-        m_Real.glGetFramebufferAttachmentParameteriv(
-            eGL_DRAW_FRAMEBUFFER, GLenum(eGL_COLOR_ATTACHMENT0 + i),
-            eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, (GLint *)&type);
+      if(mask & (eGL_DEPTH_BUFFER_BIT | eGL_COLOR_BUFFER_BIT | eGL_STENCIL_BUFFER_BIT))
+      {
+        name.pop_back();    // ','
+        name.pop_back();    // ' '
+      }
+
+      name += ")";
+
+      DrawcallDescription draw;
+      draw.name = name;
+      draw.flags |= DrawFlags::Clear;
+      if(mask & GL_COLOR_BUFFER_BIT)
+        draw.flags |= DrawFlags::ClearColor;
+      if(mask & (eGL_DEPTH_BUFFER_BIT | eGL_STENCIL_BUFFER_BIT))
+        draw.flags |= DrawFlags::ClearDepthStencil;
+
+      AddDrawcall(draw, true);
+
+      GLuint attachment = 0;
+      GLenum type = eGL_TEXTURE;
+
+      if(mask & GL_DEPTH_BUFFER_BIT)
+      {
+        m_Real.glGetFramebufferAttachmentParameteriv(eGL_DRAW_FRAMEBUFFER, eGL_DEPTH_ATTACHMENT,
+                                                     eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,
+                                                     (GLint *)&attachment);
+        m_Real.glGetFramebufferAttachmentParameteriv(eGL_DRAW_FRAMEBUFFER, eGL_DEPTH_ATTACHMENT,
+                                                     eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,
+                                                     (GLint *)&type);
 
         if(attachment)
         {
           if(type == eGL_TEXTURE)
             m_ResourceUses[GetResourceManager()->GetID(TextureRes(GetCtx(), attachment))].push_back(
-                EventUsage(m_CurEventID, eUsage_Clear));
+                EventUsage(m_CurEventID, ResourceUsage::Clear));
           else
             m_ResourceUses[GetResourceManager()->GetID(RenderbufferRes(GetCtx(), attachment))].push_back(
-                EventUsage(m_CurEventID, eUsage_Clear));
+                EventUsage(m_CurEventID, ResourceUsage::Clear));
+        }
+      }
+
+      attachment = 0;
+      type = eGL_TEXTURE;
+
+      if(mask & GL_STENCIL_BUFFER_BIT)
+      {
+        m_Real.glGetFramebufferAttachmentParameteriv(eGL_DRAW_FRAMEBUFFER, eGL_STENCIL_ATTACHMENT,
+                                                     eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,
+                                                     (GLint *)&attachment);
+        m_Real.glGetFramebufferAttachmentParameteriv(eGL_DRAW_FRAMEBUFFER, eGL_STENCIL_ATTACHMENT,
+                                                     eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,
+                                                     (GLint *)&type);
+
+        if(attachment)
+        {
+          if(type == eGL_TEXTURE)
+            m_ResourceUses[GetResourceManager()->GetID(TextureRes(GetCtx(), attachment))].push_back(
+                EventUsage(m_CurEventID, ResourceUsage::Clear));
+          else
+            m_ResourceUses[GetResourceManager()->GetID(RenderbufferRes(GetCtx(), attachment))].push_back(
+                EventUsage(m_CurEventID, ResourceUsage::Clear));
+        }
+      }
+
+      if(mask & GL_COLOR_BUFFER_BIT)
+      {
+        GLint numCols = 8;
+        m_Real.glGetIntegerv(eGL_MAX_COLOR_ATTACHMENTS, &numCols);
+
+        for(int i = 0; i < numCols; i++)
+        {
+          attachment = 0;
+          type = eGL_TEXTURE;
+
+          m_Real.glGetFramebufferAttachmentParameteriv(
+              eGL_DRAW_FRAMEBUFFER, GLenum(eGL_COLOR_ATTACHMENT0 + i),
+              eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, (GLint *)&attachment);
+          m_Real.glGetFramebufferAttachmentParameteriv(
+              eGL_DRAW_FRAMEBUFFER, GLenum(eGL_COLOR_ATTACHMENT0 + i),
+              eGL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, (GLint *)&type);
+
+          if(attachment)
+          {
+            if(type == eGL_TEXTURE)
+              m_ResourceUses[GetResourceManager()->GetID(TextureRes(GetCtx(), attachment))].push_back(
+                  EventUsage(m_CurEventID, ResourceUsage::Clear));
+            else
+              m_ResourceUses[GetResourceManager()->GetID(RenderbufferRes(GetCtx(), attachment))]
+                  .push_back(EventUsage(m_CurEventID, ResourceUsage::Clear));
+          }
         }
       }
     }
@@ -3772,34 +4027,38 @@ void WrappedOpenGL::glClear(GLbitfield mask)
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glClear(mask);
+  SERIALISE_TIME_CALL(m_Real.glClear(mask));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(CLEAR);
-    Serialise_glClear(mask);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glClear(ser, mask);
 
     m_ContextRecord->AddChunk(scope.Get());
   }
 }
 
-bool WrappedOpenGL::Serialise_glClearTexImage(GLuint texture, GLint level, GLenum format,
-                                              GLenum type, const void *data)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glClearTexImage(SerialiserType &ser, GLuint textureHandle, GLint level,
+                                              GLenum format, GLenum type, const void *dataPtr)
 {
-  SERIALISE_ELEMENT(ResourceId, id, GetResourceManager()->GetID(TextureRes(GetCtx(), texture)));
-  SERIALISE_ELEMENT(int32_t, Level, level);
-  SERIALISE_ELEMENT(GLenum, Format, format);
-  SERIALISE_ELEMENT(GLenum, Type, type);
+  SERIALISE_ELEMENT_LOCAL(texture, TextureRes(GetCtx(), textureHandle));
+  SERIALISE_ELEMENT(level);
+  SERIALISE_ELEMENT(format);
+  SERIALISE_ELEMENT(type);
 
-  uint64_t val[4] = {0};
+  uint64_t data[4] = {0};
 
-  if(m_State >= WRITING)
+  if(ser.IsWriting())
   {
     size_t s = 1;
-    switch(Format)
+    switch(format)
     {
       default:
-        RDCWARN("Unexpected format %x, defaulting to single component", Format);
+        RDCWARN("Unexpected format %x, defaulting to single component", format);
       // fall through
       case eGL_RED:
       case eGL_RED_INTEGER:
@@ -3819,7 +4078,7 @@ bool WrappedOpenGL::Serialise_glClearTexImage(GLuint texture, GLint level, GLenu
       case eGL_RGBA_INTEGER:
       case eGL_BGRA_INTEGER: s = 4; break;
     }
-    switch(Type)
+    switch(type)
     {
       case eGL_UNSIGNED_BYTE:
       case eGL_BYTE: s *= 1; break;
@@ -3829,7 +4088,7 @@ bool WrappedOpenGL::Serialise_glClearTexImage(GLuint texture, GLint level, GLenu
       case eGL_INT:
       case eGL_FLOAT: s *= 4; break;
       default:
-        RDCWARN("Unexpected type %x, defaulting to 1 byte type", Format);
+        RDCWARN("Unexpected type %x, defaulting to 1 byte type", type);
       // fall through
       case eGL_UNSIGNED_BYTE_3_3_2:
       case eGL_UNSIGNED_BYTE_2_3_3_REV: s = 1; break;
@@ -3844,15 +4103,19 @@ bool WrappedOpenGL::Serialise_glClearTexImage(GLuint texture, GLint level, GLenu
       case eGL_UNSIGNED_INT_10_10_10_2:
       case eGL_UNSIGNED_INT_2_10_10_10_REV: s = 4; break;
     }
-    memcpy(val, data, s);
+    if(dataPtr)
+      memcpy(data, dataPtr, s);
+    else
+      memset(data, 0, s);
   }
 
-  m_pSerialiser->SerialisePODArray<4>("data", val);
+  SERIALISE_ELEMENT(data);
 
-  if(m_State <= EXECUTING)
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glClearTexImage(GetResourceManager()->GetLiveResource(id).name, Level, Format, Type,
-                           (const void *)&val[0]);
+    m_Real.glClearTexImage(texture.name, level, format, type, (const void *)&data[0]);
   }
 
   return true;
@@ -3863,47 +4126,52 @@ void WrappedOpenGL::glClearTexImage(GLuint texture, GLint level, GLenum format, 
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glClearTexImage(texture, level, format, type, data);
+  SERIALISE_TIME_CALL(m_Real.glClearTexImage(texture, level, format, type, data));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(CLEARTEXIMAGE);
-    Serialise_glClearTexImage(texture, level, format, type, data);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glClearTexImage(ser, texture, level, format, type, data);
 
     m_ContextRecord->AddChunk(scope.Get());
     m_MissingTracks.insert(GetResourceManager()->GetID(TextureRes(GetCtx(), texture)));
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
     GetResourceManager()->MarkDirtyResource(TextureRes(GetCtx(), texture));
   }
 }
 
-bool WrappedOpenGL::Serialise_glClearTexSubImage(GLuint texture, GLint level, GLint xoffset,
-                                                 GLint yoffset, GLint zoffset, GLsizei width,
-                                                 GLsizei height, GLsizei depth, GLenum format,
-                                                 GLenum type, const void *data)
+template <typename SerialiserType>
+bool WrappedOpenGL::Serialise_glClearTexSubImage(SerialiserType &ser, GLuint textureHandle,
+                                                 GLint level, GLint xoffset, GLint yoffset,
+                                                 GLint zoffset, GLsizei width, GLsizei height,
+                                                 GLsizei depth, GLenum format, GLenum type,
+                                                 const void *dataPtr)
 {
-  SERIALISE_ELEMENT(ResourceId, id, GetResourceManager()->GetID(TextureRes(GetCtx(), texture)));
-  SERIALISE_ELEMENT(int32_t, Level, level);
-  SERIALISE_ELEMENT(int32_t, Xoffs, xoffset);
-  SERIALISE_ELEMENT(int32_t, Yoffs, yoffset);
-  SERIALISE_ELEMENT(int32_t, Zoffs, zoffset);
-  SERIALISE_ELEMENT(int32_t, w, width);
-  SERIALISE_ELEMENT(int32_t, h, height);
-  SERIALISE_ELEMENT(int32_t, d, depth);
-  SERIALISE_ELEMENT(GLenum, Format, format);
-  SERIALISE_ELEMENT(GLenum, Type, type);
+  SERIALISE_ELEMENT_LOCAL(texture, TextureRes(GetCtx(), textureHandle));
+  SERIALISE_ELEMENT(level);
+  SERIALISE_ELEMENT(xoffset);
+  SERIALISE_ELEMENT(yoffset);
+  SERIALISE_ELEMENT(zoffset);
+  SERIALISE_ELEMENT(width);
+  SERIALISE_ELEMENT(height);
+  SERIALISE_ELEMENT(depth);
+  SERIALISE_ELEMENT(format);
+  SERIALISE_ELEMENT(type);
 
-  uint64_t val[4] = {0};
+  uint64_t data[4] = {0};
 
-  if(m_State >= WRITING)
+  if(ser.IsWriting())
   {
     size_t s = 1;
-    switch(Format)
+    switch(format)
     {
       default:
-        RDCWARN("Unexpected format %x, defaulting to single component", Format);
+        RDCWARN("Unexpected format %x, defaulting to single component", format);
       // fall through
       case eGL_RED:
       case eGL_RED_INTEGER:
@@ -3923,7 +4191,7 @@ bool WrappedOpenGL::Serialise_glClearTexSubImage(GLuint texture, GLint level, GL
       case eGL_RGBA_INTEGER:
       case eGL_BGRA_INTEGER: s = 4; break;
     }
-    switch(Type)
+    switch(type)
     {
       case eGL_UNSIGNED_BYTE:
       case eGL_BYTE: s *= 1; break;
@@ -3933,7 +4201,7 @@ bool WrappedOpenGL::Serialise_glClearTexSubImage(GLuint texture, GLint level, GL
       case eGL_INT:
       case eGL_FLOAT: s *= 4; break;
       default:
-        RDCWARN("Unexpected type %x, defaulting to 1 byte type", Format);
+        RDCWARN("Unexpected type %x, defaulting to 1 byte type", type);
       // fall through
       case eGL_UNSIGNED_BYTE_3_3_2:
       case eGL_UNSIGNED_BYTE_2_3_3_REV: s = 1; break;
@@ -3948,15 +4216,20 @@ bool WrappedOpenGL::Serialise_glClearTexSubImage(GLuint texture, GLint level, GL
       case eGL_UNSIGNED_INT_10_10_10_2:
       case eGL_UNSIGNED_INT_2_10_10_10_REV: s = 4; break;
     }
-    memcpy(val, data, s);
+    if(dataPtr)
+      memcpy(data, dataPtr, s);
+    else
+      memset(data, 0, s);
   }
 
-  m_pSerialiser->SerialisePODArray<4>("data", val);
+  SERIALISE_ELEMENT(data);
 
-  if(m_State <= EXECUTING)
+  SERIALISE_CHECK_READ_ERRORS();
+
+  if(IsReplayingAndReading())
   {
-    m_Real.glClearTexSubImage(GetResourceManager()->GetLiveResource(id).name, Level, Xoffs, Yoffs,
-                              Zoffs, w, h, d, Format, Type, (const void *)&val[0]);
+    m_Real.glClearTexSubImage(texture.name, level, xoffset, yoffset, zoffset, width, height, depth,
+                              format, type, (const void *)&data[0]);
   }
 
   return true;
@@ -3968,20 +4241,105 @@ void WrappedOpenGL::glClearTexSubImage(GLuint texture, GLint level, GLint xoffse
 {
   CoherentMapImplicitBarrier();
 
-  m_Real.glClearTexSubImage(texture, level, xoffset, yoffset, zoffset, width, height, depth, format,
-                            type, data);
+  SERIALISE_TIME_CALL(m_Real.glClearTexSubImage(texture, level, xoffset, yoffset, zoffset, width,
+                                                height, depth, format, type, data));
 
-  if(m_State == WRITING_CAPFRAME)
+  if(IsActiveCapturing(m_State))
   {
-    SCOPED_SERIALISE_CONTEXT(CLEARTEXSUBIMAGE);
-    Serialise_glClearTexSubImage(texture, level, xoffset, yoffset, zoffset, width, height, depth,
-                                 format, type, data);
+    USE_SCRATCH_SERIALISER();
+
+    ser.SetDrawChunk();
+    SCOPED_SERIALISE_CHUNK(gl_CurChunk);
+    Serialise_glClearTexSubImage(ser, texture, level, xoffset, yoffset, zoffset, width, height,
+                                 depth, format, type, data);
 
     m_ContextRecord->AddChunk(scope.Get());
     m_MissingTracks.insert(GetResourceManager()->GetID(TextureRes(GetCtx(), texture)));
   }
-  else if(m_State == WRITING_IDLE)
+  else if(IsBackgroundCapturing(m_State))
   {
     GetResourceManager()->MarkDirtyResource(TextureRes(GetCtx(), texture));
   }
 }
+
+INSTANTIATE_FUNCTION_SERIALISED(void, glDispatchCompute, GLuint num_groups_x, GLuint num_groups_y,
+                                GLuint num_groups_z);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDispatchComputeGroupSizeARB, GLuint num_groups_x,
+                                GLuint num_groups_y, GLuint num_groups_z, GLuint group_size_x,
+                                GLuint group_size_y, GLuint group_size_z);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDispatchComputeIndirect, GLintptr indirect);
+INSTANTIATE_FUNCTION_SERIALISED(void, glMemoryBarrier, GLbitfield barriers);
+INSTANTIATE_FUNCTION_SERIALISED(void, glMemoryBarrierByRegion, GLbitfield barriers);
+INSTANTIATE_FUNCTION_SERIALISED(void, glTextureBarrier);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDrawTransformFeedback, GLenum mode, GLuint xfbHandle);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDrawTransformFeedbackInstanced, GLenum mode, GLuint id,
+                                GLsizei instancecount);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDrawTransformFeedbackStream, GLenum mode, GLuint id,
+                                GLuint stream);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDrawTransformFeedbackStreamInstanced, GLenum mode,
+                                GLuint id, GLuint stream, GLsizei instancecount);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDrawArrays, GLenum mode, GLint first, GLsizei count);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDrawArraysIndirect, GLenum mode, const void *indirect);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDrawArraysInstanced, GLenum mode, GLint first,
+                                GLsizei count, GLsizei instancecount);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDrawArraysInstancedBaseInstance, GLenum mode, GLint first,
+                                GLsizei count, GLsizei instancecount, GLuint baseinstance);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDrawElements, GLenum mode, GLsizei count, GLenum type,
+                                const void *indicesPtr);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDrawElementsIndirect, GLenum mode, GLenum type,
+                                const void *indirect);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDrawRangeElements, GLenum mode, GLuint start, GLuint end,
+                                GLsizei count, GLenum type, const void *indicesPtr);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDrawRangeElementsBaseVertex, GLenum mode, GLuint start,
+                                GLuint end, GLsizei count, GLenum type, const void *indicesPtr,
+                                GLint basevertex);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDrawElementsBaseVertex, GLenum mode, GLsizei count,
+                                GLenum type, const void *indices, GLint basevertex);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDrawElementsInstanced, GLenum mode, GLsizei count,
+                                GLenum type, const void *indices, GLsizei instancecount);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDrawElementsInstancedBaseInstance, GLenum mode,
+                                GLsizei count, GLenum type, const void *indicesPtr,
+                                GLsizei instancecount, GLuint baseinstance);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDrawElementsInstancedBaseVertex, GLenum mode, GLsizei count,
+                                GLenum type, const void *indicesPtr, GLsizei instancecount,
+                                GLint basevertex);
+INSTANTIATE_FUNCTION_SERIALISED(void, glDrawElementsInstancedBaseVertexBaseInstance, GLenum mode,
+                                GLsizei count, GLenum type, const void *indices,
+                                GLsizei instancecount, GLint basevertex, GLuint baseinstance);
+INSTANTIATE_FUNCTION_SERIALISED(void, glMultiDrawArrays, GLenum mode, const GLint *first,
+                                const GLsizei *count, GLsizei drawcount);
+INSTANTIATE_FUNCTION_SERIALISED(void, glMultiDrawElements, GLenum mode, const GLsizei *count,
+                                GLenum type, const void *const *indices, GLsizei drawcount);
+INSTANTIATE_FUNCTION_SERIALISED(void, glMultiDrawElementsBaseVertex, GLenum mode,
+                                const GLsizei *count, GLenum type, const void *const *indices,
+                                GLsizei drawcount, const GLint *basevertex);
+INSTANTIATE_FUNCTION_SERIALISED(void, glMultiDrawArraysIndirect, GLenum mode, const void *indirect,
+                                GLsizei drawcount, GLsizei stride);
+INSTANTIATE_FUNCTION_SERIALISED(void, glMultiDrawElementsIndirect, GLenum mode, GLenum type,
+                                const void *indirect, GLsizei drawcount, GLsizei stride);
+INSTANTIATE_FUNCTION_SERIALISED(void, glMultiDrawArraysIndirectCountARB, GLenum mode,
+                                const void *indirect, GLintptr drawcount, GLsizei maxdrawcount,
+                                GLsizei stride);
+INSTANTIATE_FUNCTION_SERIALISED(void, glMultiDrawElementsIndirectCountARB, GLenum mode, GLenum type,
+                                const void *indirect, GLintptr drawcount, GLsizei maxdrawcount,
+                                GLsizei stride);
+INSTANTIATE_FUNCTION_SERIALISED(void, glClearNamedFramebufferfv, GLuint framebufferHandle,
+                                GLenum buffer, GLint drawbuffer, const GLfloat *valuePtr);
+INSTANTIATE_FUNCTION_SERIALISED(void, glClearNamedFramebufferiv, GLuint framebuffer, GLenum buffer,
+                                GLint drawbuffer, const GLint *valuePtr);
+INSTANTIATE_FUNCTION_SERIALISED(void, glClearNamedFramebufferuiv, GLuint framebuffer, GLenum buffer,
+                                GLint drawbuffer, const GLuint *value);
+INSTANTIATE_FUNCTION_SERIALISED(void, glClearNamedFramebufferfi, GLuint framebuffer, GLenum buffer,
+                                GLint drawbuffer, GLfloat depth, GLint stencil);
+INSTANTIATE_FUNCTION_SERIALISED(void, glClearNamedBufferDataEXT, GLuint bufferHandle,
+                                GLenum internalformat, GLenum format, GLenum type,
+                                const void *dataPtr);
+INSTANTIATE_FUNCTION_SERIALISED(void, glClearNamedBufferSubDataEXT, GLuint buffer,
+                                GLenum internalformat, GLintptr offsetPtr, GLsizeiptr sizePtr,
+                                GLenum format, GLenum type, const void *dataPtr);
+INSTANTIATE_FUNCTION_SERIALISED(void, glClear, GLbitfield mask);
+INSTANTIATE_FUNCTION_SERIALISED(void, glClearTexImage, GLuint texture, GLint level, GLenum format,
+                                GLenum type, const void *dataPtr);
+INSTANTIATE_FUNCTION_SERIALISED(void, glClearTexSubImage, GLuint texture, GLint level, GLint xoffset,
+                                GLint yoffset, GLint zoffset, GLsizei width, GLsizei height,
+                                GLsizei depth, GLenum format, GLenum type, const void *dataPtr);

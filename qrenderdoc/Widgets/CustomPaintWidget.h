@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -27,7 +27,7 @@
 #include <QWidget>
 
 struct IReplayOutput;
-class CaptureContext;
+struct ICaptureContext;
 
 class CustomPaintWidget : public QWidget
 {
@@ -35,11 +35,11 @@ private:
   Q_OBJECT
 public:
   explicit CustomPaintWidget(QWidget *parent = 0);
-  explicit CustomPaintWidget(CaptureContext *c, QWidget *parent = 0);
+  explicit CustomPaintWidget(ICaptureContext *c, QWidget *parent = 0);
   ~CustomPaintWidget();
 
   // this is needed to solve a chicken-and-egg problem. We need to recreate the widget
-  // whenever we go from custom rendering to painting (e.g. log loaded or closed). But
+  // whenever we go from custom rendering to painting (e.g. capture loaded or closed). But
   // we need the widget to have been recreated before we create the output, so we can
   // pass in the winId.
   // So we go by whether or not we have a CaptureContext * and go on faith that the
@@ -58,6 +58,7 @@ signals:
   void resize(QResizeEvent *e);
   void mouseWheel(QWheelEvent *e);
   void keyPress(QKeyEvent *e);
+  void keyRelease(QKeyEvent *e);
 
 private:
   void mousePressEvent(QMouseEvent *e) override;
@@ -66,14 +67,16 @@ private:
   void wheelEvent(QWheelEvent *e) override;
   void resizeEvent(QResizeEvent *e) override;
   void keyPressEvent(QKeyEvent *e) override;
+  void keyReleaseEvent(QKeyEvent *e) override;
 
 public slots:
 
 protected:
-  void paintEvent(QPaintEvent *e);
-  QPaintEngine *paintEngine() const { return m_Ctx ? NULL : QWidget::paintEngine(); }
-  CaptureContext *m_Ctx;
+  void paintEvent(QPaintEvent *e) override;
+  QPaintEngine *paintEngine() const override { return m_Ctx ? NULL : QWidget::paintEngine(); }
+  ICaptureContext *m_Ctx;
   IReplayOutput *m_Output;
+  QString m_Tag;
   QColor m_Dark;
   QColor m_Light;
 };

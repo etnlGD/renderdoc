@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -24,10 +24,44 @@
 
 #include "os/posix/posix_hook.h"
 
+#include <dlfcn.h>
+#include <stddef.h>
+
 void PosixHookInit()
 {
 }
 
+bool PosixHookDetect(const char *identifier)
+{
+  return dlsym(RTLD_DEFAULT, identifier) != NULL;
+}
+
 void PosixHookLibrary(const char *name, dlopenCallback cb)
 {
+}
+
+// android only hooking functions, not used on apple
+PosixScopedSuppressHooking::PosixScopedSuppressHooking()
+{
+}
+
+PosixScopedSuppressHooking::~PosixScopedSuppressHooking()
+{
+}
+
+void PosixHookApply()
+{
+}
+
+void PosixHookReapply()
+{
+}
+
+void PosixHookFunction(char const *, void *)
+{
+}
+
+void *PosixGetFunction(void *handle, const char *name)
+{
+  return dlsym(handle, name);
 }

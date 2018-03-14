@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -28,206 +28,556 @@
 #include "data_types.h"
 #include "replay_enums.h"
 
-struct OutputConfig
-{
-  OutputType m_Type;
-};
-
+DOCUMENT(R"(
+Contains the details of a single element of data (such as position or texture
+co-ordinates) within a mesh.)");
 struct MeshFormat
 {
-  ResourceId idxbuf;
-  uint64_t idxoffs;
-  uint32_t idxByteWidth;
+  MeshFormat()
+  {
+    indexByteOffset = 0;
+    indexByteStride = 0;
+    baseVertex = 0;
+    vertexByteOffset = 0;
+    vertexByteStride = 0;
+    instStepRate = 1;
+    showAlpha = false;
+    topology = Topology::Unknown;
+    numIndices = 0;
+    unproject = false;
+    instanced = false;
+    nearPlane = farPlane = 0.0f;
+  }
+
+  DOCUMENT("The :class:`ResourceId` of the index buffer that goes with this mesh element.");
+  ResourceId indexResourceId;
+  DOCUMENT("The offset in bytes where the indices start in idxbuf.");
+  uint64_t indexByteOffset;
+  DOCUMENT("The width in bytes of each index. Valid values are 1 (depending on API), 2 or 4.");
+  uint32_t indexByteStride;
+  DOCUMENT("For indexed meshes, a value added to each index before using it to read the vertex.");
   int32_t baseVertex;
 
-  ResourceId buf;
-  uint64_t offset;
-  uint32_t stride;
+  DOCUMENT("The :class:`ResourceId` of the vertex buffer containing this mesh element.");
+  ResourceId vertexResourceId;
+  DOCUMENT("The offset in bytes to the start of the vertex data.");
+  uint64_t vertexByteOffset;
+  DOCUMENT("The stride in bytes between the start of one vertex and the start of another.");
+  uint32_t vertexByteStride;
 
-  uint32_t compCount;
-  uint32_t compByteWidth;
-  FormatComponentType compType;
-  bool32 bgraOrder;
-  SpecialFormat specialFormat;
+  DOCUMENT("The :class:`ResourceFormat` describing this mesh component.");
+  ResourceFormat format;
 
-  FloatVector meshColour;
+  DOCUMENT(
+      "The color to use for rendering the wireframe of this mesh element, as a "
+      ":class:`FloatVector`.");
+  FloatVector meshColor;
 
-  bool showAlpha;
+  DOCUMENT("The :class:`Topology` that describes the primitives in this mesh.");
+  Topology topology;
+  DOCUMENT("The number of vertices in the mesh.");
+  uint32_t numIndices;
+  DOCUMENT("The number of instances to render with the same value. See :data:`instanced`.");
+  uint32_t instStepRate;
 
-  PrimitiveTopology topo;
-  uint32_t numVerts;
-
-  bool32 unproject;
+  DOCUMENT("The near plane for the projection matrix.");
   float nearPlane;
+  DOCUMENT("The far plane for the projection matrix.");
   float farPlane;
+  DOCUMENT("``True`` if this mesh element contains post-projection positional data.");
+  bool unproject;
+
+  DOCUMENT("``True`` if this mesh element comes from instanced data. See :data:`instStepRate`.");
+  bool instanced;
+
+  DOCUMENT("``True`` if the alpha component of this element should be used.");
+  bool showAlpha;
 };
 
-class Camera;
+DECLARE_REFLECTION_STRUCT(MeshFormat);
 
+struct ICamera;
+
+DOCUMENT(R"(
+Describes how to render a mesh preview of one or more meshes. Describes the camera configuration as
+well as what options to use when rendering both the current mesh, and any other auxilliary meshes.
+
+.. data:: NoHighlight
+
+  Value for :data:`highlightVert` if no vertex should be highlighted.
+)");
 struct MeshDisplay
 {
+  DOCUMENT("The :class:`MeshDataStage` where this mesh data comes from.");
   MeshDataStage type;
 
-  Camera *cam;
+  DOCUMENT("The :class:`Camera` to use when rendering all of the meshes.");
+  ICamera *cam;
 
-  bool32 ortho;
-  float fov, aspect;
+  DOCUMENT(
+      "``True`` if the projection matrix to use when unprojecting vertex positions is "
+      "orthographic.");
+  bool ortho;
+  DOCUMENT("The field of view to use when calculating a perspective projection matrix.");
+  float fov;
+  DOCUMENT("The aspect ratio to use when calculating a perspective projection matrix.");
+  float aspect;
 
-  bool32 showPrevInstances;
-  bool32 showAllInstances;
-  bool32 showWholePass;
+  DOCUMENT(
+      "``True`` if all previous instances in the drawcall should be drawn as secondary meshes.");
+  bool showPrevInstances;
+  DOCUMENT("``True`` if all instances in the drawcall should be drawn as secondary meshes.");
+  bool showAllInstances;
+  DOCUMENT(
+      "``True`` if all draws in the current pass up to the current draw should be drawn as "
+      "secondary meshes.");
+  bool showWholePass;
+  DOCUMENT("The index of the currently selected instance in the drawcall.");
   uint32_t curInstance;
 
+  DOCUMENT("The index of the vertex to highlight, or :data:`NoHighlight` to select no vertex.");
   uint32_t highlightVert;
+  DOCUMENT("The :class:`MeshFormat` of the position data for the mesh.");
   MeshFormat position;
+  DOCUMENT(
+      "The :class:`MeshFormat` of the secondary data for the mesh, if used for solid shading.");
   MeshFormat second;
 
+  DOCUMENT("The minimum co-ordinates in each axis of the mesh bounding box.");
   FloatVector minBounds;
+  DOCUMENT("The maximum co-ordinates in each axis of the mesh bounding box.");
   FloatVector maxBounds;
-  bool32 showBBox;
+  DOCUMENT("``True`` if the bounding box around the mesh should be rendered.");
+  bool showBBox;
 
-  SolidShadeMode solidShadeMode;
-  bool32 wireframeDraw;
+  DOCUMENT("The :class:`solid shading mode <SolidShade>` to use when rendering the current mesh.");
+  SolidShade solidShadeMode;
+  DOCUMENT("``True`` if the wireframe of the mesh should be rendered as well as solid shading.");
+  bool wireframeDraw;
+
+  static const uint32_t NoHighlight = ~0U;
 };
 
+DECLARE_REFLECTION_STRUCT(MeshDisplay);
+
+DOCUMENT(R"(
+Describes how to render a texture preview of an image. Describes the zoom and pan settings for the
+texture when rendering on a particular output, as well as the modification and selection of a
+particular subresource (such as array slice, mip or multi-sampled sample).
+
+.. data:: ResolveSamples
+
+  Value for :data:`sampleIdx` if the samples should be averaged.
+)");
 struct TextureDisplay
 {
-  ResourceId texid;
-  FormatComponentType typeHint;
-  float rangemin;
-  float rangemax;
+  DOCUMENT("The :class:`ResourceId` of the texture to display.");
+  ResourceId resourceId;
+
+  DOCUMENT("An optional :class:`CompType` hint to use when displaying a typeless texture.");
+  CompType typeHint;
+
+  DOCUMENT("The value in each channel to map to the black point.");
+  float rangeMin;
+
+  DOCUMENT("The value in each channel to map to the white point.");
+  float rangeMax;
+
+  DOCUMENT(R"(The scale to apply to the texture when rendering as a floating point value.
+
+``1.0`` corresponds to ``100%``
+)");
   float scale;
-  bool32 Red, Green, Blue, Alpha;
-  bool32 FlipY;
-  float HDRMul;
-  bool32 linearDisplayAsGamma;
-  ResourceId CustomShader;
+
+  DOCUMENT(R"(``True`` if the red channel should be visible.
+
+If only one channel is selected, it will be rendered in grayscale
+)");
+  bool red;
+
+  DOCUMENT(R"(``True`` if the green channel should be visible.
+
+If only one channel is selected, it will be rendered in grayscale
+)");
+  bool green;
+
+  DOCUMENT(R"(``True`` if the blue channel should be visible.
+
+If only one channel is selected, it will be rendered in grayscale
+)");
+  bool blue;
+
+  DOCUMENT(R"(``True`` if the alpha channel should be visible. If enabled with any of RGB, the
+texture will be blended to the background color or checkerboard.
+
+If only one channel is selected, it will be rendered in grayscale
+)");
+  bool alpha;
+
+  DOCUMENT("``True`` if the texture should be flipped vertically when rendering.");
+  bool flipY;
+
+  DOCUMENT("If ``>= 0.0`` the RGBA values will be viewed as HDRM with this as the multiplier.");
+  float hdrMultiplier;
+
+  DOCUMENT(R"(``True`` if the texture should be interpreted as gamma.
+
+See :ref:`the FAQ entry <gamma-linear-display>`.
+)");
+  bool linearDisplayAsGamma;
+
+  DOCUMENT(R"(The :class:`ResourceId` of a custom shader to use when rendering.
+
+See :meth:`ReplayController.BuildCustomShader` for creating an appropriate custom shader.
+)");
+  ResourceId customShaderId;
+
+  DOCUMENT("Select the mip of the texture to display.");
   uint32_t mip;
+
+  DOCUMENT("Select the slice or face of the texture to display if it's an array, 3D, or cube tex.");
   uint32_t sliceFace;
+
+  DOCUMENT(R"(Select the sample of the texture to display if it's a multi-sampled texture.
+
+If this is set to :data:`ResolveSamples` then a default resolve will be performed that averages all
+samples.
+)");
   uint32_t sampleIdx;
-  bool32 rawoutput;
 
-  float offx, offy;
+  DOCUMENT(R"(``True`` if the rendered image should be as close as possible in value to the input.
 
-  FloatVector lightBackgroundColour;
-  FloatVector darkBackgroundColour;
+This is primarily useful when rendering to a floating point target for retrieving pixel data from
+the input texture in cases where it isn't easy to directly fetch the input texture data.
+)");
+  bool rawOutput;
 
-  TextureDisplayOverlay overlay;
+  DOCUMENT("The offset to pan in the X axis.");
+  float xOffset;
+
+  DOCUMENT("The offset to pan in the Y axis.");
+  float yOffset;
+
+  DOCUMENT(R"(The background color to use behind the texture display.
+
+If set to (0, 0, 0, 0) the global checkerboard colors are used.
+)");
+  FloatVector backgroundColor;
+
+  DOCUMENT("Selects a :class:`DebugOverlay` to draw over the top of the texture.");
+  DebugOverlay overlay;
+
+  static const uint32_t ResolveSamples = ~0U;
 };
 
+DECLARE_REFLECTION_STRUCT(TextureDisplay);
+
+// some dependent structs for TextureSave
+DOCUMENT("How to map components to normalised ``[0, 255]`` for saving to 8-bit file formats.");
+struct TextureComponentMapping
+{
+  DOCUMENT("The value that should be mapped to ``0``");
+  float blackPoint = 0.0f;
+  DOCUMENT("The value that should be mapped to ``255``");
+  float whitePoint = 1.0f;
+};
+
+DECLARE_REFLECTION_STRUCT(TextureComponentMapping);
+
+DOCUMENT(R"(How to map multisampled textures for saving to non-multisampled file formats.
+
+.. data:: ResolveSamples
+
+  Value for :data:`sampleIndex` if the samples should be averaged.
+)");
+struct TextureSampleMapping
+{
+  DOCUMENT(R"(
+``True`` if the samples should be mapped to array slices. A multisampled array expands each slice
+in-place, so it would be slice 0: sample 0, slice 0: sample 1, slice 1: sample 0, etc.
+
+This then follows the mapping for array slices as with any other array texture. :data:`sampleIndex`
+is ignored.
+)");
+  bool mapToArray;
+
+  DOCUMENT(R"(
+If :data:`mapToArray` is ``False`` this selects which sample should be extracted to treat as a
+normal 2D image. If set to :data:`ResolveSamples` then instead there's a default average resolve.
+)");
+  uint32_t sampleIndex;
+
+  static const uint32_t ResolveSamples = ~0U;
+};
+
+DECLARE_REFLECTION_STRUCT(TextureSampleMapping);
+
+DOCUMENT(R"(How to map array textures for saving to non-arrayed file formats.
+
+If :data:`sliceIndex` is -1, :data:`cubeCruciform` == :data:`slicesAsGrid` == ``False`` and the file
+format doesn't support saving all slices, only slice 0 is saved.
+)");
+struct TextureSliceMapping
+{
+  DOCUMENT(R"(
+Selects the (depth/array) slice to save.
+
+If this is -1, then all slices are written out as detailed below. This is only supported in formats
+that don't support slices natively, and will be done in RGBA8.
+)");
+  int32_t sliceIndex = -1;
+
+  // write out the slices as a 2D grid, with the below
+  // width. Any empty slices are writted as (0,0,0,0)
+  DOCUMENT(R"(
+If ``True``, write out the slices as a 2D grid with the width given in :data:`sliceGridWidth`. Any
+empty slices in the grid are written as transparent black.
+)");
+  bool slicesAsGrid = false;
+
+  DOCUMENT("The width of a grid if :data:`slicesAsGrid` is ``True``.");
+  int32_t sliceGridWidth = 1;
+
+  DOCUMENT(R"(Write out 6 slices in a cruciform pattern::
+
+          +----+
+          | +y |
+          |    |
+     +----+----+----+----+
+     | -x | +z | +x | -z |
+     |    |    |    |    |
+     +----+----+----+----+
+          | -y |
+          |    |
+          +----+
+
+With the gaps filled in with transparent black.
+)");
+  bool cubeCruciform = false;
+};
+
+DECLARE_REFLECTION_STRUCT(TextureSliceMapping);
+
+DOCUMENT("Describes a texture to save and how to map it to the destination file format.");
 struct TextureSave
 {
-  ResourceId id;
+  DOCUMENT("The :class:`ResourceId` of the texture to save.");
+  ResourceId resourceId;
 
-  FormatComponentType typeHint;
+  DOCUMENT("An optional :class:`CompType` hint to use when saving a typeless texture.");
+  CompType typeHint = CompType::Typeless;
 
-  FileType destType;
+  DOCUMENT("The :class:`FileType` to use when saving to the destination file.");
+  FileType destType = FileType::DDS;
 
   // mip == -1 writes out all mips where allowed by file format
   // or writes mip 0 otherwise
-  int32_t mip;
+  DOCUMENT(R"(Selects the mip to be written out.
 
-  // for output formats that are 8bit unorm srgb, values are mapped using
-  // the following black/white points.
-  struct ComponentMapping
-  {
-    float blackPoint;
-    float whitePoint;
-  } comp;
+If set to ``-1`` then all mips are written, where allowed by file format. If not allowed, mip 0 is
+written
+)");
+  int32_t mip = -1;
 
-  // what to do for multisampled textures (ignored otherwise)
-  struct SampleMapping
-  {
-    // if true, texture acts like an array, each slice being
-    // the corresponding sample, and below sample index is ignored.
-    // Later options for handling slices/faces then control how
-    // a texture array is mapped to the file.
-    bool32 mapToArray;
+  DOCUMENT(R"(Controls black/white point mapping for output formats that are normal
+:attr:`8-bit SRGB <CompType.UNorm>`, values are
+)");
+  TextureComponentMapping comp;
 
-    // if the above mapToArray is false, this selects the sample
-    // index to treat as a normal 2D image. If this is ~0U a default
-    // unweighted average resolve is performed instead.
-    // resolve only available for uncompressed simple formats.
-    uint32_t sampleIndex;
-  } sample;
+  DOCUMENT("Controls mapping for multisampled textures (ignored if texture is not multisampled)");
+  TextureSampleMapping sample;
 
-  // how to select/save depth/array slices or cubemap faces
-  // if invalid options are specified, slice index 0 is written
-  // alone
-  struct SliceMapping
-  {
-    // select the (depth/array) slice to save.
-    // If this is -1, writes out all slices as detailed below
-    // this is only supported in formats that don't support
-    // slices natively, and will be done in RGBA8 space.
-    int32_t sliceIndex;
+  DOCUMENT("Controls mapping for arrayed textures (ignored if texture is not arrayed)");
+  TextureSliceMapping slice;
 
-    // write out the slices as a 2D grid, with the below
-    // width. Any empty slices are writted as (0,0,0,0)
-    bool32 slicesAsGrid;
-
-    int32_t sliceGridWidth;
-
-    // write out 6 slices in the cruciform:
-    /*
-           +---+
-           |+y |
-           |   |
-       +---+---+---+---+
-       |-x |+z |+x |-z |
-       |   |   |   |   |
-       +---+---+---+---+
-           |-y |
-           |   |
-           +---+
-    */
-    // with the gaps filled with (0,0,0,0)
-    bool32 cubeCruciform;
-
-    // if sliceIndex is -1, cubeCruciform == slicesAsGrid == false
-    // and file format doesn't support saving all slices, only
-    // slice 0 is saved
-  } slice;
-
-  int channelExtract;
+  DOCUMENT("Selects a single component out of a texture to save as grayscale, or -1 to save all.");
+  int channelExtract = -1;
 
   // for formats without an alpha channel, define how it should be
   // mapped. Only available for uncompressed simple formats, done
   // in RGBA8 space.
-  AlphaMapping alpha;
-  FloatVector alphaCol;
-  FloatVector alphaColSecondary;
+  DOCUMENT(R"(Controls handling of alpha channel, mostly relevant for file formats that without
+alpha.
 
-  int jpegQuality;
+It is an :class:`AlphaMapping` that controls what behaviour to use.
+)");
+  AlphaMapping alpha = AlphaMapping::Preserve;
+
+  DOCUMENT("The background color if :data:`alpha` is set to :attr:`AlphaMapping.BlendToColor`");
+  FloatVector alphaCol;
+
+  DOCUMENT("The quality to use when saving to a ``JPG`` file. Valid values are between 1 and 100.");
+  int jpegQuality = 90;
 };
 
+DECLARE_REFLECTION_STRUCT(TextureSave);
+
+// dependent structs for TargetControlMessage
+DOCUMENT("Information about the a new capture created by the target.");
+struct NewCaptureData
+{
+  DOCUMENT("An identifier to use to refer to this capture.");
+  uint32_t captureId = 0;
+  DOCUMENT("The time the capture was created, as a unix timestamp in UTC.");
+  uint64_t timestamp = 0;
+  DOCUMENT("The raw bytes that contain the capture thumbnail, as RGB8 data.");
+  bytebuf thumbnail;
+  DOCUMENT("The width of the image contained in :data:`thumbnail`.");
+  int32_t thumbWidth = 0;
+  DOCUMENT("The height of the image contained in :data:`thumbnail`.");
+  int32_t thumbHeight = 0;
+  DOCUMENT("The local path on the target system where the capture is saved.");
+  rdcstr path;
+  DOCUMENT("``True`` if the target is running on the local system.");
+  bool local = true;
+};
+
+DECLARE_REFLECTION_STRUCT(NewCaptureData);
+
+DOCUMENT("Information about the API that the target is using.");
+struct APIUseData
+{
+  DOCUMENT("The name of the API.");
+  rdcstr name;
+
+  DOCUMENT("``True`` if the API is presenting to a swapchain");
+  bool presenting = false;
+
+  DOCUMENT("``True`` if the API can be captured.");
+  bool supported = false;
+};
+
+DECLARE_REFLECTION_STRUCT(APIUseData);
+
+DOCUMENT("Information about why the target is busy.");
+struct BusyData
+{
+  DOCUMENT("The name of the client currently connected to the target.");
+  rdcstr clientName;
+};
+
+DECLARE_REFLECTION_STRUCT(BusyData);
+
+DOCUMENT("Information about a new child process spawned by the target.");
+struct NewChildData
+{
+  DOCUMENT("The PID (Process ID) of the new child.");
+  uint32_t processId = 0;
+  DOCUMENT("The ident where the new child's target control is active.");
+  uint32_t ident = 0;
+};
+
+DECLARE_REFLECTION_STRUCT(NewChildData);
+
+DOCUMENT("A message from a target control connection.");
 struct TargetControlMessage
 {
-  TargetControlMessage() {}
-  TargetControlMessageType Type;
+  DOCUMENT("The :class:`type <TargetControlMessageType>` of message received");
+  TargetControlMessageType type = TargetControlMessageType::Unknown;
 
-  struct NewCaptureData
-  {
-    uint32_t ID;
-    uint64_t timestamp;
-    rdctype::array<byte> thumbnail;
-    rdctype::str path;
-    bool32 local;
-  } NewCapture;
+  DOCUMENT("The :class:`new capture data <NewCaptureData>`.");
+  NewCaptureData newCapture;
+  DOCUMENT("The :class:`API use data <APIUseData>`.");
+  APIUseData apiUse;
+  DOCUMENT("The :class:`busy signal data <BusyData>`.");
+  BusyData busy;
+  DOCUMENT("The :class:`new child process data <NewChildData>`.");
+  NewChildData newChild;
+  DOCUMENT(R"(The progress of an on-going capture.
 
-  struct RegisterAPIData
-  {
-    rdctype::str APIName;
-  } RegisterAPI;
-
-  struct BusyData
-  {
-    rdctype::str ClientName;
-  } Busy;
-
-  struct NewChildData
-  {
-    uint32_t PID;
-    uint32_t ident;
-  } NewChild;
+When valid, will be in the range of 0.0 to 1.0 (0 - 100%). If not valid when a capture isn't going
+or has finished, it will be -1.0
+)");
+  float capProgress = -1.0f;
 };
+
+DECLARE_REFLECTION_STRUCT(TargetControlMessage);
+
+DOCUMENT("A modification to a single environment variable.");
+struct EnvironmentModification
+{
+  EnvironmentModification() : mod(EnvMod::Set), sep(EnvSep::NoSep), name(""), value("") {}
+  EnvironmentModification(EnvMod m, EnvSep s, const char *n, const char *v)
+      : mod(m), sep(s), name(n), value(v)
+  {
+  }
+  DOCUMENT("");
+  bool operator==(const EnvironmentModification &o) const
+  {
+    return mod == o.mod && sep == o.sep && name == o.name && value == o.value;
+  }
+  bool operator<(const EnvironmentModification &o) const
+  {
+    if(!(mod == o.mod))
+      return mod < o.mod;
+    if(!(sep == o.sep))
+      return sep < o.sep;
+    if(!(name == o.name))
+      return name < o.name;
+    if(!(value == o.value))
+      return value < o.value;
+    return false;
+  }
+  DOCUMENT("The :class:`modification <EnvMod>` to use.");
+  EnvMod mod;
+  DOCUMENT("The :class:`separator <EnvSep>` to use if needed.");
+  EnvSep sep;
+  DOCUMENT("The name of the environment variable.");
+  rdcstr name;
+  DOCUMENT("The value to use with the modification specified in :data:`mod`.");
+  rdcstr value;
+};
+
+DECLARE_REFLECTION_STRUCT(EnvironmentModification);
+
+DOCUMENT("The format for a capture file either supported to read from, or export to");
+struct CaptureFileFormat
+{
+  DOCUMENT("");
+  bool operator==(const CaptureFileFormat &o) const
+  {
+    return extension == o.extension && name == o.name && description == o.description &&
+           requiresBuffers == o.requiresBuffers && openSupported == o.openSupported &&
+           convertSupported == o.convertSupported;
+  }
+  bool operator<(const CaptureFileFormat &o) const
+  {
+    if(!(extension == o.extension))
+      return extension < o.extension;
+    if(!(name == o.name))
+      return name < o.name;
+    if(!(description == o.description))
+      return description < o.description;
+    if(!(requiresBuffers == o.requiresBuffers))
+      return requiresBuffers < o.requiresBuffers;
+    if(!(openSupported == o.openSupported))
+      return openSupported < o.openSupported;
+    if(!(convertSupported == o.convertSupported))
+      return convertSupported < o.convertSupported;
+    return false;
+  }
+  DOCUMENT("The file of the format as a single minimal string, e.g. ``rdc``.");
+  rdcstr extension;
+
+  DOCUMENT("A human readable short phrase naming the file format.");
+  rdcstr name;
+
+  DOCUMENT("A human readable long-form description of the file format.");
+  rdcstr description;
+
+  DOCUMENT(R"(Indicates whether exporting to this format requires buffers or just structured data.
+If it doesn't require buffers then it can be exported directly from an opened capture, which by
+default has structured data but no buffers available.
+)");
+  bool requiresBuffers;
+
+  DOCUMENT(R"(Indicates whether or not files in this format can be opened and processed as
+structured data.
+)");
+  bool openSupported;
+
+  DOCUMENT("Indicates whether captures or structured data can be saved out in this format.");
+  bool convertSupported;
+};
+
+DECLARE_REFLECTION_STRUCT(CaptureFileFormat);

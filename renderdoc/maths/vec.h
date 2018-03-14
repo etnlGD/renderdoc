@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -69,6 +69,7 @@ struct Vec4f
     z = Z;
     w = W;
   }
+  operator Vec3f() const { return Vec3f(x, y, z); }
   float x, y, z, w;
 };
 

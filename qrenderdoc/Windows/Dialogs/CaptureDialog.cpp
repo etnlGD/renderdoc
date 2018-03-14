@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -23,97 +23,84 @@
  ******************************************************************************/
 
 #include "CaptureDialog.h"
+#include <QMouseEvent>
 #include <QSortFilterProxyModel>
 #include <QStandardItemModel>
+#include "3rdparty/flowlayout/FlowLayout.h"
+#include "3rdparty/toolwindowmanager/ToolWindowManager.h"
 #include "Code/QRDUtils.h"
 #include "Code/qprocessinfo.h"
-#include "FlowLayout.h"
+#include "Windows/Dialogs/EnvironmentEditor.h"
+#include "Windows/Dialogs/VirtualFileDialog.h"
+#include "Windows/MainWindow.h"
 #include "LiveCapture.h"
-#include "ToolWindowManager.h"
 #include "ui_CaptureDialog.h"
 
 #define JSON_ID "rdocCaptureSettings"
 #define JSON_VER 1
 
-Q_DECLARE_METATYPE(CaptureSettings);
-
-CaptureSettings::CaptureSettings()
+static QString GetDescription(const EnvironmentModification &env)
 {
-  Inject = false;
-  AutoStart = false;
-  RENDERDOC_GetDefaultCaptureOptions(&Options);
-}
+  QString ret;
 
-QVariantMap CaptureSettings::toJSON() const
-{
-  QVariantMap ret;
-
-  ret["AutoStart"] = AutoStart;
-
-  ret["Executable"] = Executable;
-  ret["WorkingDir"] = WorkingDir;
-  ret["CmdLine"] = CmdLine;
-
-  QVariantList env;
-  for(int i = 0; i < Environment.size(); i++)
-    env.push_back(Environment[i].toJSON());
-  ret["Environment"] = env;
-
-  QVariantMap opts;
-  opts["AllowVSync"] = Options.AllowVSync;
-  opts["AllowFullscreen"] = Options.AllowFullscreen;
-  opts["APIValidation"] = Options.APIValidation;
-  opts["CaptureCallstacks"] = Options.CaptureCallstacks;
-  opts["CaptureCallstacksOnlyDraws"] = Options.CaptureCallstacksOnlyDraws;
-  opts["DelayForDebugger"] = Options.DelayForDebugger;
-  opts["VerifyMapWrites"] = Options.VerifyMapWrites;
-  opts["HookIntoChildren"] = Options.HookIntoChildren;
-  opts["RefAllResources"] = Options.RefAllResources;
-  opts["SaveAllInitials"] = Options.SaveAllInitials;
-  opts["CaptureAllCmdLists"] = Options.CaptureAllCmdLists;
-  opts["DebugOutputMute"] = Options.DebugOutputMute;
-  ret["Options"] = opts;
+  if(env.mod == EnvMod::Append)
+    ret = QFormatStr("Append %1 with %2 using %3").arg(env.name).arg(env.value).arg(ToQStr(env.sep));
+  else if(env.mod == EnvMod::Prepend)
+    ret = QFormatStr("Prepend %1 with %2 using %3").arg(env.name).arg(env.value).arg(ToQStr(env.sep));
+  else
+    ret = QFormatStr("Set %1 to %2").arg(env.name).arg(env.value);
 
   return ret;
 }
 
-void CaptureSettings::fromJSON(const QVariantMap &data)
+Q_DECLARE_METATYPE(CaptureSettings);
+
+void CaptureDialog::initWarning(RDLabel *warning)
 {
-  AutoStart = data["AutoStart"].toBool();
+  if(!warning)
+    return;
 
-  Executable = data["Executable"].toString();
-  WorkingDir = data["WorkingDir"].toString();
-  CmdLine = data["CmdLine"].toString();
+  if(warning->devicePixelRatio() >= 2)
+    warning->setText(warning->text().replace(lit(".png"), lit("@2x.png")));
 
-  QVariantList env = data["Environment"].toList();
-  for(int i = 0; i < env.size(); i++)
-  {
-    EnvironmentModification e;
-    e.fromJSON(env[i].value<QVariantMap>());
-    Environment.push_back(e);
-  }
+  auto calcPaletteFromStyle = [warning](QEvent *) {
+    QPalette pal = warning->palette();
 
-  QVariantMap opts = data["Options"].toMap();
+    QColor base = pal.color(QPalette::ToolTipBase);
 
-  Options.AllowVSync = opts["AllowVSync"].toBool();
-  Options.AllowFullscreen = opts["AllowFullscreen"].toBool();
-  Options.APIValidation = opts["APIValidation"].toBool();
-  Options.CaptureCallstacks = opts["CaptureCallstacks"].toBool();
-  Options.CaptureCallstacksOnlyDraws = opts["CaptureCallstacksOnlyDraws"].toBool();
-  Options.DelayForDebugger = opts["DelayForDebugger"].toUInt();
-  Options.VerifyMapWrites = opts["VerifyMapWrites"].toBool();
-  Options.HookIntoChildren = opts["HookIntoChildren"].toBool();
-  Options.RefAllResources = opts["RefAllResources"].toBool();
-  Options.SaveAllInitials = opts["SaveAllInitials"].toBool();
-  Options.CaptureAllCmdLists = opts["CaptureAllCmdLists"].toBool();
-  Options.DebugOutputMute = opts["DebugOutputMute"].toBool();
+    pal.setColor(QPalette::Foreground, pal.color(QPalette::ToolTipText));
+    pal.setColor(QPalette::Window, base);
+    pal.setColor(QPalette::Base, base.darker(120));
+
+    warning->setPalette(pal);
+  };
+
+  calcPaletteFromStyle(NULL);
+
+  warning->setBackgroundRole(QPalette::Window);
+  warning->setForegroundRole(QPalette::Foreground);
+
+  QObject::connect(warning, &RDLabel::mouseMoved,
+                   [warning](QMouseEvent *) { warning->setBackgroundRole(QPalette::Base); });
+  QObject::connect(warning, &RDLabel::leave,
+                   [warning]() { warning->setBackgroundRole(QPalette::Window); });
+  QObject::connect(warning, &RDLabel::styleChanged, calcPaletteFromStyle);
+
+  warning->setAutoFillBackground(true);
+  warning->setMouseTracking(true);
+  warning->setVisible(false);
 }
 
-CaptureDialog::CaptureDialog(CaptureContext *ctx, OnCaptureMethod captureCallback,
-                             OnInjectMethod injectCallback, QWidget *parent)
-    : QFrame(parent), ui(new Ui::CaptureDialog), m_Ctx(ctx)
+CaptureDialog::CaptureDialog(ICaptureContext &ctx, OnCaptureMethod captureCallback,
+                             OnInjectMethod injectCallback, MainWindow *main, QWidget *parent)
+    : QFrame(parent), ui(new Ui::CaptureDialog), m_Ctx(ctx), m_Main(main)
 {
   ui->setupUi(this);
+
+  ui->exePath->setFont(Formatter::PreferredFont());
+  ui->workDirPath->setFont(Formatter::PreferredFont());
+  ui->cmdline->setFont(Formatter::PreferredFont());
+  ui->processList->setFont(Formatter::PreferredFont());
 
   // setup FlowLayout for options group
   {
@@ -149,6 +136,8 @@ CaptureDialog::CaptureDialog(CaptureContext *ctx, OnCaptureMethod captureCallbac
   proxy->setFilterKeyColumn(-1);
   // allow updating the underlying model
   proxy->setDynamicSortFilter(true);
+  // use case-insensitive filtering
+  proxy->setFilterCaseSensitivity(Qt::CaseInsensitive);
 
   ui->processList->setModel(proxy);
   ui->processList->setAlternatingRowColors(true);
@@ -156,32 +145,44 @@ CaptureDialog::CaptureDialog(CaptureContext *ctx, OnCaptureMethod captureCallbac
   // sort by PID by default
   ui->processList->sortByColumn(1, Qt::AscendingOrder);
 
-  // TODO Vulkan Layer
-  ui->vulkanLayerWarn->setVisible(false);
+  // Set up warning for host layer config
+  initWarning(ui->vulkanLayerWarn);
+  ui->vulkanLayerWarn->setVisible(RENDERDOC_NeedVulkanLayerRegistration(NULL, NULL, NULL));
+  QObject::connect(ui->vulkanLayerWarn, &RDLabel::clicked, this,
+                   &CaptureDialog::vulkanLayerWarn_mouseClick);
+
+  // Set up scanning for Android apps
+  initWarning(ui->androidScan);
+
+  // Set up warning for Android apps
+  initWarning(ui->androidWarn);
+  QObject::connect(ui->androidWarn, &RDLabel::clicked, this, &CaptureDialog::androidWarn_mouseClick);
+
+  m_AndroidFlags = AndroidFlags::NoFlags;
 
   m_CaptureCallback = captureCallback;
   m_InjectCallback = injectCallback;
 
-  setSettings(CaptureSettings());
+  SetSettings(CaptureSettings());
 
-  updateGlobalHook();
+  UpdateGlobalHook();
 }
 
 CaptureDialog::~CaptureDialog()
 {
-  m_Ctx->windowClosed(this);
+  m_Ctx.BuiltinWindowClosed(this);
 
   if(ui->toggleGlobal->isChecked())
   {
     ui->toggleGlobal->setChecked(false);
 
-    updateGlobalHook();
+    UpdateGlobalHook();
   }
 
   delete ui;
 }
 
-void CaptureDialog::setInjectMode(bool inject)
+void CaptureDialog::SetInjectMode(bool inject)
 {
   m_Inject = inject;
 
@@ -196,8 +197,8 @@ void CaptureDialog::setInjectMode(bool inject)
 
     fillProcessList();
 
-    ui->capture->setText("Inject");
-    this->setWindowTitle("Inject into Process");
+    ui->launch->setText(lit("Inject"));
+    this->setWindowTitle(lit("Inject into Process"));
   }
   else
   {
@@ -207,10 +208,10 @@ void CaptureDialog::setInjectMode(bool inject)
                                                     QSizePolicy::Expanding);
     ui->verticalLayout->invalidate();
 
-    ui->globalGroup->setVisible(m_Ctx->Config.AllowGlobalHook);
+    ui->globalGroup->setVisible(m_Ctx.Config().AllowGlobalHook);
 
-    ui->capture->setText("Capture");
-    this->setWindowTitle("Capture Executable");
+    ui->launch->setText(lit("Launch"));
+    this->setWindowTitle(lit("Launch Application"));
   }
 }
 
@@ -237,23 +238,309 @@ void CaptureDialog::on_processFilter_textChanged(const QString &filter)
   model->setFilterFixedString(filter);
 }
 
-void CaptureDialog::on_exePath_textChanged(const QString &exe)
+void CaptureDialog::on_exePath_textChanged(const QString &text)
 {
+  QString exe = text;
+
+  // This is likely due to someone pasting a full path copied using copy path. Removing the quotes
+  // is safe in any case
+  if(exe.startsWith(QLatin1Char('"')) && exe.endsWith(QLatin1Char('"')) && exe.count() > 2)
+  {
+    exe = exe.mid(1, exe.count() - 2);
+    ui->exePath->setText(exe);
+    return;
+  }
+
   QFileInfo f(exe);
   QDir dir = f.dir();
   bool valid = dir.makeAbsolute();
 
   if(valid && f.isAbsolute())
-    ui->workDirPath->setPlaceholderText(QDir::toNativeSeparators(dir.absolutePath()));
-  else if(exe == "")
-    ui->workDirPath->setPlaceholderText("");
+  {
+    QString path = dir.absolutePath();
 
-  updateGlobalHook();
+    if(!m_Ctx.Replay().CurrentRemote())
+      path = QDir::toNativeSeparators(path);
+
+    // match the path separators from the path
+    if(exe.count(QLatin1Char('/')) > exe.count(QLatin1Char('\\')))
+      path = path.replace(QLatin1Char('\\'), QLatin1Char('/'));
+    else
+      path = path.replace(QLatin1Char('/'), QLatin1Char('\\'));
+
+    ui->workDirPath->setPlaceholderText(path);
+  }
+  else if(exe.isEmpty())
+  {
+    ui->workDirPath->setPlaceholderText(QString());
+  }
+
+  UpdateGlobalHook();
 }
 
-void CaptureDialog::on_vulkanLayerWarn_clicked()
+void CaptureDialog::vulkanLayerWarn_mouseClick()
 {
-  // TODO Vulkan Layer
+  QString caption = tr("Configure Vulkan layer settings in registry?");
+
+  VulkanLayerFlags flags = VulkanLayerFlags::NoFlags;
+  rdcarray<rdcstr> myJSONs;
+  rdcarray<rdcstr> otherJSONs;
+
+  RENDERDOC_NeedVulkanLayerRegistration(&flags, &myJSONs, &otherJSONs);
+
+  const bool hasOtherJSON = bool(flags & VulkanLayerFlags::OtherInstallsRegistered);
+  const bool thisRegistered = bool(flags & VulkanLayerFlags::ThisInstallRegistered);
+  const bool needElevation = bool(flags & VulkanLayerFlags::NeedElevation);
+  const bool couldElevate = bool(flags & VulkanLayerFlags::CouldElevate);
+  const bool registerAll = bool(flags & VulkanLayerFlags::RegisterAll);
+  const bool updateAllowed = bool(flags & VulkanLayerFlags::UpdateAllowed);
+
+  if(flags & VulkanLayerFlags::Unfixable)
+  {
+    QString msg =
+        tr("There is an unfixable problem with your vulkan layer configuration. Please consult the "
+           "RenderDoc documentation, or package/distribution documentation on linux\n\n");
+
+    for(const rdcstr &j : otherJSONs)
+      msg += j + lit("\n");
+
+    RDDialog::critical(this, tr("Unfixable vulkan layer configuration"), msg);
+    return;
+  }
+
+  QString msg =
+      tr("Vulkan capture happens through the API's layer mechanism. RenderDoc has detected that ");
+
+  if(hasOtherJSON)
+  {
+    if(otherJSONs.size() > 1)
+      msg +=
+          tr("there are other RenderDoc builds registered already. They must be disabled so that "
+             "capture can happen without nasty clashes.");
+    else
+      msg +=
+          tr("there is another RenderDoc build registered already. It must be disabled so that "
+             "capture can happen without nasty clashes.");
+
+    if(!thisRegistered)
+      msg += tr(" Also ");
+  }
+
+  if(!thisRegistered)
+  {
+    msg +=
+        tr("the layer for this installation is not yet registered. This could be due to an "
+           "upgrade from a version that didn't support Vulkan, or if this version is just a loose "
+           "unzip/dev build.");
+  }
+
+  msg += tr("\n\nWould you like to proceed with the following changes?\n\n");
+
+  if(hasOtherJSON)
+  {
+    for(const rdcstr &j : otherJSONs)
+      msg += (updateAllowed ? tr("Unregister/update: %1\n") : tr("Unregister: %1\n")).arg(j);
+
+    msg += lit("\n");
+  }
+
+  if(!thisRegistered)
+  {
+    if(registerAll)
+    {
+      for(const rdcstr &j : myJSONs)
+        msg += (updateAllowed ? tr("Register/update: %1\n") : tr("Register: %1\n")).arg(j);
+    }
+    else
+    {
+      msg += updateAllowed ? tr("Register one of:\n") : tr("Register/update one of:\n");
+      for(const rdcstr &j : myJSONs)
+        msg += tr("  -- %1\n").arg(j);
+    }
+
+    msg += lit("\n");
+  }
+
+  msg += tr("This is a one-off change, it won't be needed again unless the installation moves.");
+
+  QMessageBox::StandardButton install = RDDialog::question(this, caption, msg, RDDialog::YesNoCancel);
+
+  if(install == QMessageBox::Yes)
+  {
+    bool run = false;
+    bool admin = false;
+
+    // if we need to elevate, just try it.
+    if(needElevation)
+    {
+      admin = run = true;
+    }
+    // if we could elevate, ask the user
+    else if(couldElevate)
+    {
+      QMessageBox::StandardButton elevate = RDDialog::question(
+          this, tr("System layer install"),
+          tr("Do you want to elevate permissions to install the layer at a system level?"),
+          RDDialog::YesNoCancel);
+
+      if(elevate == QMessageBox::Yes)
+        admin = true;
+      else if(elevate == QMessageBox::No)
+        admin = false;
+
+      run = (elevate != QMessageBox::Cancel);
+    }
+    // otherwise run non-elevated
+    else
+    {
+      run = true;
+    }
+
+    if(run)
+    {
+      if(admin)
+      {
+        RunProcessAsAdmin(qApp->applicationFilePath(),
+                          QStringList() << lit("--install_vulkan_layer") << lit("root"),
+                          [this]() { ui->vulkanLayerWarn->setVisible(false); });
+        return;
+      }
+      else
+      {
+        QProcess process;
+        process.start(qApp->applicationFilePath(), QStringList() << lit("--install_vulkan_layer")
+                                                                 << lit("user"));
+        process.waitForFinished(300);
+      }
+    }
+
+    ui->vulkanLayerWarn->setVisible(RENDERDOC_NeedVulkanLayerRegistration(NULL, NULL, NULL));
+  }
+}
+
+void CaptureDialog::CheckAndroidSetup(QString &filename)
+{
+  ui->androidScan->setVisible(true);
+  ui->androidWarn->setVisible(false);
+
+  LambdaThread *scan = new LambdaThread([this, filename]() {
+
+    rdcstr host = m_Ctx.Replay().CurrentRemote()->hostname;
+    RENDERDOC_CheckAndroidPackage(host.c_str(), filename.toUtf8().data(), &m_AndroidFlags);
+
+    const bool debuggable = bool(m_AndroidFlags & AndroidFlags::Debuggable);
+    const bool hasroot = bool(m_AndroidFlags & AndroidFlags::RootAccess);
+
+    if(!debuggable && !hasroot)
+    {
+      // Check failed - set the warning visible
+      GUIInvoke::call([this]() {
+        ui->androidScan->setVisible(false);
+        ui->androidWarn->setVisible(true);
+      });
+    }
+    else
+    {
+      // Check passed, either app is debuggable or we have root - no warnings needed
+      GUIInvoke::call([this]() {
+        ui->androidScan->setVisible(false);
+        ui->androidWarn->setVisible(false);
+      });
+    }
+  });
+
+  scan->start();
+  scan->deleteLater();
+}
+
+void CaptureDialog::androidWarn_mouseClick()
+{
+  QString exe = ui->exePath->text();
+
+  const RemoteHost *remote = m_Ctx.Replay().CurrentRemote();
+
+  if(!remote)
+  {
+    RDDialog::critical(this, tr("Android server disconnected"),
+                       tr("You've been disconnected from the android server.\n\n"
+                          "Please reconnect before attempting to fix package problems."));
+    return;
+  }
+
+  rdcstr host = remote->hostname;
+
+  QString caption = tr("Application is not debuggable");
+
+  QString msg = tr(R"(In order to debug on Android, the package must be <b>debuggable</b>.
+<br><br>
+On UE4 you must disable <em>for distribution</em>, on Unity enable <em>development mode</em>.
+<br><br>
+RenderDoc can try to add the flag for you, which will involve completely reinstalling your package
+as well as re-signing it with a debug key. This method is prone to error and is
+<b>not recommended</b>. It is instead advised to configure your app to be debuggable at build time.
+<br><br>
+Would you like RenderDoc to try patching your package?
+)");
+
+  QMessageBox::StandardButton prompt = RDDialog::question(this, caption, msg, RDDialog::YesNoCancel);
+
+  if(prompt == QMessageBox::Yes)
+  {
+    float progress = 0.0f;
+    bool patchSucceeded = false;
+
+    // call into APK pull, patch, install routine, then continue
+    LambdaThread *patch = new LambdaThread([this, host, exe, &patchSucceeded, &progress]() {
+      AndroidFlags result = RENDERDOC_MakeDebuggablePackage(host.c_str(), exe.toUtf8().data(),
+                                                            [&progress](float p) { progress = p; });
+
+      if(result & AndroidFlags::Debuggable)
+      {
+        // Sucess!
+        patchSucceeded = true;
+
+        RDDialog::information(this, tr("Patch succeeded!"),
+                              tr("The patch process succeeded and the package is ready to debug"));
+      }
+      else
+      {
+        QString failmsg = tr("Something has gone wrong and the patching process failed.<br><br>");
+
+        if(result == AndroidFlags::MissingTools)
+        {
+          failmsg +=
+              tr("Tools required for the process were not found. Try configuring the path to your "
+                 "android SDK or java JDK in the settings dialog.");
+        }
+        else if(result == AndroidFlags::ManifestPatchFailure)
+        {
+          failmsg +=
+              tr("The package manifest could not be patched. This is not solveable, you will have "
+                 "to rebuild the package with the debuggable flag.");
+        }
+        else if(result == AndroidFlags::RepackagingAPKFailure)
+        {
+          failmsg += tr("The package was patched but could not be repackaged and installed.");
+        }
+
+        RDDialog::critical(this, tr("Failed to patch package"), failmsg);
+      }
+    });
+
+    patch->start();
+    // wait a few ms before popping up a progress bar
+    patch->wait(500);
+    if(patch->isRunning())
+    {
+      ShowProgressDialog(this, tr("Patching %1, please wait...").arg(exe),
+                         [patch]() { return !patch->isRunning(); },
+                         [&progress]() { return progress; });
+    }
+    patch->deleteLater();
+
+    if(patchSucceeded)
+      ui->androidWarn->setVisible(false);
+  }
 }
 
 void CaptureDialog::on_processRefesh_clicked()
@@ -261,47 +548,63 @@ void CaptureDialog::on_processRefesh_clicked()
   fillProcessList();
 }
 
+bool CaptureDialog::checkAllowClose()
+{
+  if(RENDERDOC_IsGlobalHookActive())
+  {
+    RDDialog::critical(this, tr("Global hook active"),
+                       tr("Cannot close this window while global hook is active."));
+    return false;
+  }
+
+  return true;
+}
+
 void CaptureDialog::on_exePathBrowse_clicked()
 {
-  QString initDir = "";
-  QString file = "";
+  QString initDir;
+  QString file;
 
   QFileInfo f(ui->exePath->text());
   QDir dir = f.dir();
-  if(ui->exePath->text() != "" && f.isAbsolute() && dir.exists())
+  if(f.isAbsolute() && dir.exists())
   {
     initDir = dir.absolutePath();
   }
-  else if(m_Ctx->Config.LastCapturePath != "")
+  else if(!m_Ctx.Config().LastCapturePath.isEmpty())
   {
-    initDir = m_Ctx->Config.LastCapturePath;
-    if(m_Ctx->Config.LastCaptureExe != "")
-      file = m_Ctx->Config.LastCaptureExe;
+    initDir = m_Ctx.Config().LastCapturePath;
+    if(!m_Ctx.Config().LastCaptureExe.isEmpty())
+      file = m_Ctx.Config().LastCaptureExe;
   }
 
-  // TODO Remote
+  QString filename;
 
-  // if(m_Core.Renderer.Remote == null)
+  if(m_Ctx.Replay().CurrentRemote())
   {
-    QString filename = RDDialog::getExecutableFileName(this, tr("Choose executable"), initDir);
-
-    if(filename != "")
-      setExecutableFilename(filename);
+    VirtualFileDialog vfd(m_Ctx, this);
+    RDDialog::show(&vfd);
+    filename = vfd.chosenPath();
   }
-  /*
   else
   {
-    VirtualOpenFileDialog remoteBrowser = new VirtualOpenFileDialog(m_Core.Renderer);
-    remoteBrowser.Opened += new EventHandler<FileOpenedEventArgs>(this.virtualExeBrowser_Opened);
-
-    remoteBrowser.ShowDialog(this);
+    filename = RDDialog::getExecutableFileName(this, tr("Choose executable"), initDir);
   }
-  */
+
+  if(!filename.isEmpty())
+  {
+    SetExecutableFilename(filename);
+
+    if(m_Ctx.Replay().CurrentRemote() && m_Ctx.Replay().CurrentRemote()->IsADB())
+    {
+      CheckAndroidSetup(filename);
+    }
+  }
 }
 
 void CaptureDialog::on_workDirBrowse_clicked()
 {
-  QString initDir = "";
+  QString initDir;
 
   if(QDir(ui->workDirPath->text()).exists())
   {
@@ -312,79 +615,186 @@ void CaptureDialog::on_workDirBrowse_clicked()
     QDir dir = QFileInfo(ui->exePath->text()).dir();
     if(dir.exists())
       initDir = dir.absolutePath();
-    else if(m_Ctx->Config.LastCapturePath != "")
-      initDir = m_Ctx->Config.LastCapturePath;
+    else if(!m_Ctx.Config().LastCapturePath.isEmpty())
+      initDir = m_Ctx.Config().LastCapturePath;
   }
 
-  // TODO Remote
+  QString dir;
 
-  // if(m_Core.Renderer.Remote == null)
+  if(m_Ctx.Replay().CurrentRemote())
   {
-    QString dir = RDDialog::getExistingDirectory(this, "Choose working directory", initDir);
-
-    if(dir != "")
-      ui->workDirPath->setText(dir);
+    VirtualFileDialog vfd(m_Ctx, this);
+    vfd.setDirBrowse();
+    RDDialog::show(&vfd);
+    dir = vfd.chosenPath();
   }
-  /*
   else
   {
-    VirtualOpenFileDialog remoteBrowser = new VirtualOpenFileDialog(m_Core.Renderer);
-    remoteBrowser.Opened += new
-  EventHandler<FileOpenedEventArgs>(this.virtualWorkDirBrowser_Opened);
-
-    remoteBrowser.DirectoryBrowse = true;
-
-    remoteBrowser.ShowDialog(this);
+    dir = RDDialog::getExistingDirectory(this, tr("Choose working directory"), initDir);
   }
-  */
+
+  if(!dir.isEmpty())
+    ui->workDirPath->setText(dir);
 }
 
 void CaptureDialog::on_envVarEdit_clicked()
 {
-  // TODO Env Editor
+  EnvironmentEditor envEditor(this);
+
+  for(const EnvironmentModification &mod : m_EnvModifications)
+    envEditor.addModification(mod, true);
+
+  int res = RDDialog::show(&envEditor);
+
+  if(res)
+    SetEnvironmentModifications(envEditor.modifications());
 }
 
 void CaptureDialog::on_toggleGlobal_clicked()
 {
-  if(ui->toggleGlobal->isEnabled())
-  {
-    ui->toggleGlobal->setChecked(!ui->toggleGlobal->isChecked());
+  if(!ui->toggleGlobal->isEnabled())
+    return;
 
-    updateGlobalHook();
+  ui->toggleGlobal->setEnabled(false);
+
+  QList<QWidget *> enableDisableWidgets = {ui->exePath,       ui->exePathBrowse, ui->workDirPath,
+                                           ui->workDirBrowse, ui->cmdline,       ui->launch,
+                                           ui->saveSettings,  ui->loadSettings};
+
+  for(QWidget *o : ui->optionsGroup->findChildren<QWidget *>(QString(), Qt::FindDirectChildrenOnly))
+    if(o)
+      enableDisableWidgets << o;
+
+  for(QWidget *o : ui->actionGroup->findChildren<QWidget *>(QString(), Qt::FindDirectChildrenOnly))
+    if(o)
+      enableDisableWidgets << o;
+
+  if(ui->toggleGlobal->isChecked())
+  {
+    if(!IsRunningAsAdmin())
+    {
+      QMessageBox::StandardButton res = RDDialog::question(
+          this, tr("Restart as admin?"),
+          tr("RenderDoc needs to restart with administrator privileges. Restart?"),
+          RDDialog::YesNoCancel);
+
+      if(res == QMessageBox::Yes)
+      {
+        QString capfile = QDir::temp().absoluteFilePath(lit("global.cap"));
+
+        bool wasChecked = ui->AutoStart->isChecked();
+        ui->AutoStart->setChecked(false);
+
+        SaveSettings(capfile);
+
+        ui->AutoStart->setChecked(wasChecked);
+
+        // save the config here explicitly
+        m_Ctx.Config().Save();
+
+        bool success = RunProcessAsAdmin(qApp->applicationFilePath(), QStringList() << capfile);
+
+        if(success)
+        {
+          // close the config so that when we're shutting down we don't conflict with new process
+          // loading
+          m_Ctx.Config().Close();
+          m_Ctx.GetMainWindow()->Widget()->close();
+          return;
+        }
+
+        // don't restart if it failed for some reason (e.g. user clicked no to the elevation prompt)
+        ui->toggleGlobal->setChecked(false);
+        ui->toggleGlobal->setEnabled(true);
+        return;
+      }
+      else
+      {
+        ui->toggleGlobal->setChecked(false);
+        ui->toggleGlobal->setEnabled(true);
+        return;
+      }
+    }
+
+    setEnabledMultiple(enableDisableWidgets, false);
+
+    ui->toggleGlobal->setText(tr("Disable Global Hook"));
+
+    if(RENDERDOC_IsGlobalHookActive())
+      RENDERDOC_StopGlobalHook();
+
+    QString exe = ui->exePath->text();
+
+    QString capturefile = m_Ctx.TempCaptureFilename(QFileInfo(exe).baseName());
+
+    bool success = RENDERDOC_StartGlobalHook(exe.toUtf8().data(), capturefile.toUtf8().data(),
+                                             Settings().options);
+
+    if(!success)
+    {
+      // tidy up and exit
+      RDDialog::critical(
+          this, tr("Couldn't start global hook"),
+          tr("Aborting. Couldn't start global hook. Check diagnostic log in help menu for more "
+             "information"));
+
+      setEnabledMultiple(enableDisableWidgets, true);
+
+      // won't recurse because it's not enabled yet
+      ui->toggleGlobal->setChecked(false);
+      ui->toggleGlobal->setText(tr("Enable Global Hook"));
+      ui->toggleGlobal->setEnabled(true);
+      return;
+    }
   }
+  else
+  {
+    // not checked
+    if(RENDERDOC_IsGlobalHookActive())
+      RENDERDOC_StopGlobalHook();
+
+    setEnabledMultiple(enableDisableWidgets, true);
+
+    ui->toggleGlobal->setText(tr("Enable Global Hook"));
+  }
+
+  ui->toggleGlobal->setEnabled(true);
+
+  UpdateGlobalHook();
 }
 
 void CaptureDialog::on_saveSettings_clicked()
 {
   QString filename = RDDialog::getSaveFileName(this, tr("Save Settings As"), QString(),
-                                               "Capture settings (*.cap)");
+                                               tr("Capture settings (*.cap)"));
 
-  if(filename != "")
+  if(!filename.isEmpty())
   {
     QDir dirinfo = QFileInfo(filename).dir();
     if(dirinfo.exists())
     {
-      saveSettings(filename);
-      PersistantConfig::AddRecentFile(m_Ctx->Config.RecentCaptureSettings, filename, 10);
+      SaveSettings(filename);
+      AddRecentFile(m_Ctx.Config().RecentCaptureSettings, filename, 10);
+      m_Main->PopulateRecentCaptureSettings();
     }
   }
 }
 
 void CaptureDialog::on_loadSettings_clicked()
 {
-  QString filename =
-      RDDialog::getOpenFileName(this, tr("Open Settings"), QString(), "Capture settings (*.cap)");
+  QString filename = RDDialog::getOpenFileName(this, tr("Open Settings"), QString(),
+                                               tr("Capture settings (*.cap)"));
 
-  if(filename != "" && QFileInfo::exists(filename))
+  if(!filename.isEmpty() && QFileInfo::exists(filename))
   {
-    loadSettings(filename);
-    PersistantConfig::AddRecentFile(m_Ctx->Config.RecentCaptureSettings, filename, 10);
+    LoadSettings(filename);
+    AddRecentFile(m_Ctx.Config().RecentCaptureSettings, filename, 10);
   }
 }
 
-void CaptureDialog::on_capture_clicked()
+void CaptureDialog::on_launch_clicked()
 {
-  triggerCapture();
+  TriggerCapture();
 }
 
 void CaptureDialog::on_close_clicked()
@@ -392,75 +802,83 @@ void CaptureDialog::on_close_clicked()
   ToolWindowManager::closeToolWindow(this);
 }
 
-void CaptureDialog::setSettings(CaptureSettings settings)
+void CaptureDialog::on_processList_activated(const QModelIndex &index)
 {
-  setInjectMode(settings.Inject);
+  TriggerCapture();
+}
 
-  ui->exePath->setText(settings.Executable);
-  ui->workDirPath->setText(settings.WorkingDir);
-  ui->cmdline->setText(settings.CmdLine);
+void CaptureDialog::SetSettings(CaptureSettings settings)
+{
+  SetInjectMode(settings.inject);
 
-  setEnvironmentModifications(settings.Environment);
+  ui->exePath->setText(settings.executable);
+  ui->workDirPath->setText(settings.workingDir);
+  ui->cmdline->setText(settings.commandLine);
 
-  ui->AllowFullscreen->setChecked(settings.Options.AllowFullscreen);
-  ui->AllowVSync->setChecked(settings.Options.AllowVSync);
-  ui->HookIntoChildren->setChecked(settings.Options.HookIntoChildren);
-  ui->CaptureCallstacks->setChecked(settings.Options.CaptureCallstacks);
-  ui->CaptureCallstacksOnlyDraws->setChecked(settings.Options.CaptureCallstacksOnlyDraws);
-  ui->APIValidation->setChecked(settings.Options.APIValidation);
-  ui->RefAllResources->setChecked(settings.Options.RefAllResources);
-  ui->SaveAllInitials->setChecked(settings.Options.SaveAllInitials);
-  ui->DelayForDebugger->setValue(settings.Options.DelayForDebugger);
-  ui->VerifyMapWrites->setChecked(settings.Options.VerifyMapWrites);
-  ui->AutoStart->setChecked(settings.AutoStart);
+  SetEnvironmentModifications(settings.environment);
 
-  if(settings.AutoStart)
+  ui->AllowFullscreen->setChecked(settings.options.allowFullscreen);
+  ui->AllowVSync->setChecked(settings.options.allowVSync);
+  ui->HookIntoChildren->setChecked(settings.options.hookIntoChildren);
+  ui->CaptureCallstacks->setChecked(settings.options.captureCallstacks);
+  ui->CaptureCallstacksOnlyDraws->setChecked(settings.options.captureCallstacksOnlyDraws);
+  ui->APIValidation->setChecked(settings.options.apiValidation);
+  ui->RefAllResources->setChecked(settings.options.refAllResources);
+  ui->SaveAllInitials->setChecked(settings.options.saveAllInitials);
+  ui->DelayForDebugger->setValue(settings.options.delayForDebugger);
+  ui->VerifyMapWrites->setChecked(settings.options.verifyMapWrites);
+  ui->AutoStart->setChecked(settings.autoStart);
+
+  // force flush this state
+  on_CaptureCallstacks_toggled(ui->CaptureCallstacks->isChecked());
+
+  if(settings.autoStart)
   {
-    triggerCapture();
+    TriggerCapture();
   }
 }
 
-CaptureSettings CaptureDialog::settings()
+CaptureSettings CaptureDialog::Settings()
 {
   CaptureSettings ret;
 
-  ret.Inject = injectMode();
+  ret.inject = IsInjectMode();
 
-  ret.AutoStart = ui->AutoStart->isChecked();
+  ret.autoStart = ui->AutoStart->isChecked();
 
-  ret.Executable = ui->exePath->text();
-  ret.WorkingDir = ui->workDirPath->text();
-  ret.CmdLine = ui->cmdline->text();
+  ret.executable = ui->exePath->text();
+  ret.workingDir = ui->workDirPath->text();
+  ret.commandLine = ui->cmdline->text();
 
-  ret.Environment = m_EnvModifications;
+  ret.environment = m_EnvModifications;
 
-  ret.Options.AllowFullscreen = ui->AllowFullscreen->isChecked();
-  ret.Options.AllowVSync = ui->AllowVSync->isChecked();
-  ret.Options.HookIntoChildren = ui->HookIntoChildren->isChecked();
-  ret.Options.CaptureCallstacks = ui->CaptureCallstacks->isChecked();
-  ret.Options.CaptureCallstacksOnlyDraws = ui->CaptureCallstacksOnlyDraws->isChecked();
-  ret.Options.APIValidation = ui->APIValidation->isChecked();
-  ret.Options.RefAllResources = ui->RefAllResources->isChecked();
-  ret.Options.SaveAllInitials = ui->SaveAllInitials->isChecked();
-  ret.Options.CaptureAllCmdLists = ui->CaptureAllCmdLists->isChecked();
-  ret.Options.DelayForDebugger = (uint32_t)ui->DelayForDebugger->value();
-  ret.Options.VerifyMapWrites = ui->VerifyMapWrites->isChecked();
+  ret.options.allowFullscreen = ui->AllowFullscreen->isChecked();
+  ret.options.allowVSync = ui->AllowVSync->isChecked();
+  ret.options.hookIntoChildren = ui->HookIntoChildren->isChecked();
+  ret.options.captureCallstacks = ui->CaptureCallstacks->isChecked();
+  ret.options.captureCallstacksOnlyDraws = ui->CaptureCallstacksOnlyDraws->isChecked();
+  ret.options.apiValidation = ui->APIValidation->isChecked();
+  ret.options.refAllResources = ui->RefAllResources->isChecked();
+  ret.options.saveAllInitials = ui->SaveAllInitials->isChecked();
+  ret.options.captureAllCmdLists = ui->CaptureAllCmdLists->isChecked();
+  ret.options.delayForDebugger = (uint32_t)ui->DelayForDebugger->value();
+  ret.options.verifyMapWrites = ui->VerifyMapWrites->isChecked();
 
   return ret;
 }
 
-void CaptureDialog::saveSettings(QString filename)
+void CaptureDialog::SaveSettings(const rdcstr &filename)
 {
   QFile f(filename);
   if(f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
   {
     QVariantMap values;
-    values["settings"] = settings().toJSON();
+    values[lit("settings")] = (QVariant)Settings();
     SaveToJSON(values, f, JSON_ID, JSON_VER);
   }
   else
   {
-    RDDialog::critical(this, "Error saving config",
+    RDDialog::critical(this, tr("Error saving config"),
                        tr("Couldn't open path %1 for write.").arg(filename));
   }
 }
@@ -470,6 +888,15 @@ void CaptureDialog::fillProcessList()
   m_ProcessModel->removeRows(0, m_ProcessModel->rowCount());
 
   QProcessList processes = QProcessInfo::enumerate();
+
+  for(int i = 0; i < processes.count(); i++)
+  {
+    if(processes[i].pid() == qApp->applicationPid())
+    {
+      processes.removeAt(i);
+      break;
+    }
+  }
 
   // no way of listing processes in Qt, fill with dummy data
   m_ProcessModel->insertRows(0, processes.size());
@@ -484,16 +911,33 @@ void CaptureDialog::fillProcessList()
   }
 }
 
-void CaptureDialog::setExecutableFilename(QString filename)
+void CaptureDialog::SetExecutableFilename(const rdcstr &filename)
 {
-  filename = QDir::toNativeSeparators(QFileInfo(filename).absoluteFilePath());
-  ui->exePath->setText(filename);
+  QString fn = filename;
 
-  m_Ctx->Config.LastCapturePath = QFileInfo(filename).absolutePath();
-  m_Ctx->Config.LastCaptureExe = QFileInfo(filename).completeBaseName();
+  if(!m_Ctx.Replay().CurrentRemote())
+    fn = QDir::toNativeSeparators(QFileInfo(fn).absoluteFilePath());
+
+  ui->exePath->setText(fn);
+
+  if(!m_Ctx.Replay().CurrentRemote())
+  {
+    m_Ctx.Config().LastCapturePath = QFileInfo(fn).absolutePath();
+    m_Ctx.Config().LastCaptureExe = QFileInfo(fn).completeBaseName();
+  }
 }
 
-void CaptureDialog::loadSettings(QString filename)
+void CaptureDialog::SetWorkingDirectory(const rdcstr &dir)
+{
+  ui->workDirPath->setText(dir);
+}
+
+void CaptureDialog::SetCommandLine(const rdcstr &cmd)
+{
+  ui->cmdline->setText(cmd);
+}
+
+void CaptureDialog::LoadSettings(const rdcstr &filename)
 {
   QFile f(filename);
   if(f.open(QIODevice::ReadOnly | QIODevice::Text))
@@ -504,25 +948,25 @@ void CaptureDialog::loadSettings(QString filename)
 
     if(success)
     {
-      CaptureSettings settings;
-      settings.fromJSON(values["settings"].value<QVariantMap>());
-      setSettings(settings);
+      CaptureSettings settings(values[lit("settings")]);
+      SetSettings(settings);
     }
     else
     {
-      RDDialog::critical(this, "Error loading config",
+      RDDialog::critical(this, tr("Error loading config"),
                          tr("Couldn't interpret settings in %1.").arg(filename));
     }
   }
   else
   {
-    RDDialog::critical(this, "Error loading config", tr("Couldn't open path %1.").arg(filename));
+    RDDialog::critical(this, tr("Error loading config"), tr("Couldn't open path %1.").arg(filename));
   }
 }
 
-void CaptureDialog::updateGlobalHook()
+void CaptureDialog::UpdateGlobalHook()
 {
-  ui->globalGroup->setVisible(!injectMode() && m_Ctx->Config.AllowGlobalHook);
+  ui->globalGroup->setVisible(!IsInjectMode() && m_Ctx.Config().AllowGlobalHook &&
+                              RENDERDOC_CanGlobalHook());
 
   if(ui->exePath->text().length() >= 4)
   {
@@ -541,26 +985,26 @@ void CaptureDialog::updateGlobalHook()
   }
 }
 
-void CaptureDialog::setEnvironmentModifications(const QList<EnvironmentModification> &modifications)
+void CaptureDialog::SetEnvironmentModifications(const rdcarray<EnvironmentModification> &modifications)
 {
   m_EnvModifications = modifications;
 
-  QString envModText = "";
+  QString envModText;
 
   for(const EnvironmentModification &mod : modifications)
   {
-    if(envModText != "")
-      envModText += ", ";
+    if(!envModText.isEmpty())
+      envModText += lit(", ");
 
-    envModText += mod.GetDescription();
+    envModText += GetDescription(mod);
   }
 
   ui->envVar->setText(envModText);
 }
 
-void CaptureDialog::triggerCapture()
+void CaptureDialog::TriggerCapture()
 {
-  if(injectMode())
+  if(IsInjectMode())
   {
     QModelIndexList sel = ui->processList->selectionModel()->selectedRows();
     if(sel.size() == 1)
@@ -574,20 +1018,19 @@ void CaptureDialog::triggerCapture()
       QString name = m_ProcessModel->data(m_ProcessModel->index(item.row(), 0)).toString();
       uint32_t PID = m_ProcessModel->data(m_ProcessModel->index(item.row(), 1)).toUInt();
 
-      LiveCapture *live = m_InjectCallback(PID, settings().Environment, name, settings().Options);
-
-      if(ui->queueFrameCap->isChecked() && live != NULL)
-        live->QueueCapture((int)ui->queuedFrame->value());
+      m_InjectCallback(
+          PID, Settings().environment, name, Settings().options, [this](LiveCapture *live) {
+            if(ui->queueFrameCap->isChecked())
+              live->QueueCapture((int)ui->queuedFrame->value(), (int)ui->numFrames->value());
+          });
     }
   }
   else
   {
     QString exe = ui->exePath->text();
 
-    // TODO Remote
-
     // for non-remote captures, check the executable locally
-    // if(m_Core.Renderer.Remote == null)
+    if(!m_Ctx.Replay().CurrentRemote())
     {
       if(!QFileInfo::exists(exe))
       {
@@ -597,29 +1040,26 @@ void CaptureDialog::triggerCapture()
       }
     }
 
-    QString workingDir = "";
-
-    // TODO Remote
+    QString workingDir;
 
     // for non-remote captures, check the directory locally
-    // if(m_Core.Renderer.Remote == null)
+    if(m_Ctx.Replay().CurrentRemote())
+    {
+      workingDir = ui->workDirPath->text();
+    }
+    else
     {
       if(QDir(ui->workDirPath->text()).exists())
         workingDir = ui->workDirPath->text();
     }
-    /*
-    else
-    {
-      workingDir = RealWorkDir;
-    }
-    */
 
     QString cmdLine = ui->cmdline->text();
 
-    LiveCapture *live =
-        m_CaptureCallback(exe, workingDir, cmdLine, settings().Environment, settings().Options);
-
-    if(ui->queueFrameCap->isChecked() && live != NULL)
-      live->QueueCapture((int)ui->queuedFrame->value());
+    m_CaptureCallback(exe, workingDir, cmdLine, Settings().environment, Settings().options,
+                      [this](LiveCapture *live) {
+                        if(ui->queueFrameCap->isChecked())
+                          live->QueueCapture((int)ui->queuedFrame->value(),
+                                             (int)ui->numFrames->value());
+                      });
   }
 }

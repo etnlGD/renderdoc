@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -97,6 +97,13 @@
 
 #endif
 
+// is size_t a real separate type, not just typedef'd to uint32_t or uint64_t (or equivalent)?
+#if defined(RENDERDOC_PLATFORM_APPLE)
+#define RDOC_SIZET_SEP_TYPE OPTION_ON
+#else
+#define RDOC_SIZET_SEP_TYPE OPTION_OFF
+#endif
+
 #if defined(RENDERDOC_WINDOWING_XLIB)
 #define RDOC_XLIB OPTION_ON
 #else
@@ -118,6 +125,13 @@ enum
   RenderDoc_RemoteServerPort = 39920,
   RenderDoc_AndroidPortOffset = 50,
 };
+
+#define RENDERDOC_VULKAN_LAYER_NAME "VK_LAYER_RENDERDOC_Capture"
+
+#define RENDERDOC_ANDROID_LIBRARY "libVkLayer_GLES_RenderDoc.so"
+
+// This MUST match the package name in the build process that generates per-architecture packages
+#define RENDERDOC_ANDROID_PACKAGE_BASE "org.renderdoc.renderdoccmd"
 
 /////////////////////////////////////////////////
 // Debugging features configuration
@@ -171,3 +185,5 @@ enum
 #define FORCE_DEBUG_LOGS OPTION_OFF
 // this strips them completely
 #define STRIP_DEBUG_LOGS OPTION_OFF
+
+#define ENABLE_UNIT_TESTS RDOC_DEVEL

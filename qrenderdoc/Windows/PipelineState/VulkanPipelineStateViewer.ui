@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1009</width>
-    <height>572</height>
+    <width>911</width>
+    <height>566</height>
    </rect>
   </property>
   <layout class="QVBoxLayout" name="verticalLayout">
@@ -29,23 +29,23 @@
    <item>
     <widget class="QFrame" name="toolbar">
      <property name="frameShape">
-      <enum>QFrame::NoFrame</enum>
+      <enum>QFrame::Panel</enum>
      </property>
      <property name="frameShadow">
-      <enum>QFrame::Plain</enum>
+      <enum>QFrame::Raised</enum>
      </property>
      <layout class="QHBoxLayout" name="toolbarLayout">
       <property name="spacing">
-       <number>0</number>
+       <number>2</number>
       </property>
       <property name="leftMargin">
-       <number>0</number>
+       <number>6</number>
       </property>
       <property name="topMargin">
-       <number>0</number>
+       <number>2</number>
       </property>
       <property name="rightMargin">
-       <number>0</number>
+       <number>6</number>
       </property>
       <property name="bottomMargin">
        <number>2</number>
@@ -69,12 +69,15 @@
       </item>
       <item>
        <widget class="QToolButton" name="showDisabled">
+        <property name="toolTip">
+         <string>Show Disabled Items</string>
+        </property>
         <property name="text">
          <string>Show Disabled Items</string>
         </property>
         <property name="icon">
-         <iconset resource="../../resources.qrc">
-          <normaloff>:/Resources/page_white_delete.png</normaloff>:/Resources/page_white_delete.png</iconset>
+         <iconset resource="../../Resources/resources.qrc">
+          <normaloff>:/page_white_delete.png</normaloff>:/page_white_delete.png</iconset>
         </property>
         <property name="checkable">
          <bool>true</bool>
@@ -89,12 +92,15 @@
       </item>
       <item>
        <widget class="QToolButton" name="showEmpty">
+        <property name="toolTip">
+         <string>Show Empty Items</string>
+        </property>
         <property name="text">
          <string>Show Empty Items</string>
         </property>
         <property name="icon">
-         <iconset resource="../../resources.qrc">
-          <normaloff>:/Resources/page_white_database.png</normaloff>:/Resources/page_white_database.png</iconset>
+         <iconset resource="../../Resources/resources.qrc">
+          <normaloff>:/page_white_database.png</normaloff>:/page_white_database.png</iconset>
         </property>
         <property name="checkable">
          <bool>true</bool>
@@ -109,12 +115,15 @@
       </item>
       <item>
        <widget class="QToolButton" name="exportHTML">
+        <property name="toolTip">
+         <string>Export the current pipeline state to an HTML file</string>
+        </property>
         <property name="text">
          <string>Export</string>
         </property>
         <property name="icon">
-         <iconset resource="../../resources.qrc">
-          <normaloff>:/Resources/save.png</normaloff>:/Resources/save.png</iconset>
+         <iconset resource="../../Resources/resources.qrc">
+          <normaloff>:/save.png</normaloff>:/save.png</iconset>
         </property>
         <property name="checkable">
          <bool>false</bool>
@@ -141,6 +150,15 @@
        </spacer>
       </item>
      </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="PipelineFlowChart" name="pipeFlow">
+     <property name="font">
+      <font>
+       <pointsize>12</pointsize>
+      </font>
+     </property>
     </widget>
    </item>
    <item>
@@ -171,310 +189,276 @@
        <property name="horizontalSpacing">
         <number>0</number>
        </property>
-       <item row="0" column="0" colspan="3">
-        <widget class="QGroupBox" name="attribGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
+       <item row="0" column="0">
+        <widget class="QScrollArea" name="vtxScroll">
+         <property name="frameShape">
+          <enum>QFrame::NoFrame</enum>
          </property>
-         <property name="title">
-          <string>Attributes</string>
+         <property name="widgetResizable">
+          <bool>true</bool>
          </property>
-         <layout class="QHBoxLayout" name="horizontalLayout_2">
-          <property name="leftMargin">
-           <number>2</number>
+         <widget class="QWidget" name="vtxScrollContents">
+          <property name="geometry">
+           <rect>
+            <x>0</x>
+            <y>0</y>
+            <width>911</width>
+            <height>507</height>
+           </rect>
           </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <item>
-           <widget class="RDTreeWidget" name="viAttrs">
-            <property name="frameShape">
-             <enum>QFrame::Box</enum>
-            </property>
-            <property name="frameShadow">
-             <enum>QFrame::Plain</enum>
-            </property>
-            <property name="editTriggers">
-             <set>QAbstractItemView::NoEditTriggers</set>
-            </property>
-            <property name="showDropIndicator" stdset="0">
-             <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
-            </property>
-            <property name="indentation">
-             <number>0</number>
-            </property>
-            <property name="rootIsDecorated">
-             <bool>false</bool>
-            </property>
-            <property name="itemsExpandable">
-             <bool>false</bool>
-            </property>
-            <property name="allColumnsShowFocus">
-             <bool>true</bool>
-            </property>
-            <property name="expandsOnDoubleClick">
-             <bool>false</bool>
-            </property>
-            <attribute name="headerStretchLastSection">
-             <bool>false</bool>
-            </attribute>
-            <column>
-             <property name="text">
-              <string notr="true">Index</string>
+          <layout class="QGridLayout" name="gridLayout_3">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item row="0" column="0" colspan="3">
+            <widget class="QGroupBox" name="attribGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Name</string>
+             <property name="title">
+              <string>Attributes</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Location</string>
+             <layout class="QHBoxLayout" name="horizontalLayout_2">
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <item>
+               <widget class="RDTreeWidget" name="viAttrs">
+                <property name="frameShape">
+                 <enum>QFrame::Box</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <property name="editTriggers">
+                 <set>QAbstractItemView::NoEditTriggers</set>
+                </property>
+                <property name="showDropIndicator" stdset="0">
+                 <bool>false</bool>
+                </property>
+                <property name="indentation">
+                 <number>0</number>
+                </property>
+                <property name="rootIsDecorated">
+                 <bool>false</bool>
+                </property>
+                <property name="itemsExpandable">
+                 <bool>false</bool>
+                </property>
+                <property name="allColumnsShowFocus">
+                 <bool>true</bool>
+                </property>
+                <property name="expandsOnDoubleClick">
+                 <bool>false</bool>
+                </property>
+                <attribute name="headerStretchLastSection">
+                 <bool>false</bool>
+                </attribute>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item row="1" column="0">
+            <widget class="QGroupBox" name="buffersGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
+             <property name="title">
+              <string>Buffers</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Format</string>
+             <layout class="QHBoxLayout" name="horizontalLayout">
+              <property name="spacing">
+               <number>2</number>
+              </property>
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <item>
+               <widget class="RDTreeWidget" name="viBuffers">
+                <property name="frameShape">
+                 <enum>QFrame::Box</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <property name="editTriggers">
+                 <set>QAbstractItemView::NoEditTriggers</set>
+                </property>
+                <property name="showDropIndicator" stdset="0">
+                 <bool>false</bool>
+                </property>
+                <property name="indentation">
+                 <number>0</number>
+                </property>
+                <property name="rootIsDecorated">
+                 <bool>false</bool>
+                </property>
+                <property name="itemsExpandable">
+                 <bool>false</bool>
+                </property>
+                <property name="allColumnsShowFocus">
+                 <bool>true</bool>
+                </property>
+                <property name="expandsOnDoubleClick">
+                 <bool>false</bool>
+                </property>
+                <attribute name="headerStretchLastSection">
+                 <bool>false</bool>
+                </attribute>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item row="1" column="1">
+            <widget class="QGroupBox" name="meshViewGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Offset</string>
+             <property name="title">
+              <string>Mesh View</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
+             <layout class="QVBoxLayout" name="verticalLayout_3">
+              <item>
+               <widget class="RDLabel" name="meshView">
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="Maximum" vsizetype="Ignored">
+                  <horstretch>0</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
+                </property>
+                <property name="minimumSize">
+                 <size>
+                  <width>75</width>
+                  <height>75</height>
+                 </size>
+                </property>
+                <property name="cursor">
+                 <cursorShape>PointingHandCursor</cursorShape>
+                </property>
+                <property name="toolTip">
+                 <string>View the mesh input data</string>
+                </property>
+                <property name="pixmap">
+                 <pixmap resource="../../Resources/resources.qrc">:/wireframe_mesh.png</pixmap>
+                </property>
+                <property name="scaledContents">
+                 <bool>true</bool>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item row="1" column="2">
+            <widget class="QGroupBox" name="topologyGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item row="1" column="0">
-        <widget class="QGroupBox" name="buffersGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="title">
-          <string>Buffers</string>
-         </property>
-         <layout class="QHBoxLayout" name="horizontalLayout">
-          <property name="spacing">
-           <number>2</number>
-          </property>
-          <property name="leftMargin">
-           <number>2</number>
-          </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <item>
-           <widget class="RDTreeWidget" name="viBuffers">
-            <property name="frameShape">
-             <enum>QFrame::Box</enum>
-            </property>
-            <property name="frameShadow">
-             <enum>QFrame::Plain</enum>
-            </property>
-            <property name="editTriggers">
-             <set>QAbstractItemView::NoEditTriggers</set>
-            </property>
-            <property name="showDropIndicator" stdset="0">
-             <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
-            </property>
-            <property name="indentation">
-             <number>0</number>
-            </property>
-            <property name="rootIsDecorated">
-             <bool>false</bool>
-            </property>
-            <property name="itemsExpandable">
-             <bool>false</bool>
-            </property>
-            <property name="allColumnsShowFocus">
-             <bool>true</bool>
-            </property>
-            <property name="expandsOnDoubleClick">
-             <bool>false</bool>
-            </property>
-            <attribute name="headerStretchLastSection">
-             <bool>false</bool>
-            </attribute>
-            <column>
-             <property name="text">
-              <string notr="true">Slot</string>
+             <property name="title">
+              <string>Primitive Topology</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Buffer</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Rate</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Offset</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Stride</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Byte Length</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item row="1" column="1">
-        <widget class="QGroupBox" name="meshViewGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="title">
-          <string>Mesh View</string>
-         </property>
-         <layout class="QVBoxLayout" name="verticalLayout_3">
-          <item>
-           <widget class="QToolButton" name="meshView">
-            <property name="text">
-             <string/>
-            </property>
-            <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/wireframe_mesh.png</normaloff>:/Resources/wireframe_mesh.png</iconset>
-            </property>
-            <property name="iconSize">
-             <size>
-              <width>158</width>
-              <height>191</height>
-             </size>
-            </property>
-            <property name="autoRaise">
-             <bool>true</bool>
-            </property>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item row="1" column="2">
-        <widget class="QGroupBox" name="topologyGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="title">
-          <string>Primitive Topology</string>
-         </property>
-         <layout class="QVBoxLayout" name="verticalLayout_2">
-          <item>
-           <widget class="QLabel" name="topology">
-            <property name="font">
-             <font>
-              <pointsize>14</pointsize>
-             </font>
-            </property>
-            <property name="text">
-             <string>Triangle List</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignHCenter|Qt::AlignTop</set>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QLabel" name="topologyDiagram">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="minimumSize">
-             <size>
-              <width>256</width>
-              <height>0</height>
-             </size>
-            </property>
-            <property name="text">
-             <string/>
-            </property>
-            <property name="pixmap">
-             <pixmap resource="../../resources.qrc">:/Resources/topologies/topo_trilist.png</pixmap>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignCenter</set>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QLabel" name="primRestart">
-            <property name="font">
-             <font>
-              <pointsize>14</pointsize>
-             </font>
-            </property>
-            <property name="text">
-             <string>Primitive Restart Enabled</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignBottom|Qt::AlignHCenter</set>
-            </property>
-           </widget>
-          </item>
-         </layout>
+             <layout class="QVBoxLayout" name="verticalLayout_2">
+              <item>
+               <widget class="QLabel" name="topology">
+                <property name="font">
+                 <font>
+                  <pointsize>14</pointsize>
+                 </font>
+                </property>
+                <property name="text">
+                 <string>Triangle List</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignHCenter|Qt::AlignTop</set>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QLabel" name="topologyDiagram">
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
+                  <horstretch>0</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
+                </property>
+                <property name="minimumSize">
+                 <size>
+                  <width>256</width>
+                  <height>0</height>
+                 </size>
+                </property>
+                <property name="text">
+                 <string/>
+                </property>
+                <property name="pixmap">
+                 <pixmap resource="../../Resources/resources.qrc">:/topologies/topo_trilist.svg</pixmap>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item>
+               <widget class="QLabel" name="primRestart">
+                <property name="font">
+                 <font>
+                  <pointsize>14</pointsize>
+                 </font>
+                </property>
+                <property name="text">
+                 <string>Primitive Restart Enabled</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignBottom|Qt::AlignHCenter</set>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+          </layout>
+         </widget>
         </widget>
        </item>
       </layout>
@@ -485,16 +469,16 @@
       </attribute>
       <layout class="QVBoxLayout" name="verticalLayout_4">
        <property name="leftMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="topMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="rightMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="bottomMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <item>
         <widget class="QGroupBox" name="vsShaderGroup">
@@ -518,23 +502,9 @@
            <number>4</number>
           </property>
           <item>
-           <widget class="QLabel" name="vsShader">
-            <property name="minimumSize">
-             <size>
-              <width>250</width>
-              <height>0</height>
-             </size>
-            </property>
-            <property name="cursor">
-             <cursorShape>PointingHandCursor</cursorShape>
-            </property>
-            <property name="toolTip">
-             <string>Open Shader Source</string>
-            </property>
-            <property name="styleSheet">
-             <string notr="true">border: 1px solid black;
-background-color: rgb(255, 255, 191);
-padding: 0px;</string>
+           <widget class="RDLabel" name="vsShader">
+            <property name="frameShape">
+             <enum>QFrame::Box</enum>
             </property>
             <property name="text">
              <string/>
@@ -553,8 +523,8 @@ padding: 0px;</string>
              <string>View</string>
             </property>
             <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/action.png</normaloff>:/Resources/action.png</iconset>
+             <iconset resource="../../Resources/resources.qrc">
+              <normaloff>:/action.png</normaloff>:/action.png</iconset>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonTextBesideIcon</enum>
@@ -573,8 +543,8 @@ padding: 0px;</string>
              <string>Edit</string>
             </property>
             <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/page_white_edit.png</normaloff>:/Resources/page_white_edit.png</iconset>
+             <iconset resource="../../Resources/resources.qrc">
+              <normaloff>:/page_white_edit.png</normaloff>:/page_white_edit.png</iconset>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonTextBesideIcon</enum>
@@ -593,8 +563,8 @@ padding: 0px;</string>
              <string>Save</string>
             </property>
             <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/save.png</normaloff>:/Resources/save.png</iconset>
+             <iconset resource="../../Resources/resources.qrc">
+              <normaloff>:/save.png</normaloff>:/save.png</iconset>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonTextBesideIcon</enum>
@@ -609,200 +579,147 @@ padding: 0px;</string>
             <property name="orientation">
              <enum>Qt::Horizontal</enum>
             </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>576</width>
-              <height>20</height>
-             </size>
-            </property>
            </spacer>
           </item>
          </layout>
         </widget>
        </item>
        <item>
-        <widget class="QGroupBox" name="vsResGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
+        <widget class="QScrollArea" name="vsScroll">
+         <property name="frameShape">
+          <enum>QFrame::NoFrame</enum>
          </property>
-         <property name="title">
-          <string>Resources</string>
+         <property name="widgetResizable">
+          <bool>true</bool>
          </property>
-         <layout class="QHBoxLayout" name="horizontalLayout_4">
-          <property name="leftMargin">
-           <number>2</number>
+         <widget class="QWidget" name="vsScrollContents">
+          <property name="geometry">
+           <rect>
+            <x>0</x>
+            <y>0</y>
+            <width>96</width>
+            <height>432</height>
+           </rect>
           </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <item>
-           <widget class="RDTreeWidget" name="vsResources">
-            <property name="frameShape">
-             <enum>QFrame::Box</enum>
-            </property>
-            <property name="frameShadow">
-             <enum>QFrame::Plain</enum>
-            </property>
-            <property name="editTriggers">
-             <set>QAbstractItemView::NoEditTriggers</set>
-            </property>
-            <property name="showDropIndicator" stdset="0">
-             <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
-            </property>
-            <property name="rootIsDecorated">
-             <bool>true</bool>
-            </property>
-            <property name="allColumnsShowFocus">
-             <bool>true</bool>
-            </property>
-            <attribute name="headerStretchLastSection">
-             <bool>false</bool>
-            </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
+          <layout class="QVBoxLayout" name="verticalLayout_12">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QGroupBox" name="vsResGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
+             <property name="title">
+              <string>Resources</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
+             <layout class="QHBoxLayout" name="horizontalLayout_4">
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <item>
+               <widget class="RDTreeWidget" name="vsResources">
+                <property name="frameShape">
+                 <enum>QFrame::Box</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <property name="editTriggers">
+                 <set>QAbstractItemView::NoEditTriggers</set>
+                </property>
+                <property name="showDropIndicator" stdset="0">
+                 <bool>false</bool>
+                </property>
+                <property name="rootIsDecorated">
+                 <bool>true</bool>
+                </property>
+                <property name="allColumnsShowFocus">
+                 <bool>true</bool>
+                </property>
+                <attribute name="headerStretchLastSection">
+                 <bool>false</bool>
+                </attribute>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QGroupBox" name="vsUBOGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Type</string>
+             <property name="title">
+              <string>Uniform Buffers</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Resource</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Contents</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item>
-        <widget class="QGroupBox" name="vsUBOGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="title">
-          <string>Uniform Buffers</string>
-         </property>
-         <layout class="QHBoxLayout" name="horizontalLayout_5">
-          <property name="leftMargin">
-           <number>2</number>
-          </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <item>
-           <widget class="RDTreeWidget" name="vsUBOs">
-            <property name="frameShape">
-             <enum>QFrame::Box</enum>
-            </property>
-            <property name="frameShadow">
-             <enum>QFrame::Plain</enum>
-            </property>
-            <property name="editTriggers">
-             <set>QAbstractItemView::NoEditTriggers</set>
-            </property>
-            <property name="showDropIndicator" stdset="0">
-             <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
-            </property>
-            <property name="rootIsDecorated">
-             <bool>true</bool>
-            </property>
-            <property name="allColumnsShowFocus">
-             <bool>true</bool>
-            </property>
-            <attribute name="headerStretchLastSection">
-             <bool>false</bool>
-            </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Buffer</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Byte Range</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Size</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
-           </widget>
-          </item>
-         </layout>
+             <layout class="QHBoxLayout" name="horizontalLayout_5">
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <item>
+               <widget class="RDTreeWidget" name="vsUBOs">
+                <property name="frameShape">
+                 <enum>QFrame::Box</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <property name="editTriggers">
+                 <set>QAbstractItemView::NoEditTriggers</set>
+                </property>
+                <property name="showDropIndicator" stdset="0">
+                 <bool>false</bool>
+                </property>
+                <property name="rootIsDecorated">
+                 <bool>true</bool>
+                </property>
+                <property name="allColumnsShowFocus">
+                 <bool>true</bool>
+                </property>
+                <attribute name="headerStretchLastSection">
+                 <bool>false</bool>
+                </attribute>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+          </layout>
+         </widget>
         </widget>
        </item>
       </layout>
@@ -813,16 +730,16 @@ padding: 0px;</string>
       </attribute>
       <layout class="QVBoxLayout" name="verticalLayout_5">
        <property name="leftMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="topMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="rightMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="bottomMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <item>
         <widget class="QGroupBox" name="tcsShaderGroup">
@@ -846,23 +763,9 @@ padding: 0px;</string>
            <number>4</number>
           </property>
           <item>
-           <widget class="QLabel" name="tcsShader">
-            <property name="minimumSize">
-             <size>
-              <width>250</width>
-              <height>0</height>
-             </size>
-            </property>
-            <property name="cursor">
-             <cursorShape>PointingHandCursor</cursorShape>
-            </property>
-            <property name="toolTip">
-             <string>Open Shader Source</string>
-            </property>
-            <property name="styleSheet">
-             <string notr="true">border: 1px solid black;
-background-color: rgb(255, 255, 191);
-padding: 0px;</string>
+           <widget class="RDLabel" name="tcsShader">
+            <property name="frameShape">
+             <enum>QFrame::Box</enum>
             </property>
             <property name="text">
              <string/>
@@ -881,8 +784,8 @@ padding: 0px;</string>
              <string>View</string>
             </property>
             <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/action.png</normaloff>:/Resources/action.png</iconset>
+             <iconset resource="../../Resources/resources.qrc">
+              <normaloff>:/action.png</normaloff>:/action.png</iconset>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonTextBesideIcon</enum>
@@ -901,8 +804,8 @@ padding: 0px;</string>
              <string>Edit</string>
             </property>
             <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/page_white_edit.png</normaloff>:/Resources/page_white_edit.png</iconset>
+             <iconset resource="../../Resources/resources.qrc">
+              <normaloff>:/page_white_edit.png</normaloff>:/page_white_edit.png</iconset>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonTextBesideIcon</enum>
@@ -921,8 +824,8 @@ padding: 0px;</string>
              <string>Save</string>
             </property>
             <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/save.png</normaloff>:/Resources/save.png</iconset>
+             <iconset resource="../../Resources/resources.qrc">
+              <normaloff>:/save.png</normaloff>:/save.png</iconset>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonTextBesideIcon</enum>
@@ -937,200 +840,147 @@ padding: 0px;</string>
             <property name="orientation">
              <enum>Qt::Horizontal</enum>
             </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>576</width>
-              <height>20</height>
-             </size>
-            </property>
            </spacer>
           </item>
          </layout>
         </widget>
        </item>
        <item>
-        <widget class="QGroupBox" name="tcsResGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
+        <widget class="QScrollArea" name="tcsScroll">
+         <property name="frameShape">
+          <enum>QFrame::NoFrame</enum>
          </property>
-         <property name="title">
-          <string>Resources</string>
+         <property name="widgetResizable">
+          <bool>true</bool>
          </property>
-         <layout class="QHBoxLayout" name="horizontalLayout_6">
-          <property name="leftMargin">
-           <number>2</number>
+         <widget class="QWidget" name="tcsScrollContents">
+          <property name="geometry">
+           <rect>
+            <x>0</x>
+            <y>0</y>
+            <width>96</width>
+            <height>432</height>
+           </rect>
           </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <item>
-           <widget class="RDTreeWidget" name="tcsResources">
-            <property name="frameShape">
-             <enum>QFrame::Box</enum>
-            </property>
-            <property name="frameShadow">
-             <enum>QFrame::Plain</enum>
-            </property>
-            <property name="editTriggers">
-             <set>QAbstractItemView::NoEditTriggers</set>
-            </property>
-            <property name="showDropIndicator" stdset="0">
-             <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
-            </property>
-            <property name="rootIsDecorated">
-             <bool>true</bool>
-            </property>
-            <property name="allColumnsShowFocus">
-             <bool>true</bool>
-            </property>
-            <attribute name="headerStretchLastSection">
-             <bool>false</bool>
-            </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
+          <layout class="QVBoxLayout" name="verticalLayout_11">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QGroupBox" name="tcsResGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
+             <property name="title">
+              <string>Resources</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
+             <layout class="QHBoxLayout" name="horizontalLayout_6">
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <item>
+               <widget class="RDTreeWidget" name="tcsResources">
+                <property name="frameShape">
+                 <enum>QFrame::Box</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <property name="editTriggers">
+                 <set>QAbstractItemView::NoEditTriggers</set>
+                </property>
+                <property name="showDropIndicator" stdset="0">
+                 <bool>false</bool>
+                </property>
+                <property name="rootIsDecorated">
+                 <bool>true</bool>
+                </property>
+                <property name="allColumnsShowFocus">
+                 <bool>true</bool>
+                </property>
+                <attribute name="headerStretchLastSection">
+                 <bool>false</bool>
+                </attribute>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QGroupBox" name="tcsUBOGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Type</string>
+             <property name="title">
+              <string>Uniform Buffers</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Resource</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Contents</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item>
-        <widget class="QGroupBox" name="tcsUBOGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="title">
-          <string>Uniform Buffers</string>
-         </property>
-         <layout class="QHBoxLayout" name="horizontalLayout_8">
-          <property name="leftMargin">
-           <number>2</number>
-          </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <item>
-           <widget class="RDTreeWidget" name="tcsUBOs">
-            <property name="frameShape">
-             <enum>QFrame::Box</enum>
-            </property>
-            <property name="frameShadow">
-             <enum>QFrame::Plain</enum>
-            </property>
-            <property name="editTriggers">
-             <set>QAbstractItemView::NoEditTriggers</set>
-            </property>
-            <property name="showDropIndicator" stdset="0">
-             <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
-            </property>
-            <property name="rootIsDecorated">
-             <bool>true</bool>
-            </property>
-            <property name="allColumnsShowFocus">
-             <bool>true</bool>
-            </property>
-            <attribute name="headerStretchLastSection">
-             <bool>false</bool>
-            </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Buffer</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Byte Range</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Size</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
-           </widget>
-          </item>
-         </layout>
+             <layout class="QHBoxLayout" name="horizontalLayout_8">
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <item>
+               <widget class="RDTreeWidget" name="tcsUBOs">
+                <property name="frameShape">
+                 <enum>QFrame::Box</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <property name="editTriggers">
+                 <set>QAbstractItemView::NoEditTriggers</set>
+                </property>
+                <property name="showDropIndicator" stdset="0">
+                 <bool>false</bool>
+                </property>
+                <property name="rootIsDecorated">
+                 <bool>true</bool>
+                </property>
+                <property name="allColumnsShowFocus">
+                 <bool>true</bool>
+                </property>
+                <attribute name="headerStretchLastSection">
+                 <bool>false</bool>
+                </attribute>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+          </layout>
+         </widget>
         </widget>
        </item>
       </layout>
@@ -1141,16 +991,16 @@ padding: 0px;</string>
       </attribute>
       <layout class="QVBoxLayout" name="verticalLayout_6">
        <property name="leftMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="topMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="rightMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="bottomMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <item>
         <widget class="QGroupBox" name="tesShaderGroup">
@@ -1174,23 +1024,9 @@ padding: 0px;</string>
            <number>4</number>
           </property>
           <item>
-           <widget class="QLabel" name="tesShader">
-            <property name="minimumSize">
-             <size>
-              <width>250</width>
-              <height>0</height>
-             </size>
-            </property>
-            <property name="cursor">
-             <cursorShape>PointingHandCursor</cursorShape>
-            </property>
-            <property name="toolTip">
-             <string>Open Shader Source</string>
-            </property>
-            <property name="styleSheet">
-             <string notr="true">border: 1px solid black;
-background-color: rgb(255, 255, 191);
-padding: 0px;</string>
+           <widget class="RDLabel" name="tesShader">
+            <property name="frameShape">
+             <enum>QFrame::Box</enum>
             </property>
             <property name="text">
              <string/>
@@ -1209,8 +1045,8 @@ padding: 0px;</string>
              <string>View</string>
             </property>
             <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/action.png</normaloff>:/Resources/action.png</iconset>
+             <iconset resource="../../Resources/resources.qrc">
+              <normaloff>:/action.png</normaloff>:/action.png</iconset>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonTextBesideIcon</enum>
@@ -1229,8 +1065,8 @@ padding: 0px;</string>
              <string>Edit</string>
             </property>
             <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/page_white_edit.png</normaloff>:/Resources/page_white_edit.png</iconset>
+             <iconset resource="../../Resources/resources.qrc">
+              <normaloff>:/page_white_edit.png</normaloff>:/page_white_edit.png</iconset>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonTextBesideIcon</enum>
@@ -1249,8 +1085,8 @@ padding: 0px;</string>
              <string>Save</string>
             </property>
             <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/save.png</normaloff>:/Resources/save.png</iconset>
+             <iconset resource="../../Resources/resources.qrc">
+              <normaloff>:/save.png</normaloff>:/save.png</iconset>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonTextBesideIcon</enum>
@@ -1265,200 +1101,147 @@ padding: 0px;</string>
             <property name="orientation">
              <enum>Qt::Horizontal</enum>
             </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>576</width>
-              <height>20</height>
-             </size>
-            </property>
            </spacer>
           </item>
          </layout>
         </widget>
        </item>
        <item>
-        <widget class="QGroupBox" name="tesResGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
+        <widget class="QScrollArea" name="tesScroll">
+         <property name="frameShape">
+          <enum>QFrame::NoFrame</enum>
          </property>
-         <property name="title">
-          <string>Resources</string>
+         <property name="widgetResizable">
+          <bool>true</bool>
          </property>
-         <layout class="QHBoxLayout" name="horizontalLayout_9">
-          <property name="leftMargin">
-           <number>2</number>
+         <widget class="QWidget" name="tesScrollContents">
+          <property name="geometry">
+           <rect>
+            <x>0</x>
+            <y>0</y>
+            <width>96</width>
+            <height>432</height>
+           </rect>
           </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <item>
-           <widget class="RDTreeWidget" name="tesResources">
-            <property name="frameShape">
-             <enum>QFrame::Box</enum>
-            </property>
-            <property name="frameShadow">
-             <enum>QFrame::Plain</enum>
-            </property>
-            <property name="editTriggers">
-             <set>QAbstractItemView::NoEditTriggers</set>
-            </property>
-            <property name="showDropIndicator" stdset="0">
-             <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
-            </property>
-            <property name="rootIsDecorated">
-             <bool>true</bool>
-            </property>
-            <property name="allColumnsShowFocus">
-             <bool>true</bool>
-            </property>
-            <attribute name="headerStretchLastSection">
-             <bool>false</bool>
-            </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
+          <layout class="QVBoxLayout" name="verticalLayout_13">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QGroupBox" name="tesResGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
+             <property name="title">
+              <string>Resources</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
+             <layout class="QHBoxLayout" name="horizontalLayout_9">
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <item>
+               <widget class="RDTreeWidget" name="tesResources">
+                <property name="frameShape">
+                 <enum>QFrame::Box</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <property name="editTriggers">
+                 <set>QAbstractItemView::NoEditTriggers</set>
+                </property>
+                <property name="showDropIndicator" stdset="0">
+                 <bool>false</bool>
+                </property>
+                <property name="rootIsDecorated">
+                 <bool>true</bool>
+                </property>
+                <property name="allColumnsShowFocus">
+                 <bool>true</bool>
+                </property>
+                <attribute name="headerStretchLastSection">
+                 <bool>false</bool>
+                </attribute>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QGroupBox" name="tesUBOGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Type</string>
+             <property name="title">
+              <string>Uniform Buffers</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Resource</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Contents</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item>
-        <widget class="QGroupBox" name="tesUBOGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="title">
-          <string>Uniform Buffers</string>
-         </property>
-         <layout class="QHBoxLayout" name="horizontalLayout_11">
-          <property name="leftMargin">
-           <number>2</number>
-          </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <item>
-           <widget class="RDTreeWidget" name="tesUBOs">
-            <property name="frameShape">
-             <enum>QFrame::Box</enum>
-            </property>
-            <property name="frameShadow">
-             <enum>QFrame::Plain</enum>
-            </property>
-            <property name="editTriggers">
-             <set>QAbstractItemView::NoEditTriggers</set>
-            </property>
-            <property name="showDropIndicator" stdset="0">
-             <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
-            </property>
-            <property name="rootIsDecorated">
-             <bool>true</bool>
-            </property>
-            <property name="allColumnsShowFocus">
-             <bool>true</bool>
-            </property>
-            <attribute name="headerStretchLastSection">
-             <bool>false</bool>
-            </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Buffer</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Byte Range</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Size</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
-           </widget>
-          </item>
-         </layout>
+             <layout class="QHBoxLayout" name="horizontalLayout_11">
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <item>
+               <widget class="RDTreeWidget" name="tesUBOs">
+                <property name="frameShape">
+                 <enum>QFrame::Box</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <property name="editTriggers">
+                 <set>QAbstractItemView::NoEditTriggers</set>
+                </property>
+                <property name="showDropIndicator" stdset="0">
+                 <bool>false</bool>
+                </property>
+                <property name="rootIsDecorated">
+                 <bool>true</bool>
+                </property>
+                <property name="allColumnsShowFocus">
+                 <bool>true</bool>
+                </property>
+                <attribute name="headerStretchLastSection">
+                 <bool>false</bool>
+                </attribute>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+          </layout>
+         </widget>
         </widget>
        </item>
       </layout>
@@ -1469,16 +1252,16 @@ padding: 0px;</string>
       </attribute>
       <layout class="QVBoxLayout" name="verticalLayout_7">
        <property name="leftMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="topMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="rightMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="bottomMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <item>
         <widget class="QGroupBox" name="gsShaderGroup">
@@ -1502,23 +1285,9 @@ padding: 0px;</string>
            <number>4</number>
           </property>
           <item>
-           <widget class="QLabel" name="gsShader">
-            <property name="minimumSize">
-             <size>
-              <width>250</width>
-              <height>0</height>
-             </size>
-            </property>
-            <property name="cursor">
-             <cursorShape>PointingHandCursor</cursorShape>
-            </property>
-            <property name="toolTip">
-             <string>Open Shader Source</string>
-            </property>
-            <property name="styleSheet">
-             <string notr="true">border: 1px solid black;
-background-color: rgb(255, 255, 191);
-padding: 0px;</string>
+           <widget class="RDLabel" name="gsShader">
+            <property name="frameShape">
+             <enum>QFrame::Box</enum>
             </property>
             <property name="text">
              <string/>
@@ -1537,8 +1306,8 @@ padding: 0px;</string>
              <string>View</string>
             </property>
             <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/action.png</normaloff>:/Resources/action.png</iconset>
+             <iconset resource="../../Resources/resources.qrc">
+              <normaloff>:/action.png</normaloff>:/action.png</iconset>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonTextBesideIcon</enum>
@@ -1557,8 +1326,8 @@ padding: 0px;</string>
              <string>Edit</string>
             </property>
             <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/page_white_edit.png</normaloff>:/Resources/page_white_edit.png</iconset>
+             <iconset resource="../../Resources/resources.qrc">
+              <normaloff>:/page_white_edit.png</normaloff>:/page_white_edit.png</iconset>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonTextBesideIcon</enum>
@@ -1577,8 +1346,8 @@ padding: 0px;</string>
              <string>Save</string>
             </property>
             <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/save.png</normaloff>:/Resources/save.png</iconset>
+             <iconset resource="../../Resources/resources.qrc">
+              <normaloff>:/save.png</normaloff>:/save.png</iconset>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonTextBesideIcon</enum>
@@ -1593,200 +1362,147 @@ padding: 0px;</string>
             <property name="orientation">
              <enum>Qt::Horizontal</enum>
             </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>576</width>
-              <height>20</height>
-             </size>
-            </property>
            </spacer>
           </item>
          </layout>
         </widget>
        </item>
        <item>
-        <widget class="QGroupBox" name="gsResGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
+        <widget class="QScrollArea" name="gsScroll">
+         <property name="frameShape">
+          <enum>QFrame::NoFrame</enum>
          </property>
-         <property name="title">
-          <string>Resources</string>
+         <property name="widgetResizable">
+          <bool>true</bool>
          </property>
-         <layout class="QHBoxLayout" name="horizontalLayout_12">
-          <property name="leftMargin">
-           <number>2</number>
+         <widget class="QWidget" name="gsScrollContents">
+          <property name="geometry">
+           <rect>
+            <x>0</x>
+            <y>0</y>
+            <width>96</width>
+            <height>432</height>
+           </rect>
           </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <item>
-           <widget class="RDTreeWidget" name="gsResources">
-            <property name="frameShape">
-             <enum>QFrame::Box</enum>
-            </property>
-            <property name="frameShadow">
-             <enum>QFrame::Plain</enum>
-            </property>
-            <property name="editTriggers">
-             <set>QAbstractItemView::NoEditTriggers</set>
-            </property>
-            <property name="showDropIndicator" stdset="0">
-             <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
-            </property>
-            <property name="rootIsDecorated">
-             <bool>true</bool>
-            </property>
-            <property name="allColumnsShowFocus">
-             <bool>true</bool>
-            </property>
-            <attribute name="headerStretchLastSection">
-             <bool>false</bool>
-            </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
+          <layout class="QVBoxLayout" name="verticalLayout_14">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QGroupBox" name="gsResGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
+             <property name="title">
+              <string>Resources</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
+             <layout class="QHBoxLayout" name="horizontalLayout_12">
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <item>
+               <widget class="RDTreeWidget" name="gsResources">
+                <property name="frameShape">
+                 <enum>QFrame::Box</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <property name="editTriggers">
+                 <set>QAbstractItemView::NoEditTriggers</set>
+                </property>
+                <property name="showDropIndicator" stdset="0">
+                 <bool>false</bool>
+                </property>
+                <property name="rootIsDecorated">
+                 <bool>true</bool>
+                </property>
+                <property name="allColumnsShowFocus">
+                 <bool>true</bool>
+                </property>
+                <attribute name="headerStretchLastSection">
+                 <bool>false</bool>
+                </attribute>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QGroupBox" name="gsUBOGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Type</string>
+             <property name="title">
+              <string>Uniform Buffers</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Resource</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Contents</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item>
-        <widget class="QGroupBox" name="gsUBOGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="title">
-          <string>Uniform Buffers</string>
-         </property>
-         <layout class="QHBoxLayout" name="horizontalLayout_14">
-          <property name="leftMargin">
-           <number>2</number>
-          </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <item>
-           <widget class="RDTreeWidget" name="gsUBOs">
-            <property name="frameShape">
-             <enum>QFrame::Box</enum>
-            </property>
-            <property name="frameShadow">
-             <enum>QFrame::Plain</enum>
-            </property>
-            <property name="editTriggers">
-             <set>QAbstractItemView::NoEditTriggers</set>
-            </property>
-            <property name="showDropIndicator" stdset="0">
-             <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
-            </property>
-            <property name="rootIsDecorated">
-             <bool>true</bool>
-            </property>
-            <property name="allColumnsShowFocus">
-             <bool>true</bool>
-            </property>
-            <attribute name="headerStretchLastSection">
-             <bool>false</bool>
-            </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Buffer</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Byte Range</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Size</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
-           </widget>
-          </item>
-         </layout>
+             <layout class="QHBoxLayout" name="horizontalLayout_14">
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <item>
+               <widget class="RDTreeWidget" name="gsUBOs">
+                <property name="frameShape">
+                 <enum>QFrame::Box</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <property name="editTriggers">
+                 <set>QAbstractItemView::NoEditTriggers</set>
+                </property>
+                <property name="showDropIndicator" stdset="0">
+                 <bool>false</bool>
+                </property>
+                <property name="rootIsDecorated">
+                 <bool>true</bool>
+                </property>
+                <property name="allColumnsShowFocus">
+                 <bool>true</bool>
+                </property>
+                <attribute name="headerStretchLastSection">
+                 <bool>false</bool>
+                </attribute>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+          </layout>
+         </widget>
         </widget>
        </item>
       </layout>
@@ -1797,16 +1513,16 @@ padding: 0px;</string>
       </attribute>
       <layout class="QGridLayout" name="gridLayout_2">
        <property name="leftMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="topMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="rightMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="bottomMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <item row="0" column="0">
         <widget class="QGroupBox" name="rasterizerGroup">
@@ -1837,6 +1553,9 @@ padding: 0px;</string>
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
             </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
            </widget>
           </item>
           <item row="0" column="0">
@@ -1846,6 +1565,9 @@ padding: 0px;</string>
             </property>
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
             </property>
            </widget>
           </item>
@@ -1875,6 +1597,9 @@ padding: 0px;</string>
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
             </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
            </widget>
           </item>
           <item row="0" column="1">
@@ -1901,7 +1626,7 @@ padding: 0px;</string>
              <string/>
             </property>
             <property name="pixmap">
-             <pixmap resource="../../resources.qrc">:/Resources/cross.png</pixmap>
+             <pixmap resource="../../Resources/resources.qrc">:/cross.png</pixmap>
             </property>
             <property name="alignment">
              <set>Qt::AlignCenter</set>
@@ -1919,6 +1644,9 @@ padding: 0px;</string>
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
             </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
            </widget>
           </item>
           <item row="0" column="2">
@@ -1928,6 +1656,9 @@ padding: 0px;</string>
             </property>
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
             </property>
            </widget>
           </item>
@@ -1939,6 +1670,9 @@ padding: 0px;</string>
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
             </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
            </widget>
           </item>
           <item row="2" column="4">
@@ -1948,6 +1682,9 @@ padding: 0px;</string>
             </property>
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
             </property>
            </widget>
           </item>
@@ -1993,7 +1730,7 @@ padding: 0px;</string>
              <string/>
             </property>
             <property name="pixmap">
-             <pixmap resource="../../resources.qrc">:/Resources/cross.png</pixmap>
+             <pixmap resource="../../Resources/resources.qrc">:/cross.png</pixmap>
             </property>
             <property name="alignment">
              <set>Qt::AlignCenter</set>
@@ -2011,6 +1748,9 @@ padding: 0px;</string>
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
             </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
            </widget>
           </item>
           <item row="2" column="0">
@@ -2021,6 +1761,9 @@ padding: 0px;</string>
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
             </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
            </widget>
           </item>
           <item row="2" column="3">
@@ -2029,7 +1772,7 @@ padding: 0px;</string>
              <string/>
             </property>
             <property name="pixmap">
-             <pixmap resource="../../resources.qrc">:/Resources/cross.png</pixmap>
+             <pixmap resource="../../Resources/resources.qrc">:/cross.png</pixmap>
             </property>
             <property name="alignment">
              <set>Qt::AlignCenter</set>
@@ -2135,7 +1878,7 @@ padding: 0px;</string>
            <number>2</number>
           </property>
           <item>
-           <widget class="QTreeWidget" name="scissors">
+           <widget class="RDTreeWidget" name="scissors">
             <property name="frameShape">
              <enum>QFrame::Box</enum>
             </property>
@@ -2147,9 +1890,6 @@ padding: 0px;</string>
             </property>
             <property name="showDropIndicator" stdset="0">
              <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
             </property>
             <property name="indentation">
              <number>0</number>
@@ -2163,31 +1903,6 @@ padding: 0px;</string>
             <attribute name="headerMinimumSectionSize">
              <number>50</number>
             </attribute>
-            <column>
-             <property name="text">
-              <string>Slot</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>X</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Y</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Width</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Height</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -2218,7 +1933,7 @@ padding: 0px;</string>
            <number>2</number>
           </property>
           <item>
-           <widget class="QTreeWidget" name="viewports">
+           <widget class="RDTreeWidget" name="viewports">
             <property name="frameShape">
              <enum>QFrame::Box</enum>
             </property>
@@ -2230,9 +1945,6 @@ padding: 0px;</string>
             </property>
             <property name="showDropIndicator" stdset="0">
              <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
             </property>
             <property name="indentation">
              <number>0</number>
@@ -2246,41 +1958,6 @@ padding: 0px;</string>
             <attribute name="headerMinimumSectionSize">
              <number>50</number>
             </attribute>
-            <column>
-             <property name="text">
-              <string>Slot</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>X</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Y</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Width</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Height</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>MinDepth</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>MaxDepth</string>
-             </property>
-            </column>
            </widget>
           </item>
          </layout>
@@ -2315,6 +1992,9 @@ padding: 0px;</string>
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
             </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
            </widget>
           </item>
           <item row="0" column="1">
@@ -2343,6 +2023,9 @@ padding: 0px;</string>
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
             </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
            </widget>
           </item>
           <item row="0" column="2">
@@ -2352,6 +2035,9 @@ padding: 0px;</string>
             </property>
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
             </property>
            </widget>
           </item>
@@ -2381,6 +2067,9 @@ padding: 0px;</string>
             <property name="alignment">
              <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
             </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
            </widget>
           </item>
           <item row="1" column="3">
@@ -2401,29 +2090,13 @@ padding: 0px;</string>
             </property>
            </widget>
           </item>
-          <item row="2" column="0">
-           <spacer name="MSAAVSpacer">
-            <property name="orientation">
-             <enum>Qt::Vertical</enum>
-            </property>
-            <property name="sizeType">
-             <enum>QSizePolicy::Preferred</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>0</width>
-              <height>0</height>
-             </size>
-            </property>
-           </spacer>
-          </item>
           <item row="0" column="3">
            <widget class="QLabel" name="sampleShading">
             <property name="text">
              <string/>
             </property>
             <property name="pixmap">
-             <pixmap resource="../../resources.qrc">:/Resources/cross.png</pixmap>
+             <pixmap resource="../../Resources/resources.qrc">:/cross.png</pixmap>
             </property>
             <property name="alignment">
              <set>Qt::AlignCenter</set>
@@ -2449,6 +2122,58 @@ padding: 0px;</string>
             </property>
            </spacer>
           </item>
+          <item row="2" column="0">
+           <widget class="QLabel" name="alphaToOneLabel">
+            <property name="text">
+             <string>Alpha to 1:</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="1">
+           <widget class="QLabel" name="alphaToOne">
+            <property name="pixmap">
+             <pixmap resource="../../Resources/resources.qrc">:/cross.png</pixmap>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+            <property name="margin">
+             <number>4</number>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="2">
+           <widget class="QLabel" name="alphaToCoverageLabel">
+            <property name="text">
+             <string>Alpha to Coverage:</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+            </property>
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+          <item row="2" column="3">
+           <widget class="QLabel" name="alphaToCoverage">
+            <property name="pixmap">
+             <pixmap resource="../../Resources/resources.qrc">:/cross.png</pixmap>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+            <property name="margin">
+             <number>4</number>
+            </property>
+           </widget>
+          </item>
          </layout>
         </widget>
        </item>
@@ -2460,16 +2185,16 @@ padding: 0px;</string>
       </attribute>
       <layout class="QVBoxLayout" name="verticalLayout_8">
        <property name="leftMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="topMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="rightMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="bottomMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <item>
         <widget class="QGroupBox" name="fsShaderGroup">
@@ -2493,23 +2218,9 @@ padding: 0px;</string>
            <number>4</number>
           </property>
           <item>
-           <widget class="QLabel" name="fsShader">
-            <property name="minimumSize">
-             <size>
-              <width>250</width>
-              <height>0</height>
-             </size>
-            </property>
-            <property name="cursor">
-             <cursorShape>PointingHandCursor</cursorShape>
-            </property>
-            <property name="toolTip">
-             <string>Open Shader Source</string>
-            </property>
-            <property name="styleSheet">
-             <string notr="true">border: 1px solid black;
-background-color: rgb(255, 255, 191);
-padding: 0px;</string>
+           <widget class="RDLabel" name="fsShader">
+            <property name="frameShape">
+             <enum>QFrame::Box</enum>
             </property>
             <property name="text">
              <string/>
@@ -2528,8 +2239,8 @@ padding: 0px;</string>
              <string>View</string>
             </property>
             <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/action.png</normaloff>:/Resources/action.png</iconset>
+             <iconset resource="../../Resources/resources.qrc">
+              <normaloff>:/action.png</normaloff>:/action.png</iconset>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonTextBesideIcon</enum>
@@ -2548,8 +2259,8 @@ padding: 0px;</string>
              <string>Edit</string>
             </property>
             <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/page_white_edit.png</normaloff>:/Resources/page_white_edit.png</iconset>
+             <iconset resource="../../Resources/resources.qrc">
+              <normaloff>:/page_white_edit.png</normaloff>:/page_white_edit.png</iconset>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonTextBesideIcon</enum>
@@ -2568,8 +2279,8 @@ padding: 0px;</string>
              <string>Save</string>
             </property>
             <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/save.png</normaloff>:/Resources/save.png</iconset>
+             <iconset resource="../../Resources/resources.qrc">
+              <normaloff>:/save.png</normaloff>:/save.png</iconset>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonTextBesideIcon</enum>
@@ -2584,200 +2295,147 @@ padding: 0px;</string>
             <property name="orientation">
              <enum>Qt::Horizontal</enum>
             </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>576</width>
-              <height>20</height>
-             </size>
-            </property>
            </spacer>
           </item>
          </layout>
         </widget>
        </item>
        <item>
-        <widget class="QGroupBox" name="fsResGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
+        <widget class="QScrollArea" name="fsScroll">
+         <property name="frameShape">
+          <enum>QFrame::NoFrame</enum>
          </property>
-         <property name="title">
-          <string>Resources</string>
+         <property name="widgetResizable">
+          <bool>true</bool>
          </property>
-         <layout class="QHBoxLayout" name="horizontalLayout_15">
-          <property name="leftMargin">
-           <number>2</number>
+         <widget class="QWidget" name="fsScrollContents">
+          <property name="geometry">
+           <rect>
+            <x>0</x>
+            <y>0</y>
+            <width>96</width>
+            <height>432</height>
+           </rect>
           </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <item>
-           <widget class="RDTreeWidget" name="fsResources">
-            <property name="frameShape">
-             <enum>QFrame::Box</enum>
-            </property>
-            <property name="frameShadow">
-             <enum>QFrame::Plain</enum>
-            </property>
-            <property name="editTriggers">
-             <set>QAbstractItemView::NoEditTriggers</set>
-            </property>
-            <property name="showDropIndicator" stdset="0">
-             <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
-            </property>
-            <property name="rootIsDecorated">
-             <bool>true</bool>
-            </property>
-            <property name="allColumnsShowFocus">
-             <bool>true</bool>
-            </property>
-            <attribute name="headerStretchLastSection">
-             <bool>false</bool>
-            </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
+          <layout class="QVBoxLayout" name="verticalLayout_15">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QGroupBox" name="fsResGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
+             <property name="title">
+              <string>Resources</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
+             <layout class="QHBoxLayout" name="horizontalLayout_15">
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <item>
+               <widget class="RDTreeWidget" name="fsResources">
+                <property name="frameShape">
+                 <enum>QFrame::Box</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <property name="editTriggers">
+                 <set>QAbstractItemView::NoEditTriggers</set>
+                </property>
+                <property name="showDropIndicator" stdset="0">
+                 <bool>false</bool>
+                </property>
+                <property name="rootIsDecorated">
+                 <bool>true</bool>
+                </property>
+                <property name="allColumnsShowFocus">
+                 <bool>true</bool>
+                </property>
+                <attribute name="headerStretchLastSection">
+                 <bool>false</bool>
+                </attribute>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QGroupBox" name="fsUBOGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Type</string>
+             <property name="title">
+              <string>Uniform Buffers</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Resource</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Contents</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item>
-        <widget class="QGroupBox" name="fsUBOGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="title">
-          <string>Uniform Buffers</string>
-         </property>
-         <layout class="QHBoxLayout" name="horizontalLayout_17">
-          <property name="leftMargin">
-           <number>2</number>
-          </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <item>
-           <widget class="RDTreeWidget" name="fsUBOs">
-            <property name="frameShape">
-             <enum>QFrame::Box</enum>
-            </property>
-            <property name="frameShadow">
-             <enum>QFrame::Plain</enum>
-            </property>
-            <property name="editTriggers">
-             <set>QAbstractItemView::NoEditTriggers</set>
-            </property>
-            <property name="showDropIndicator" stdset="0">
-             <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
-            </property>
-            <property name="rootIsDecorated">
-             <bool>true</bool>
-            </property>
-            <property name="allColumnsShowFocus">
-             <bool>true</bool>
-            </property>
-            <attribute name="headerStretchLastSection">
-             <bool>false</bool>
-            </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Buffer</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Byte Range</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Size</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
-           </widget>
-          </item>
-         </layout>
+             <layout class="QHBoxLayout" name="horizontalLayout_17">
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <item>
+               <widget class="RDTreeWidget" name="fsUBOs">
+                <property name="frameShape">
+                 <enum>QFrame::Box</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <property name="editTriggers">
+                 <set>QAbstractItemView::NoEditTriggers</set>
+                </property>
+                <property name="showDropIndicator" stdset="0">
+                 <bool>false</bool>
+                </property>
+                <property name="rootIsDecorated">
+                 <bool>true</bool>
+                </property>
+                <property name="allColumnsShowFocus">
+                 <bool>true</bool>
+                </property>
+                <attribute name="headerStretchLastSection">
+                 <bool>false</bool>
+                </attribute>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+          </layout>
+         </widget>
         </widget>
        </item>
       </layout>
@@ -2788,609 +2446,524 @@ padding: 0px;</string>
       </attribute>
       <layout class="QGridLayout" name="gridLayout_5">
        <property name="leftMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="topMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="rightMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="bottomMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
-       <item row="0" column="0" colspan="3">
-        <widget class="QGroupBox" name="framebufferGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
+       <item row="0" column="0">
+        <widget class="QScrollArea" name="fbScroll">
+         <property name="frameShape">
+          <enum>QFrame::NoFrame</enum>
          </property>
-         <property name="title">
-          <string>Framebuffer Attachments</string>
+         <property name="widgetResizable">
+          <bool>true</bool>
          </property>
-         <layout class="QHBoxLayout" name="horizontalLayout_24">
-          <property name="leftMargin">
-           <number>2</number>
+         <widget class="QWidget" name="fbScrollContents">
+          <property name="geometry">
+           <rect>
+            <x>0</x>
+            <y>0</y>
+            <width>488</width>
+            <height>292</height>
+           </rect>
           </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <item>
-           <widget class="RDTreeWidget" name="framebuffer">
-            <property name="frameShape">
-             <enum>QFrame::Box</enum>
-            </property>
-            <property name="frameShadow">
-             <enum>QFrame::Plain</enum>
-            </property>
-            <property name="editTriggers">
-             <set>QAbstractItemView::NoEditTriggers</set>
-            </property>
-            <property name="showDropIndicator" stdset="0">
-             <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
-            </property>
-            <property name="indentation">
-             <number>0</number>
-            </property>
-            <property name="rootIsDecorated">
-             <bool>false</bool>
-            </property>
-            <property name="itemsExpandable">
-             <bool>false</bool>
-            </property>
-            <property name="allColumnsShowFocus">
-             <bool>true</bool>
-            </property>
-            <property name="expandsOnDoubleClick">
-             <bool>false</bool>
-            </property>
-            <attribute name="headerStretchLastSection">
-             <bool>false</bool>
-            </attribute>
-            <column>
-             <property name="text">
-              <string>Slot</string>
+          <layout class="QGridLayout" name="gridLayout_4">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item row="0" column="0" colspan="3">
+            <widget class="QGroupBox" name="framebufferGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Resource</string>
+             <property name="title">
+              <string>Render Pass</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Type</string>
+             <layout class="QVBoxLayout" name="verticalLayout_17">
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <item>
+               <layout class="QHBoxLayout" name="horizontalLayout_23">
+                <item>
+                 <widget class="RDLabel" name="renderpass">
+                  <property name="frameShape">
+                   <enum>QFrame::Box</enum>
+                  </property>
+                  <property name="margin">
+                   <number>4</number>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <widget class="RDLabel" name="framebuffer">
+                  <property name="frameShape">
+                   <enum>QFrame::Box</enum>
+                  </property>
+                  <property name="margin">
+                   <number>2</number>
+                  </property>
+                 </widget>
+                </item>
+                <item>
+                 <spacer name="horizontalSpacer_2">
+                  <property name="orientation">
+                   <enum>Qt::Horizontal</enum>
+                  </property>
+                  <property name="sizeHint" stdset="0">
+                   <size>
+                    <width>40</width>
+                    <height>20</height>
+                   </size>
+                  </property>
+                 </spacer>
+                </item>
+               </layout>
+              </item>
+              <item>
+               <widget class="RDTreeWidget" name="fbAttach">
+                <property name="frameShape">
+                 <enum>QFrame::Box</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <property name="sizeAdjustPolicy">
+                 <enum>QAbstractScrollArea::AdjustToContents</enum>
+                </property>
+                <property name="editTriggers">
+                 <set>QAbstractItemView::NoEditTriggers</set>
+                </property>
+                <property name="showDropIndicator" stdset="0">
+                 <bool>false</bool>
+                </property>
+                <property name="indentation">
+                 <number>0</number>
+                </property>
+                <property name="rootIsDecorated">
+                 <bool>false</bool>
+                </property>
+                <property name="itemsExpandable">
+                 <bool>false</bool>
+                </property>
+                <property name="allColumnsShowFocus">
+                 <bool>true</bool>
+                </property>
+                <property name="expandsOnDoubleClick">
+                 <bool>false</bool>
+                </property>
+                <attribute name="headerStretchLastSection">
+                 <bool>false</bool>
+                </attribute>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item row="1" column="0" colspan="3">
+            <widget class="QGroupBox" name="blendsGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Width</string>
+             <property name="title">
+              <string>Target Blends</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Height</string>
+             <layout class="QHBoxLayout" name="horizontalLayout_25">
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <item>
+               <widget class="RDTreeWidget" name="blends">
+                <property name="frameShape">
+                 <enum>QFrame::Box</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <property name="sizeAdjustPolicy">
+                 <enum>QAbstractScrollArea::AdjustToContents</enum>
+                </property>
+                <property name="editTriggers">
+                 <set>QAbstractItemView::NoEditTriggers</set>
+                </property>
+                <property name="showDropIndicator" stdset="0">
+                 <bool>false</bool>
+                </property>
+                <property name="indentation">
+                 <number>0</number>
+                </property>
+                <property name="rootIsDecorated">
+                 <bool>false</bool>
+                </property>
+                <property name="itemsExpandable">
+                 <bool>false</bool>
+                </property>
+                <property name="allColumnsShowFocus">
+                 <bool>true</bool>
+                </property>
+                <property name="expandsOnDoubleClick">
+                 <bool>false</bool>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item row="2" column="0">
+            <widget class="QGroupBox" name="blendStateGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Depth</string>
+             <property name="title">
+              <string>Blend State</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Array Size</string>
+             <layout class="QGridLayout" name="blendStateGridLayout">
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <property name="spacing">
+               <number>0</number>
+              </property>
+              <item row="0" column="0">
+               <widget class="QLabel" name="blendFactorLabel">
+                <property name="text">
+                 <string>Blend Factor:</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+                </property>
+                <property name="wordWrap">
+                 <bool>true</bool>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="1">
+               <widget class="QLabel" name="blendFactor">
+                <property name="font">
+                 <font>
+                  <pointsize>12</pointsize>
+                 </font>
+                </property>
+                <property name="text">
+                 <string>0.00, 0.00, 0.00, 0.00</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+                <property name="margin">
+                 <number>4</number>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="0">
+               <widget class="QLabel" name="logicOpLabel">
+                <property name="text">
+                 <string>Logic Op:</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+                </property>
+                <property name="wordWrap">
+                 <bool>true</bool>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="1">
+               <widget class="QLabel" name="logicOp">
+                <property name="font">
+                 <font>
+                  <pointsize>12</pointsize>
+                 </font>
+                </property>
+                <property name="text">
+                 <string>-</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+                <property name="margin">
+                 <number>4</number>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item row="2" column="1">
+            <widget class="QGroupBox" name="depthStateGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Format</string>
+             <property name="title">
+              <string>Depth State</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
+             <layout class="QGridLayout" name="depthStateGridLayout">
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <property name="spacing">
+               <number>0</number>
+              </property>
+              <item row="0" column="0">
+               <widget class="QLabel" name="depthEnabledLabel">
+                <property name="text">
+                 <string>Enabled:</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="1">
+               <widget class="QLabel" name="depthEnabled">
+                <property name="text">
+                 <string/>
+                </property>
+                <property name="pixmap">
+                 <pixmap resource="../../Resources/resources.qrc">:/cross.png</pixmap>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+                <property name="margin">
+                 <number>4</number>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="0">
+               <widget class="QLabel" name="depthBoundsLabel">
+                <property name="text">
+                 <string>Bounds:</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="1">
+               <widget class="QLabel" name="depthBounds">
+                <property name="text">
+                 <string/>
+                </property>
+                <property name="pixmap">
+                 <pixmap resource="../../Resources/resources.qrc">:/cross.png</pixmap>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+                <property name="margin">
+                 <number>4</number>
+                </property>
+               </widget>
+              </item>
+              <item row="2" column="0">
+               <widget class="QLabel" name="depthWriteLabel">
+                <property name="text">
+                 <string>Write:</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="2" column="1">
+               <widget class="QLabel" name="depthWrite">
+                <property name="text">
+                 <string/>
+                </property>
+                <property name="pixmap">
+                 <pixmap resource="../../Resources/resources.qrc">:/cross.png</pixmap>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+                <property name="margin">
+                 <number>4</number>
+                </property>
+               </widget>
+              </item>
+              <item row="3" column="0">
+               <widget class="QLabel" name="depthFuncLabel">
+                <property name="text">
+                 <string>Func:</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
+                </property>
+               </widget>
+              </item>
+              <item row="3" column="1">
+               <widget class="QLabel" name="depthFunc">
+                <property name="font">
+                 <font>
+                  <pointsize>12</pointsize>
+                 </font>
+                </property>
+                <property name="text">
+                 <string>GREATER_EQUAL</string>
+                </property>
+                <property name="alignment">
+                 <set>Qt::AlignCenter</set>
+                </property>
+                <property name="margin">
+                 <number>4</number>
+                </property>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item row="2" column="2">
+            <widget class="QGroupBox" name="stencilStateGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item row="1" column="0" colspan="3">
-        <widget class="QGroupBox" name="blendsGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="Expanding">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="title">
-          <string>Target Blends</string>
-         </property>
-         <layout class="QHBoxLayout" name="horizontalLayout_25">
-          <property name="leftMargin">
-           <number>2</number>
-          </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <item>
-           <widget class="QTreeWidget" name="blends">
-            <property name="frameShape">
-             <enum>QFrame::Box</enum>
-            </property>
-            <property name="frameShadow">
-             <enum>QFrame::Plain</enum>
-            </property>
-            <property name="sizeAdjustPolicy">
-             <enum>QAbstractScrollArea::AdjustToContents</enum>
-            </property>
-            <property name="editTriggers">
-             <set>QAbstractItemView::NoEditTriggers</set>
-            </property>
-            <property name="showDropIndicator" stdset="0">
-             <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
-            </property>
-            <property name="indentation">
-             <number>0</number>
-            </property>
-            <property name="rootIsDecorated">
-             <bool>false</bool>
-            </property>
-            <property name="itemsExpandable">
-             <bool>false</bool>
-            </property>
-            <property name="allColumnsShowFocus">
-             <bool>true</bool>
-            </property>
-            <property name="expandsOnDoubleClick">
-             <bool>false</bool>
-            </property>
-            <column>
-             <property name="text">
-              <string>Slot</string>
+             <property name="title">
+              <string>Stencil State</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Enabled</string>
+             <property name="alignment">
+              <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Colour Src</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Colour Dst</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Colour Op</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Alpha Src</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Alpha Dst</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Alpha Op</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Write Mask</string>
-             </property>
-            </column>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item row="2" column="0">
-        <widget class="QGroupBox" name="blendStateGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="title">
-          <string>Blend State</string>
-         </property>
-         <layout class="QGridLayout" name="blendStateGridLayout">
-          <property name="leftMargin">
-           <number>2</number>
-          </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <property name="spacing">
-           <number>0</number>
-          </property>
-          <item row="0" column="0">
-           <widget class="QLabel" name="blendFactorLabel">
-            <property name="text">
-             <string>Blend Factor:</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-            </property>
-           </widget>
-          </item>
-          <item row="0" column="1">
-           <widget class="QLabel" name="blendFactor">
-            <property name="font">
-             <font>
-              <pointsize>12</pointsize>
-             </font>
-            </property>
-            <property name="text">
-             <string>0.00, 0.00, 0.00, 0.00</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignCenter</set>
-            </property>
-            <property name="margin">
-             <number>4</number>
-            </property>
-           </widget>
-          </item>
-          <item row="1" column="0">
-           <widget class="QLabel" name="logicOpLabel">
-            <property name="text">
-             <string>Logic Op:</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-            </property>
-           </widget>
-          </item>
-          <item row="1" column="1">
-           <widget class="QLabel" name="logicOp">
-            <property name="font">
-             <font>
-              <pointsize>12</pointsize>
-             </font>
-            </property>
-            <property name="text">
-             <string>-</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignCenter</set>
-            </property>
-            <property name="margin">
-             <number>4</number>
-            </property>
-           </widget>
-          </item>
-          <item row="2" column="0">
-           <widget class="QLabel" name="alphaToOneLabel">
-            <property name="text">
-             <string>Alpha to 1:</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-            </property>
-           </widget>
-          </item>
-          <item row="2" column="1">
-           <widget class="QLabel" name="alphaToOne">
-            <property name="text">
-             <string/>
-            </property>
-            <property name="pixmap">
-             <pixmap resource="../../resources.qrc">:/Resources/cross.png</pixmap>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignCenter</set>
-            </property>
-            <property name="margin">
-             <number>4</number>
-            </property>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item row="2" column="1">
-        <widget class="QGroupBox" name="depthStateGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="title">
-          <string>Depth State</string>
-         </property>
-         <layout class="QGridLayout" name="depthStateGridLayout">
-          <property name="leftMargin">
-           <number>2</number>
-          </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <property name="spacing">
-           <number>0</number>
-          </property>
-          <item row="0" column="0">
-           <widget class="QLabel" name="depthEnabledLabel">
-            <property name="text">
-             <string>Enabled:</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-            </property>
-           </widget>
-          </item>
-          <item row="0" column="1">
-           <widget class="QLabel" name="depthEnabled">
-            <property name="text">
-             <string/>
-            </property>
-            <property name="pixmap">
-             <pixmap resource="../../resources.qrc">:/Resources/cross.png</pixmap>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignCenter</set>
-            </property>
-            <property name="margin">
-             <number>4</number>
-            </property>
-           </widget>
-          </item>
-          <item row="1" column="0">
-           <widget class="QLabel" name="depthBoundsLabel">
-            <property name="text">
-             <string>Bounds:</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-            </property>
-           </widget>
-          </item>
-          <item row="1" column="1">
-           <widget class="QLabel" name="depthBounds">
-            <property name="text">
-             <string/>
-            </property>
-            <property name="pixmap">
-             <pixmap resource="../../resources.qrc">:/Resources/cross.png</pixmap>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignCenter</set>
-            </property>
-            <property name="margin">
-             <number>4</number>
-            </property>
-           </widget>
-          </item>
-          <item row="2" column="0">
-           <widget class="QLabel" name="depthWriteLabel">
-            <property name="text">
-             <string>Write:</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-            </property>
-           </widget>
-          </item>
-          <item row="2" column="1">
-           <widget class="QLabel" name="depthWrite">
-            <property name="text">
-             <string/>
-            </property>
-            <property name="pixmap">
-             <pixmap resource="../../resources.qrc">:/Resources/cross.png</pixmap>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignCenter</set>
-            </property>
-            <property name="margin">
-             <number>4</number>
-            </property>
-           </widget>
-          </item>
-          <item row="3" column="0">
-           <widget class="QLabel" name="depthFuncLabel">
-            <property name="text">
-             <string>Func:</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignRight|Qt::AlignTrailing|Qt::AlignVCenter</set>
-            </property>
-           </widget>
-          </item>
-          <item row="3" column="1">
-           <widget class="QLabel" name="depthFunc">
-            <property name="font">
-             <font>
-              <pointsize>12</pointsize>
-             </font>
-            </property>
-            <property name="text">
-             <string>GREATER_EQUAL</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignCenter</set>
-            </property>
-            <property name="margin">
-             <number>4</number>
-            </property>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item row="2" column="2">
-        <widget class="QGroupBox" name="stencilStateGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="Preferred">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="title">
-          <string>Stencil State</string>
-         </property>
-         <property name="alignment">
-          <set>Qt::AlignLeading|Qt::AlignLeft|Qt::AlignTop</set>
-         </property>
-         <layout class="QVBoxLayout" name="verticalLayout_10">
-          <property name="spacing">
-           <number>0</number>
-          </property>
-          <property name="leftMargin">
-           <number>2</number>
-          </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <item>
-           <widget class="QTreeWidget" name="stencils">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-            <property name="frameShape">
-             <enum>QFrame::Box</enum>
-            </property>
-            <property name="frameShadow">
-             <enum>QFrame::Plain</enum>
-            </property>
-            <property name="verticalScrollBarPolicy">
-             <enum>Qt::ScrollBarAlwaysOff</enum>
-            </property>
-            <property name="horizontalScrollBarPolicy">
-             <enum>Qt::ScrollBarAsNeeded</enum>
-            </property>
-            <property name="sizeAdjustPolicy">
-             <enum>QAbstractScrollArea::AdjustToContents</enum>
-            </property>
-            <property name="editTriggers">
-             <set>QAbstractItemView::NoEditTriggers</set>
-            </property>
-            <property name="showDropIndicator" stdset="0">
-             <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
-            </property>
-            <property name="selectionMode">
-             <enum>QAbstractItemView::NoSelection</enum>
-            </property>
-            <property name="indentation">
-             <number>0</number>
-            </property>
-            <property name="rootIsDecorated">
-             <bool>false</bool>
-            </property>
-            <property name="itemsExpandable">
-             <bool>false</bool>
-            </property>
-            <property name="allColumnsShowFocus">
-             <bool>true</bool>
-            </property>
-            <property name="expandsOnDoubleClick">
-             <bool>false</bool>
-            </property>
-            <attribute name="headerStretchLastSection">
-             <bool>false</bool>
-            </attribute>
-            <column>
-             <property name="text">
-              <string>Face</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Func</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Fail Op</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Depth Fail Op</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Pass Op</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Write</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Comp</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Ref</string>
-             </property>
-            </column>
-           </widget>
-          </item>
-         </layout>
+             <layout class="QVBoxLayout" name="verticalLayout_10">
+              <property name="spacing">
+               <number>0</number>
+              </property>
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <item>
+               <widget class="RDTreeWidget" name="stencils">
+                <property name="sizePolicy">
+                 <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+                  <horstretch>0</horstretch>
+                  <verstretch>0</verstretch>
+                 </sizepolicy>
+                </property>
+                <property name="frameShape">
+                 <enum>QFrame::Box</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <property name="verticalScrollBarPolicy">
+                 <enum>Qt::ScrollBarAlwaysOff</enum>
+                </property>
+                <property name="horizontalScrollBarPolicy">
+                 <enum>Qt::ScrollBarAsNeeded</enum>
+                </property>
+                <property name="sizeAdjustPolicy">
+                 <enum>QAbstractScrollArea::AdjustToContents</enum>
+                </property>
+                <property name="editTriggers">
+                 <set>QAbstractItemView::NoEditTriggers</set>
+                </property>
+                <property name="showDropIndicator" stdset="0">
+                 <bool>false</bool>
+                </property>
+                <property name="selectionMode">
+                 <enum>QAbstractItemView::NoSelection</enum>
+                </property>
+                <property name="indentation">
+                 <number>0</number>
+                </property>
+                <property name="rootIsDecorated">
+                 <bool>false</bool>
+                </property>
+                <property name="itemsExpandable">
+                 <bool>false</bool>
+                </property>
+                <property name="allColumnsShowFocus">
+                 <bool>true</bool>
+                </property>
+                <property name="expandsOnDoubleClick">
+                 <bool>false</bool>
+                </property>
+                <attribute name="headerStretchLastSection">
+                 <bool>false</bool>
+                </attribute>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+          </layout>
+         </widget>
         </widget>
        </item>
       </layout>
@@ -3401,16 +2974,16 @@ padding: 0px;</string>
       </attribute>
       <layout class="QVBoxLayout" name="verticalLayout_9">
        <property name="leftMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="topMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="rightMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <property name="bottomMargin">
-        <number>2</number>
+        <number>0</number>
        </property>
        <item>
         <widget class="QGroupBox" name="csShaderGroup">
@@ -3434,23 +3007,9 @@ padding: 0px;</string>
            <number>4</number>
           </property>
           <item>
-           <widget class="QLabel" name="csShader">
-            <property name="minimumSize">
-             <size>
-              <width>250</width>
-              <height>0</height>
-             </size>
-            </property>
-            <property name="cursor">
-             <cursorShape>PointingHandCursor</cursorShape>
-            </property>
-            <property name="toolTip">
-             <string>Open Shader Source</string>
-            </property>
-            <property name="styleSheet">
-             <string notr="true">border: 1px solid black;
-background-color: rgb(255, 255, 191);
-padding: 0px;</string>
+           <widget class="RDLabel" name="csShader">
+            <property name="frameShape">
+             <enum>QFrame::Box</enum>
             </property>
             <property name="text">
              <string/>
@@ -3469,8 +3028,8 @@ padding: 0px;</string>
              <string>View</string>
             </property>
             <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/action.png</normaloff>:/Resources/action.png</iconset>
+             <iconset resource="../../Resources/resources.qrc">
+              <normaloff>:/action.png</normaloff>:/action.png</iconset>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonTextBesideIcon</enum>
@@ -3489,8 +3048,8 @@ padding: 0px;</string>
              <string>Edit</string>
             </property>
             <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/page_white_edit.png</normaloff>:/Resources/page_white_edit.png</iconset>
+             <iconset resource="../../Resources/resources.qrc">
+              <normaloff>:/page_white_edit.png</normaloff>:/page_white_edit.png</iconset>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonTextBesideIcon</enum>
@@ -3509,8 +3068,8 @@ padding: 0px;</string>
              <string>Save</string>
             </property>
             <property name="icon">
-             <iconset resource="../../resources.qrc">
-              <normaloff>:/Resources/save.png</normaloff>:/Resources/save.png</iconset>
+             <iconset resource="../../Resources/resources.qrc">
+              <normaloff>:/save.png</normaloff>:/save.png</iconset>
             </property>
             <property name="toolButtonStyle">
              <enum>Qt::ToolButtonTextBesideIcon</enum>
@@ -3525,200 +3084,147 @@ padding: 0px;</string>
             <property name="orientation">
              <enum>Qt::Horizontal</enum>
             </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>576</width>
-              <height>20</height>
-             </size>
-            </property>
            </spacer>
           </item>
          </layout>
         </widget>
        </item>
        <item>
-        <widget class="QGroupBox" name="csResGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
+        <widget class="QScrollArea" name="csScroll">
+         <property name="frameShape">
+          <enum>QFrame::NoFrame</enum>
          </property>
-         <property name="title">
-          <string>Resources</string>
+         <property name="widgetResizable">
+          <bool>true</bool>
          </property>
-         <layout class="QHBoxLayout" name="horizontalLayout_18">
-          <property name="leftMargin">
-           <number>2</number>
+         <widget class="QWidget" name="csScrollContents">
+          <property name="geometry">
+           <rect>
+            <x>0</x>
+            <y>0</y>
+            <width>96</width>
+            <height>432</height>
+           </rect>
           </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <item>
-           <widget class="RDTreeWidget" name="csResources">
-            <property name="frameShape">
-             <enum>QFrame::Box</enum>
-            </property>
-            <property name="frameShadow">
-             <enum>QFrame::Plain</enum>
-            </property>
-            <property name="editTriggers">
-             <set>QAbstractItemView::NoEditTriggers</set>
-            </property>
-            <property name="showDropIndicator" stdset="0">
-             <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
-            </property>
-            <property name="rootIsDecorated">
-             <bool>true</bool>
-            </property>
-            <property name="allColumnsShowFocus">
-             <bool>true</bool>
-            </property>
-            <attribute name="headerStretchLastSection">
-             <bool>false</bool>
-            </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
+          <layout class="QVBoxLayout" name="verticalLayout_16">
+           <property name="leftMargin">
+            <number>0</number>
+           </property>
+           <property name="topMargin">
+            <number>0</number>
+           </property>
+           <property name="rightMargin">
+            <number>0</number>
+           </property>
+           <property name="bottomMargin">
+            <number>0</number>
+           </property>
+           <item>
+            <widget class="QGroupBox" name="csResGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
+             <property name="title">
+              <string>Resources</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
+             <layout class="QHBoxLayout" name="horizontalLayout_18">
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <item>
+               <widget class="RDTreeWidget" name="csResources">
+                <property name="frameShape">
+                 <enum>QFrame::Box</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <property name="editTriggers">
+                 <set>QAbstractItemView::NoEditTriggers</set>
+                </property>
+                <property name="showDropIndicator" stdset="0">
+                 <bool>false</bool>
+                </property>
+                <property name="rootIsDecorated">
+                 <bool>true</bool>
+                </property>
+                <property name="allColumnsShowFocus">
+                 <bool>true</bool>
+                </property>
+                <attribute name="headerStretchLastSection">
+                 <bool>false</bool>
+                </attribute>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+           <item>
+            <widget class="QGroupBox" name="csUBOGroup">
+             <property name="sizePolicy">
+              <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
+               <horstretch>0</horstretch>
+               <verstretch>0</verstretch>
+              </sizepolicy>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Type</string>
+             <property name="title">
+              <string>Uniform Buffers</string>
              </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Resource</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Contents</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
-           </widget>
-          </item>
-         </layout>
-        </widget>
-       </item>
-       <item>
-        <widget class="QGroupBox" name="csUBOGroup">
-         <property name="sizePolicy">
-          <sizepolicy hsizetype="Preferred" vsizetype="MinimumExpanding">
-           <horstretch>0</horstretch>
-           <verstretch>0</verstretch>
-          </sizepolicy>
-         </property>
-         <property name="title">
-          <string>Uniform Buffers</string>
-         </property>
-         <layout class="QHBoxLayout" name="horizontalLayout_20">
-          <property name="leftMargin">
-           <number>2</number>
-          </property>
-          <property name="topMargin">
-           <number>2</number>
-          </property>
-          <property name="rightMargin">
-           <number>2</number>
-          </property>
-          <property name="bottomMargin">
-           <number>2</number>
-          </property>
-          <item>
-           <widget class="RDTreeWidget" name="csUBOs">
-            <property name="frameShape">
-             <enum>QFrame::Box</enum>
-            </property>
-            <property name="frameShadow">
-             <enum>QFrame::Plain</enum>
-            </property>
-            <property name="editTriggers">
-             <set>QAbstractItemView::NoEditTriggers</set>
-            </property>
-            <property name="showDropIndicator" stdset="0">
-             <bool>false</bool>
-            </property>
-            <property name="alternatingRowColors">
-             <bool>true</bool>
-            </property>
-            <property name="rootIsDecorated">
-             <bool>true</bool>
-            </property>
-            <property name="allColumnsShowFocus">
-             <bool>true</bool>
-            </property>
-            <attribute name="headerStretchLastSection">
-             <bool>false</bool>
-            </attribute>
-            <column>
-             <property name="text">
-              <string notr="true"/>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Set</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Binding</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Buffer</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Byte Range</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Size</string>
-             </property>
-            </column>
-            <column>
-             <property name="text">
-              <string>Go</string>
-             </property>
-            </column>
-           </widget>
-          </item>
-         </layout>
+             <layout class="QHBoxLayout" name="horizontalLayout_20">
+              <property name="leftMargin">
+               <number>2</number>
+              </property>
+              <property name="topMargin">
+               <number>2</number>
+              </property>
+              <property name="rightMargin">
+               <number>2</number>
+              </property>
+              <property name="bottomMargin">
+               <number>2</number>
+              </property>
+              <item>
+               <widget class="RDTreeWidget" name="csUBOs">
+                <property name="frameShape">
+                 <enum>QFrame::Box</enum>
+                </property>
+                <property name="frameShadow">
+                 <enum>QFrame::Plain</enum>
+                </property>
+                <property name="editTriggers">
+                 <set>QAbstractItemView::NoEditTriggers</set>
+                </property>
+                <property name="showDropIndicator" stdset="0">
+                 <bool>false</bool>
+                </property>
+                <property name="rootIsDecorated">
+                 <bool>true</bool>
+                </property>
+                <property name="allColumnsShowFocus">
+                 <bool>true</bool>
+                </property>
+                <attribute name="headerStretchLastSection">
+                 <bool>false</bool>
+                </attribute>
+               </widget>
+              </item>
+             </layout>
+            </widget>
+           </item>
+          </layout>
+         </widget>
         </widget>
        </item>
       </layout>
@@ -3729,13 +3235,24 @@ padding: 0px;</string>
  </widget>
  <customwidgets>
   <customwidget>
+   <class>RDLabel</class>
+   <extends>QLabel</extends>
+   <header>Widgets/Extended/RDLabel.h</header>
+  </customwidget>
+  <customwidget>
    <class>RDTreeWidget</class>
-   <extends>QTreeWidget</extends>
+   <extends>QTreeView</extends>
    <header>Widgets/Extended/RDTreeWidget.h</header>
+  </customwidget>
+  <customwidget>
+   <class>PipelineFlowChart</class>
+   <extends>QFrame</extends>
+   <header>Widgets/PipelineFlowChart.h</header>
+   <container>1</container>
   </customwidget>
  </customwidgets>
  <resources>
-  <include location="../../resources.qrc"/>
+  <include location="../../Resources/resources.qrc"/>
  </resources>
  <connections/>
 </ui>

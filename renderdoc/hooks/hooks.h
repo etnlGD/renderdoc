@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -58,6 +58,7 @@ private:
 #define HOOKS_BEGIN() Win32_IAT_BeginHooks()
 #define HOOKS_END() Win32_IAT_EndHooks()
 #define HOOKS_REMOVE() Win32_IAT_RemoveHooks()
+#define HOOKS_IDENTIFY(identifier) Win32_HookDetect(identifier)
 
 #elif ENABLED(RDOC_POSIX)
 
@@ -67,8 +68,9 @@ private:
 #include <dlfcn.h>
 
 #define HOOKS_BEGIN() PosixHookInit()
-#define HOOKS_END()
+#define HOOKS_END() PosixHookApply()
 #define HOOKS_REMOVE()
+#define HOOKS_IDENTIFY(identifier) PosixHookDetect(identifier)
 
 #else
 

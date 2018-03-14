@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  * Copyright (c) 2014 Crytek
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -25,7 +25,11 @@
 
 #pragma once
 
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+
 #include <intrin.h>
+#include <stdlib.h>
 #include <windows.h>
 #include "data/resource.h"
 
@@ -33,8 +37,15 @@
 
 #define OS_DEBUG_BREAK() __debugbreak()
 
-#define GetEmbeddedResource(filename) GetEmbeddedResourceWin32(CONCAT(RESOURCE_, filename))
-string GetEmbeddedResourceWin32(int resource);
+#define EndianSwap16(x) _byteswap_ushort(x)
+#define EndianSwap32(x) _byteswap_ulong(x)
+#define EndianSwap64(x) _byteswap_uint64(x)
+
+#define EmbeddedResourceType int
+#define EmbeddedResource(filename) CONCAT(RESOURCE_, filename)
+
+#define GetEmbeddedResource(filename) GetDynamicEmbeddedResource(EmbeddedResource(filename))
+std::string GetDynamicEmbeddedResource(int resource);
 
 namespace StringFormat
 {

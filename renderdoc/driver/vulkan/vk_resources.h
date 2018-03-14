@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2015-2016 Baldur Karlsson
+ * Copyright (c) 2015-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -71,6 +71,8 @@ enum VkResourceType
   eResSwapchain,
   eResSurface
 };
+
+DECLARE_REFLECTION_ENUM(VkResourceType);
 
 // VkDisplayKHR and VkDisplayModeKHR are both UNWRAPPED because there's no need to wrap them.
 // The only thing we need to wrap VkSurfaceKHR for is to get back the window from it later.
@@ -329,7 +331,7 @@ struct WrappedVkBuffer : WrappedVkNonDispRes
   typedef VkBuffer InnerType;
   static const int AllocPoolCount = 128 * 1024;
   static const int AllocPoolMaxByteSize = 3 * 1024 * 1024;
-  ALLOCATE_WITH_WRAPPED_POOL(WrappedVkBuffer, AllocPoolCount, AllocPoolMaxByteSize);
+  ALLOCATE_WITH_WRAPPED_POOL(WrappedVkBuffer, AllocPoolCount, AllocPoolMaxByteSize, false);
   enum
   {
     TypeEnum = eResBuffer,
@@ -578,6 +580,10 @@ struct UnwrapHelper
   struct UnwrapHelper<vulkantype>                                             \
   {                                                                           \
     typedef WrappedVkDispRes ParentType;                                      \
+    enum                                                                      \
+    {                                                                         \
+      DispatchableType = 1                                                    \
+    };                                                                        \
     typedef CONCAT(Wrapped, vulkantype) Outer;                                \
     static TypedRealHandle ToTypedHandle(vulkantype real)                     \
     {                                                                         \
@@ -594,6 +600,10 @@ struct UnwrapHelper
   struct UnwrapHelper<vulkantype>                             \
   {                                                           \
     typedef WrappedVkNonDispRes ParentType;                   \
+    enum                                                      \
+    {                                                         \
+      DispatchableType = 0                                    \
+    };                                                        \
     typedef CONCAT(Wrapped, vulkantype) Outer;                \
     static TypedRealHandle ToTypedHandle(vulkantype real)     \
     {                                                         \
@@ -680,6 +690,12 @@ void SetDispatchTableOverMagicNumber(VkDevice parent, RealType obj)
   typename UnwrapHelper<RealType>::Outer *wrapped = GetWrapped(obj);
   if(wrapped->loaderTable == 0x01CDC0DE)
     wrapped->loaderTable = GetWrapped(parent)->loaderTable;
+}
+
+template <typename RealType>
+bool IsDispatchable(RealType obj)
+{
+  return (UnwrapHelper<RealType>::DispatchableType) == 1;
 }
 
 template <typename RealType>
@@ -803,6 +819,8 @@ struct ImageRegionState
   VkImageLayout newLayout;
 };
 
+DECLARE_REFLECTION_STRUCT(ImageRegionState);
+
 struct SwapchainInfo
 {
   VkFormat format;
@@ -822,23 +840,6 @@ struct SwapchainInfo
   };
   vector<SwapImage> images;
   uint32_t lastPresent;
-};
-
-struct InstanceDeviceInfo
-{
-#undef CheckExt
-#define CheckExt(name) ext_##name = false;
-  InstanceDeviceInfo()
-  {
-    CheckDeviceExts();
-    CheckInstanceExts();
-  }
-
-#undef CheckExt
-#define CheckExt(name) bool ext_##name;
-
-  CheckDeviceExts();
-  CheckInstanceExts();
 };
 
 struct SparseMapping
@@ -871,7 +872,8 @@ struct CmdBufferRecordingInfo
   VkDevice device;
   VkCommandBufferAllocateInfo allocInfo;
 
-  VkResourceRecord *framebuffer;
+  VkResourceRecord *framebuffer = NULL;
+  VkResourceRecord *allocRecord = NULL;
 
   vector<pair<ResourceId, ImageRegionState> > imgbarriers;
 
@@ -1076,6 +1078,15 @@ public:
   // so just pack/unpack into bitfields
   struct ViewRange
   {
+    ViewRange()
+    {
+      aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+      baseMipLevel = 0;
+      levelCount = 1;
+      baseArrayLayer = 0;
+      layerCount = 1;
+    }
+
     ViewRange &operator=(const VkImageSubresourceRange &range)
     {
       aspectMask = (uint32_t)range.aspectMask;
@@ -1150,6 +1161,8 @@ struct ImageLayouts
   VkFormat format;
 };
 
+DECLARE_REFLECTION_STRUCT(ImageLayouts);
+
 bool IsBlockFormat(VkFormat f);
 bool IsDepthOrStencilFormat(VkFormat f);
 bool IsDepthAndStencilFormat(VkFormat f);
@@ -1159,6 +1172,7 @@ bool IsStencilOnlyFormat(VkFormat f);
 bool IsSRGBFormat(VkFormat f);
 bool IsUIntFormat(VkFormat f);
 bool IsSIntFormat(VkFormat f);
+bool IsYUVFormat(VkFormat f);
 
 VkFormat GetDepthOnlyFormat(VkFormat f);
 VkFormat GetUIntTypedFormat(VkFormat f);

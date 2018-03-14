@@ -1,7 +1,7 @@
 /******************************************************************************
  * The MIT License (MIT)
  *
- * Copyright (c) 2016 Baldur Karlsson
+ * Copyright (c) 2016-2018 Baldur Karlsson
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -27,8 +27,8 @@
 
 extern char **environ;
 
-#define INITIAL_WAIT_TIME 1000
-#define MAX_WAIT_TIME 63000
+#define INITIAL_WAIT_TIME 1
+#define MAX_WAIT_TIME 128000
 
 char **GetCurrentEnvironment()
 {
@@ -42,15 +42,13 @@ int GetIdentPort(pid_t childPid)
   string procfile = StringFormat::Fmt("/proc/%d/net/tcp", (int)childPid);
 
   int waitTime = INITIAL_WAIT_TIME;
-  int totalWaitTime = 0;
 
   // try for a little while for the /proc entry to appear
-  while(totalWaitTime < MAX_WAIT_TIME)
+  while(ret == 0 && waitTime <= MAX_WAIT_TIME)
   {
     // back-off for each retry
     usleep(waitTime);
 
-    totalWaitTime += waitTime;
     waitTime *= 2;
 
     FILE *f = FileIO::fopen(procfile.c_str(), "r");
@@ -77,11 +75,17 @@ int GetIdentPort(pid_t childPid)
          hexport <= RenderDoc_LastTargetControlPort)
       {
         ret = hexport;
-        break;
       }
     }
 
     FileIO::fclose(f);
+  }
+
+  if(ret == 0)
+  {
+    RDCWARN("Couldn't locate renderdoc target control listening port between %u and %u in %s",
+            (uint32_t)RenderDoc_FirstTargetControlPort, (uint32_t)RenderDoc_LastTargetControlPort,
+            procfile.c_str());
   }
 
   return ret;
@@ -128,4 +132,9 @@ void CacheDebuggerPresent()
 bool OSUtility::DebuggerPresent()
 {
   return debuggerPresent;
+}
+
+const char *Process::GetEnvVariable(const char *name)
+{
+  return getenv(name);
 }
